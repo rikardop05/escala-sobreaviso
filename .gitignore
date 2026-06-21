@@ -1,0 +1,11 @@
+# Backups locais
+backup/
+
+# Arquivos de build/desktop (não necessários para o Vercel)
+build.bat
+executar.bat
+main.py
+
+# Sistema
+.DS_Store
+Thumbs.db
