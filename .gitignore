@@ -1,10 +1,21 @@
 # Backups locais
 backup/
 
-# Arquivos de build/desktop (não necessários para o Vercel)
+# Arquivos de build/desktop
 build.bat
 executar.bat
 main.py
+
+# Dependências
+node_modules/
+
+# Build output
+dist/
+
+# Variáveis de ambiente (NUNCA commitar)
+.env
+.env.local
+.env.*.local
 
 # Sistema
 .DS_Store

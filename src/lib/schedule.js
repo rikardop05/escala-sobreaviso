@@ -1,0 +1,166 @@
+// ─── DADOS DA EQUIPE ─────────────────────────────────────────────────────────
+
+export const PEOPLE = {
+  Emanoel:        { color: "#7B1FA2", bg: "#F3E5F5" },
+  "Marcus Túlio": { color: "#2E7D32", bg: "#E8F5E9" },
+  Ricardo:        { color: "#1565C0", bg: "#E3F2FD" },
+  Carlos:         { color: "#37474F", bg: "#ECEFF1" },
+  Raul:           { color: "#E65100", bg: "#FFF3E0" },
+  Alice:          { color: "#AD1457", bg: "#FCE4EC" },
+};
+
+// Alice não participa do controle de horas financeiro
+export const CH_NAMES = ["Raul", "Emanoel", "Marcus Túlio", "Ricardo", "Carlos"];
+
+// ─── DADOS DA ESCALA ─────────────────────────────────────────────────────────
+
+export const WEEKDAY_SHIFTS = {
+  1: [
+    { period: "Madrugada", time: "23:00 – 04:00", dur: "5h", person: "Raul" },
+    { period: "Manhã",     time: "04:00 – 09:00", dur: "5h", person: "Emanoel" },
+    { period: "Noite",     time: "18:00 – 23:00", dur: "5h", person: "Marcus Túlio" },
+  ],
+  2: [
+    { period: "Madrugada", time: "23:00 – 04:00", dur: "5h", person: "Ricardo" },
+    { period: "Manhã",     time: "04:00 – 09:00", dur: "5h", person: "Carlos" },
+    { period: "Noite",     time: "18:00 – 23:00", dur: "5h", person: "Raul" },
+  ],
+  3: [
+    { period: "Madrugada", time: "23:00 – 04:00", dur: "5h", person: "Marcus Túlio" },
+    { period: "Manhã",     time: "04:00 – 09:00", dur: "5h", person: "Emanoel" },
+    { period: "Noite",     time: "18:00 – 23:00", dur: "5h", person: "Raul" },
+  ],
+  4: [
+    { period: "Madrugada", time: "23:00 – 04:00", dur: "5h", person: "Ricardo" },
+    { period: "Manhã",     time: "04:00 – 09:00", dur: "5h", person: "Marcus Túlio" },
+    { period: "Noite",     time: "18:00 – 23:00", dur: "5h", person: "Carlos" },
+  ],
+  5: [
+    { period: "Madrugada", time: "23:00 – 04:00", dur: "5h", person: "Emanoel" },
+    { period: "Manhã",     time: "04:00 – 09:00", dur: "5h", person: "Raul" },
+    { period: "Noite",     time: "18:00 – 24:00", dur: "6h", person: "Ricardo" },
+  ],
+};
+
+export const WEEKEND_CYCLE = [
+  { sabDia: "Carlos",       sabNoite: "Emanoel",      domDia: "Ricardo",      domNoite: "Raul",         folga: "Marcus Túlio" },
+  { sabDia: "Marcus Túlio", sabNoite: "Carlos",       domDia: "Emanoel",      domNoite: "Ricardo",      folga: "Raul" },
+  { sabDia: "Raul",         sabNoite: "Marcus Túlio", domDia: "Carlos",       domNoite: "Emanoel",      folga: "Ricardo" },
+  { sabDia: "Ricardo",      sabNoite: "Raul",         domDia: "Marcus Túlio", domNoite: "Carlos",       folga: "Emanoel" },
+  { sabDia: "Emanoel",      sabNoite: "Ricardo",      domDia: "Raul",         domNoite: "Marcus Túlio", folga: "Carlos" },
+];
+
+export const ANCHOR      = new Date(2026, 5, 13);
+export const RANGE_START = new Date(2026, 5, 8);
+export const RANGE_END   = new Date(2027, 5, 30);
+
+// ─── LABELS ──────────────────────────────────────────────────────────────────
+
+export const DOW         = ["Domingo","Segunda","Terça","Quarta","Quinta","Sexta","Sábado"];
+export const DOW_SHORT   = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
+export const MONTHS      = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+export const MONTHS_SHORT = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+
+export const MS_DAY  = 86400000;
+export const dayKey  = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+export const sameDay = (a, b) => a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
+export const fmtDS   = (str) => str ? `${str.slice(8)}/${str.slice(5,7)}` : "";
+
+export function durationHours(inicio, fim) {
+  if (!inicio || !fim) return 0;
+  const [hi, mi] = inicio.split(":").map(Number);
+  const [hf, mf] = fim.split(":").map(Number);
+  let start = hi * 60 + mi;
+  let end   = hf * 60 + mf;
+  if (end <= start) end += 24 * 60;
+  return (end - start) / 60;
+}
+
+export function fmtHM(hoursDecimal) {
+  const totalMin = Math.round(hoursDecimal * 60);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return `${h}:${String(m).padStart(2, "0")}`;
+}
+
+export const brl = (v) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+// ─── LÓGICA DE ESCALA ────────────────────────────────────────────────────────
+
+export function cycleIndex(saturday) {
+  const diff = Math.round((saturday.getTime() - ANCHOR.getTime()) / (7 * MS_DAY));
+  return ((diff % 5) + 5) % 5;
+}
+
+export function buildSchedule() {
+  const days = [];
+  for (let t = RANGE_START.getTime(); t <= RANGE_END.getTime(); t += MS_DAY) {
+    const d = new Date(t);
+    d.setHours(12, 0, 0, 0);
+    const dow = d.getDay();
+    let shifts = [], folga = null, cycleWeek = null;
+    if (dow >= 1 && dow <= 5) {
+      shifts = WEEKDAY_SHIFTS[dow].map(s => ({ ...s }));
+    } else {
+      const sat = dow === 6 ? d : new Date(d.getTime() - MS_DAY);
+      const idx = cycleIndex(sat);
+      const rot = WEEKEND_CYCLE[idx];
+      cycleWeek = idx + 1;
+      folga = rot.folga;
+      shifts = dow === 6
+        ? [{ period:"Dia",  time:"00:00 – 12:00", dur:"12h", person: rot.sabDia   },
+           { period:"Noite",time:"12:00 – 00:00", dur:"12h", person: rot.sabNoite }]
+        : [{ period:"Dia",  time:"00:00 – 12:00", dur:"12h", person: rot.domDia   },
+           { period:"Noite",time:"12:00 – 00:00", dur:"12h", person: rot.domNoite }];
+    }
+    days.push({ date: new Date(d), dow, shifts, folga, cycleWeek });
+  }
+  return days;
+}
+
+export function currentOnCall(now) {
+  const dow = now.getDay();
+  const h   = now.getHours() + now.getMinutes() / 60;
+  const weekendOf = (d) => WEEKEND_CYCLE[cycleIndex(d.getDay()===6 ? d : new Date(d.getTime()-MS_DAY))];
+  if (dow === 6) {
+    const rot = weekendOf(now);
+    return h < 12
+      ? { person: rot.sabDia,   label: "Sábado · Dia",   time: "00:00 – 12:00" }
+      : { person: rot.sabNoite, label: "Sábado · Noite", time: "12:00 – 00:00" };
+  }
+  if (dow === 0) {
+    const rot = weekendOf(now);
+    return h < 12
+      ? { person: rot.domDia,   label: "Domingo · Dia",   time: "00:00 – 12:00" }
+      : { person: rot.domNoite, label: "Domingo · Noite", time: "12:00 – 00:00" };
+  }
+  const today = WEEKDAY_SHIFTS[dow];
+  if (h < 4)   return { person: today[0].person, label: `${DOW[dow]} · Madrugada`, time: today[0].time };
+  if (h < 9)   return { person: today[1].person, label: `${DOW[dow]} · Manhã`,     time: today[1].time };
+  if (h >= 18) {
+    if (dow === 5) return { person: today[2].person, label: "Sexta · Noite", time: today[2].time };
+    if (h < 23)   return { person: today[2].person, label: `${DOW[dow]} · Noite`, time: today[2].time };
+    const next = WEEKDAY_SHIFTS[dow + 1];
+    return { person: next[0].person, label: `${DOW[dow+1]} · Madrugada`, time: next[0].time };
+  }
+  return null;
+}
+
+export function getActiveSub(person, dateStr, subs) {
+  return subs.find(s => s.titular === person && dateStr >= s.from && dateStr <= s.until) || null;
+}
+
+export function getCoverSuggestions(titular, fromStr, untilStr, schedule) {
+  return schedule
+    .filter(d => {
+      const k = dayKey(d.date);
+      return k >= fromStr && k <= untilStr && d.shifts.some(s => s.person === titular);
+    })
+    .map(d => {
+      const busy = new Set(d.shifts.map(s => s.person));
+      const available = Object.keys(PEOPLE).filter(p => p !== titular && !busy.has(p));
+      return { date: d.date, dow: d.dow, shifts: d.shifts.filter(s => s.person === titular), available };
+    });
+}

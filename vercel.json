@@ -1,5 +1,5 @@
 {
   "rewrites": [
-    { "source": "/", "destination": "/Escala-SA.html" }
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }
