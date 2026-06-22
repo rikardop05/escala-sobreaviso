@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useApi } from '../lib/api';
-import { PEOPLE, CH_NAMES, MONTHS, durationHours, fmtHM, brl } from '../lib/schedule';
+import { PEOPLE, MONTHS, durationHours, fmtHM, brl } from '../lib/schedule';
 
 const TYPES = ["Sobreaviso", "Hora Extra", "Compensação"];
 const TYPE_META = {
@@ -16,7 +16,7 @@ export default function ControleDeHoras({ dark, profile }) {
   const [entries,        setEntries]        = useState([]);
   const [paramsByPerson, setParamsByPerson] = useState({});
   const [dataLoading,    setDataLoading]    = useState(true);
-  const [person,         setPerson]         = useState(profile?.memberId && CH_NAMES.includes(profile.memberId) ? profile.memberId : CH_NAMES[0]);
+  const person = profile?.memberId; // fixado ao perfil — só alterável via código
   const [monthIdx,       setMonthIdx]       = useState(now.getMonth());
   const [year,           setYear]           = useState(now.getFullYear());
   const [editId,         setEditId]         = useState(null);
@@ -189,14 +189,10 @@ export default function ControleDeHoras({ dark, profile }) {
         <div className="flex flex-wrap gap-3 mb-4 items-end">
           <div>
             <div className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color:CT.textLabel }}>Responsável</div>
-            <div className="flex flex-wrap gap-2">
-              {CH_NAMES.map(n => (
-                <button key={n} onClick={() => setPerson(n)}
-                  className="px-3 py-1.5 rounded-full text-sm font-bold transition-all"
-                  style={{ background:person===n?PEOPLE[n].color:CT.cardBg, color:person===n?"#fff":PEOPLE[n].color, border:`1.5px solid ${person===n?PEOPLE[n].color:CT.cardBorder}` }}>
-                  {n}
-                </button>
-              ))}
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-bold"
+              style={{ background: p.color, color: "#fff" }}>
+              <span className="w-2 h-2 rounded-full bg-white opacity-70" />
+              {person}
             </div>
           </div>
           <div>

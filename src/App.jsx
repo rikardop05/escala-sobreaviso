@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { SignedIn, SignedOut, RedirectToSignIn, UserButton } from '@clerk/clerk-react';
 import { useApi } from './lib/api';
-import { PEOPLE } from './lib/schedule';
+import { PEOPLE, CH_NAMES } from './lib/schedule';
 import EscalaSobreaviso from './components/EscalaSobreaviso';
 import ControleDeHoras from './components/ControleDeHoras';
 
@@ -49,6 +49,8 @@ function MainApp() {
   const [dark, setDark]         = useState(true);
   const [profile, setProfile]   = useState(null);
   const [loading, setLoading]   = useState(true);
+
+  const canAccessCH = profile && CH_NAMES.includes(profile.memberId);
 
   useEffect(() => {
     api('/api/profile')
@@ -119,9 +121,11 @@ function MainApp() {
         <button onClick={() => setView('escala')} style={tabStyle(view === 'escala')}>
           📅 Escala
         </button>
-        <button onClick={() => setView('controle')} style={tabStyle(view === 'controle')}>
-          ⏱ Controle de Horas
-        </button>
+        {canAccessCH && (
+          <button onClick={() => setView('controle')} style={tabStyle(view === 'controle')}>
+            ⏱ Controle de Horas
+          </button>
+        )}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "0.75rem" }}>
           {profile?.memberId && (
             <span style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.45)", fontWeight: "600" }}>
@@ -132,7 +136,7 @@ function MainApp() {
         </div>
       </div>
 
-      {view === 'escala'
+      {view === 'escala' || !canAccessCH
         ? <EscalaSobreaviso dark={dark} onToggleDark={toggleDark} profile={profile} saveProfile={saveProfile} />
         : <ControleDeHoras dark={dark} profile={profile} />}
     </div>
