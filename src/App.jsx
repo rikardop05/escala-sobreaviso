@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { SignedIn, SignedOut, RedirectToSignIn, UserButton } from '@clerk/clerk-react';
+import { SignedIn, SignedOut, RedirectToSignIn, UserButton, useUser } from '@clerk/clerk-react';
 import { useApi } from './lib/api';
 import { PEOPLE, CH_NAMES } from './lib/schedule';
 import EscalaSobreaviso from './components/EscalaSobreaviso';
@@ -121,26 +121,62 @@ function ProfileSetup({ onSelect }) {
 
 function MainApp() {
   const api = useApi();
+  const { user } = useUser();
   const [view, setView]         = useState('escala');
   const [dark, setDark]         = useState(true);
   const [profile, setProfile]   = useState(null);
   const [loading, setLoading]   = useState(true);
 
+  const storageKey = user?.id ? `escala_profile_${user.id}` : null;
   const canAccessCH = profile && CH_NAMES.includes(profile.memberId);
 
   useEffect(() => {
+    if (!user?.id) return;
+
+    // Carrega do localStorage imediatamente (sem esperar a API)
+    let hasLocal = false;
+    try {
+      const cached = localStorage.getItem(storageKey);
+      if (cached) {
+        const p = JSON.parse(cached);
+        setProfile(p);
+        if (typeof p?.dark === 'boolean') setDark(p.dark);
+        setLoading(false);
+        hasLocal = true;
+      }
+    } catch {}
+
+    // Sincroniza com o servidor em background
     api('/api/profile')
       .then(p => {
-        setProfile(p || {});
-        if (typeof p?.dark === 'boolean') setDark(p.dark);
+        const sp = p || {};
+        if (sp.memberId !== undefined) {
+          // Servidor tem perfil válido — é a fonte de verdade
+          setProfile(sp);
+          if (typeof sp.dark === 'boolean') setDark(sp.dark);
+          localStorage.setItem(storageKey, JSON.stringify(sp));
+        } else if (!hasLocal) {
+          // Sem cache local e servidor retornou vazio → mostra ProfileSetup
+          setProfile(sp);
+          localStorage.removeItem(storageKey);
+        }
+        // Se servidor retornou vazio mas há cache local, mantém o cache
       })
-      .catch(() => setProfile({}))
-      .finally(() => setLoading(false));
-  }, []);
+      .catch((err) => {
+        console.error('Erro ao sincronizar perfil:', err);
+        if (!hasLocal) setProfile({});
+      })
+      .finally(() => {
+        if (!hasLocal) setLoading(false);
+      });
+  }, [user?.id]);
 
   const saveProfile = async (updates) => {
     const next = { ...profile, ...updates };
     setProfile(next);
+    // Salva no localStorage imediatamente
+    if (storageKey) localStorage.setItem(storageKey, JSON.stringify(next));
+    // Sincroniza com servidor
     api('/api/profile', { method: 'POST', body: next }).catch(console.error);
     return next;
   };

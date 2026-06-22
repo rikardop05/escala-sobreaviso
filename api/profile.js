@@ -13,18 +13,26 @@ async function getUserId(req) {
 export default async function handler(req, res) {
   let userId;
   try { userId = await getUserId(req); }
-  catch (e) { return res.status(e.status || 401).json({ error: e.message }); }
-
-  if (req.method === 'GET') {
-    const profile = await kv.get(`user:${userId}:profile`) ?? {};
-    return res.status(200).json(profile);
+  catch (e) {
+    console.error('[profile] auth error:', e.message);
+    return res.status(e.status || 401).json({ error: e.message });
   }
 
-  if (req.method === 'POST') {
-    await kv.set(`user:${userId}:profile`, req.body);
-    return res.status(200).json(req.body);
-  }
+  try {
+    if (req.method === 'GET') {
+      const profile = await kv.get(`user:${userId}:profile`) ?? {};
+      return res.status(200).json(profile);
+    }
 
-  res.setHeader('Allow', 'GET, POST');
-  res.status(405).json({ error: 'Method not allowed' });
+    if (req.method === 'POST') {
+      await kv.set(`user:${userId}:profile`, req.body);
+      return res.status(200).json(req.body);
+    }
+
+    res.setHeader('Allow', 'GET, POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  } catch (e) {
+    console.error('[profile] kv error:', e.message);
+    return res.status(500).json({ error: 'Erro interno' });
+  }
 }
