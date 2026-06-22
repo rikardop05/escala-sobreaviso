@@ -4,13 +4,8 @@ import { ClerkProvider } from '@clerk/clerk-react';
 import App from './App';
 import './index.css';
 
-const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
-
-if (!PUBLISHABLE_KEY) {
-  document.getElementById('root').innerHTML =
-    '<div style="color:red;padding:2rem;font-family:monospace">ERRO: variável VITE_CLERK_PUBLISHABLE_KEY não configurada no Vercel.</div>';
-  throw new Error('Missing VITE_CLERK_PUBLISHABLE_KEY');
-}
+// Publishable key é pública por design — seguro estar no código
+const PUBLISHABLE_KEY = 'pk_test_Y29tcG9zZWQta29hbGEtNjIuY2xlcmsuYWNjb3VudHMuZGV2JA';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
