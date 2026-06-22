@@ -8,6 +8,16 @@ import ControleDeHoras from './components/ControleDeHoras';
 // ─── TELA DE SELEÇÃO DE MEMBRO ───────────────────────────────────────────────
 
 function ProfileSetup({ onSelect }) {
+  const [pending, setPending] = useState(null);
+
+  const handleSelect = (name) => {
+    setPending(name);
+  };
+
+  const handleConfirm = () => {
+    onSelect(pending);
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center p-4" style={{ background: "#0F172A" }}>
       <div className="w-full max-w-sm">
@@ -15,27 +25,93 @@ function ProfileSetup({ onSelect }) {
           <div className="text-white text-2xl font-bold mb-1">Bem-vindo!</div>
           <div className="text-slate-400 text-sm">Qual membro da equipe você é?</div>
         </div>
+
         <div className="space-y-2">
-          {Object.entries(PEOPLE).map(([name, p]) => (
-            <button
-              key={name}
-              onClick={() => onSelect(name)}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-left transition-all hover:scale-[1.02]"
-              style={{ background: p.bg, color: p.color, border: `2px solid ${p.color}22` }}
-            >
-              <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: p.color }} />
-              {name}
-            </button>
-          ))}
+          {Object.entries(PEOPLE).map(([name, p]) => {
+            const isSelected = pending === name;
+            return (
+              <button
+                key={name}
+                onClick={() => handleSelect(name)}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-left transition-all hover:scale-[1.02]"
+                style={{
+                  background: isSelected ? p.color : p.bg,
+                  color: isSelected ? '#fff' : p.color,
+                  border: `2px solid ${isSelected ? p.color : p.color + '22'}`,
+                  transform: isSelected ? 'scale(1.02)' : undefined,
+                }}
+              >
+                <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: isSelected ? '#fff' : p.color, opacity: isSelected ? 0.8 : 1 }} />
+                {name}
+                {isSelected && <span className="ml-auto text-xs font-semibold opacity-80">selecionado</span>}
+              </button>
+            );
+          })}
           <button
-            onClick={() => onSelect(null)}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-left transition-all hover:scale-[1.02] text-slate-400"
-            style={{ background: "#1E293B", border: "2px solid #33415533" }}
+            onClick={() => handleSelect(null)}
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-left transition-all hover:scale-[1.02]"
+            style={{
+              background: pending === null && pending !== undefined ? "#334155" : "#1E293B",
+              color: "#94A3B8",
+              border: `2px solid ${pending === null && pending !== undefined ? '#64748B' : '#33415533'}`,
+            }}
           >
             <span className="w-3 h-3 rounded-full flex-shrink-0 bg-slate-500" />
             Só visualizar (sem vínculo)
           </button>
         </div>
+
+        {/* Confirmação */}
+        {pending !== undefined && pending !== null && (
+          <div className="mt-6 rounded-xl p-4" style={{ background: "#1E293B", border: "1px solid #334155" }}>
+            <div className="text-slate-300 text-sm mb-1">
+              <span className="font-bold" style={{ color: PEOPLE[pending]?.color }}>{pending}</span> ficará permanentemente vinculado à sua conta.
+            </div>
+            <div className="text-slate-500 text-xs mb-4">
+              Essa escolha não poderá ser alterada pelo app. Confirme apenas se você é <strong style={{ color: "#94A3B8" }}>{pending}</strong>.
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setPending(undefined)}
+                className="flex-1 py-2 rounded-lg text-sm font-bold"
+                style={{ background: "#0F172A", color: "#64748B", border: "1px solid #334155" }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleConfirm}
+                className="flex-1 py-2 rounded-lg text-sm font-bold text-white"
+                style={{ background: PEOPLE[pending]?.color }}
+              >
+                Confirmar como {pending}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {pending === null && (
+          <div className="mt-6 rounded-xl p-4" style={{ background: "#1E293B", border: "1px solid #334155" }}>
+            <div className="text-slate-300 text-sm mb-4">
+              Você entrará apenas como <span className="font-bold text-slate-200">visitante</span>, sem acesso ao Controle de Horas.
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setPending(undefined)}
+                className="flex-1 py-2 rounded-lg text-sm font-bold"
+                style={{ background: "#0F172A", color: "#64748B", border: "1px solid #334155" }}
+              >
+                Voltar
+              </button>
+              <button
+                onClick={handleConfirm}
+                className="flex-1 py-2 rounded-lg text-sm font-bold"
+                style={{ background: "#334155", color: "#CBD5E1" }}
+              >
+                Entrar como visitante
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
