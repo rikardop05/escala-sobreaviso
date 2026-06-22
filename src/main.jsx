@@ -7,7 +7,9 @@ import './index.css';
 const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
 if (!PUBLISHABLE_KEY) {
-  throw new Error('Variável VITE_CLERK_PUBLISHABLE_KEY não configurada.');
+  document.getElementById('root').innerHTML =
+    '<div style="color:red;padding:2rem;font-family:monospace">ERRO: variável VITE_CLERK_PUBLISHABLE_KEY não configurada no Vercel.</div>';
+  throw new Error('Missing VITE_CLERK_PUBLISHABLE_KEY');
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(

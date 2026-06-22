@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { SignedIn, SignedOut, SignIn, UserButton } from '@clerk/clerk-react';
+import { SignedIn, SignedOut, RedirectToSignIn, UserButton } from '@clerk/clerk-react';
 import { useApi } from './lib/api';
 import { PEOPLE } from './lib/schedule';
 import EscalaSobreaviso from './components/EscalaSobreaviso';
@@ -145,9 +145,7 @@ export default function App() {
   return (
     <>
       <SignedOut>
-        <div className="min-h-screen flex items-center justify-center" style={{ background: "#0F172A" }}>
-          <SignIn routing="hash" />
-        </div>
+        <RedirectToSignIn />
       </SignedOut>
       <SignedIn>
         <MainApp />
