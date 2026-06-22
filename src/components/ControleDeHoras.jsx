@@ -75,8 +75,8 @@ export default function ControleDeHoras({ dark, profile }) {
     transition: "border-color 0.15s",
   };
 
-  const params = paramsByPerson[person] || { remuneracao: 4000, jornada: 168 };
-  const valorHora = params.remuneracao / params.jornada;
+  const params = paramsByPerson[person] || { remuneracao: '', jornada: 168 };
+  const valorHora = (Number(params.remuneracao) || 0) / params.jornada;
 
   const setParam = (field, value) => {
     const newParams = { ...paramsByPerson, [person]: { ...params, [field]: value } };
@@ -216,7 +216,7 @@ export default function ControleDeHoras({ dark, profile }) {
             <div>
               <div className="text-xs mb-1" style={{ color:CT.textLabel }}>Remuneração mensal (R$)</div>
               <input type="number" style={{ ...inputStyle, width:"9rem" }} value={params.remuneracao}
-                onChange={e => setParam("remuneracao", Number(e.target.value))} />
+                onChange={e => setParam("remuneracao", e.target.value === '' ? '' : Number(e.target.value))} />
             </div>
             <div>
               <div className="text-xs mb-1" style={{ color:CT.textLabel }}>Jornada (h)</div>
