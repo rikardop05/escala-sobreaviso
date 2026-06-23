@@ -33,6 +33,8 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
   const [subs,     setSubs]     = useState([]);
   const [subForm,  setSubForm]  = useState({ show: false, titular: "", substituto: "", from: "", until: "" });
   const [subsLoading, setSubsLoading] = useState(true);
+  const [subSaving,   setSubSaving]   = useState(false);
+  const [subError,    setSubError]    = useState(null);
 
   // Carrega substituições do servidor
   useEffect(() => {
@@ -132,7 +134,9 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
   }
 
   async function addSub() {
-    if (!canSave) return;
+    if (!canSave || subSaving) return;
+    setSubError(null);
+    setSubSaving(true);
     const newSub = { titular: subForm.titular, substituto: subForm.substituto, from: subForm.from, until: subForm.until };
     try {
       const saved = await api('/api/substitutions', { method: 'POST', body: newSub });
@@ -140,6 +144,9 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
       setSubForm({ show: false, titular: "", substituto: "", from: todayStr, until: "" });
     } catch (e) {
       console.error('Erro ao salvar substituição:', e);
+      setSubError('Erro ao salvar. Verifique se o Vercel KV está conectado ao projeto.');
+    } finally {
+      setSubSaving(false);
     }
   }
 
@@ -323,10 +330,13 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                   <input type="date" value={subForm.until} onChange={e => setSubForm(f => ({ ...f, until:e.target.value }))} style={selStyle} />
                 </div>
               </div>
-              <button onClick={addSub} disabled={!canSave}
-                style={{ background:canSave?T.saveBg:T.cardBorder, color:canSave?T.saveColor:T.textMuted, border:"none", borderRadius:"0.5rem", padding:"0.4rem 1.1rem", fontWeight:"700", fontSize:"0.8rem", cursor:canSave?"pointer":"not-allowed", transition:"background 0.15s" }}>
-                Salvar substituição
+              <button onClick={addSub} disabled={!canSave || subSaving}
+                style={{ background:canSave&&!subSaving?T.saveBg:T.cardBorder, color:canSave&&!subSaving?T.saveColor:T.textMuted, border:"none", borderRadius:"0.5rem", padding:"0.4rem 1.1rem", fontWeight:"700", fontSize:"0.8rem", cursor:canSave&&!subSaving?"pointer":"not-allowed", transition:"background 0.15s" }}>
+                {subSaving ? "Salvando..." : "Salvar substituição"}
               </button>
+              {subError && (
+                <p style={{ color:"#EF4444", fontSize:"0.75rem", fontWeight:"600", marginTop:"0.5rem", marginBottom:0 }}>{subError}</p>
+              )}
 
               {coverSuggestions.length > 0 && (
                 <div className="mt-4 pt-3" style={{ borderTop:`1px solid ${T.upcomingDivider}` }}>

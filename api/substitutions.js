@@ -12,27 +12,35 @@ async function getUserId(req) {
 
 export default async function handler(req, res) {
   try { await getUserId(req); }
-  catch (e) { return res.status(e.status || 401).json({ error: e.message }); }
-
-  if (req.method === 'GET') {
-    const subs = await kv.get('substitutions') ?? [];
-    return res.status(200).json(subs);
+  catch (e) {
+    console.error('[substitutions] auth error:', e.message);
+    return res.status(e.status || 401).json({ error: e.message });
   }
 
-  if (req.method === 'POST') {
-    const subs = await kv.get('substitutions') ?? [];
-    const newSub = { ...req.body, id: String(Date.now()) };
-    await kv.set('substitutions', [...subs, newSub]);
-    return res.status(200).json(newSub);
-  }
+  try {
+    if (req.method === 'GET') {
+      const subs = await kv.get('substitutions') ?? [];
+      return res.status(200).json(subs);
+    }
 
-  if (req.method === 'DELETE') {
-    const { id } = req.query;
-    const subs = (await kv.get('substitutions') ?? []).filter(s => s.id !== id);
-    await kv.set('substitutions', subs);
-    return res.status(200).json({ ok: true });
-  }
+    if (req.method === 'POST') {
+      const subs = await kv.get('substitutions') ?? [];
+      const newSub = { ...req.body, id: String(Date.now()) };
+      await kv.set('substitutions', [...subs, newSub]);
+      return res.status(200).json(newSub);
+    }
 
-  res.setHeader('Allow', 'GET, POST, DELETE');
-  res.status(405).json({ error: 'Method not allowed' });
+    if (req.method === 'DELETE') {
+      const { id } = req.query;
+      const subs = (await kv.get('substitutions') ?? []).filter(s => s.id !== id);
+      await kv.set('substitutions', subs);
+      return res.status(200).json({ ok: true });
+    }
+
+    res.setHeader('Allow', 'GET, POST, DELETE');
+    return res.status(405).json({ error: 'Method not allowed' });
+  } catch (e) {
+    console.error('[substitutions] kv error:', e.message);
+    return res.status(500).json({ error: 'Erro interno: ' + e.message });
+  }
 }
