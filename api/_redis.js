@@ -1,8 +1,7 @@
 import Redis from 'ioredis';
 
 const redis = new Redis(process.env.REDIS_URL, {
-  maxRetriesPerRequest: 1,
-  enableOfflineQueue: false,
+  maxRetriesPerRequest: 3,
 });
 
 export const kvGet = async (key) => {
