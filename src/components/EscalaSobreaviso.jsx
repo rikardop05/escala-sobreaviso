@@ -51,14 +51,6 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     return () => clearInterval(id);
   }, []);
 
-  // Scrolla para hoje quando o mês ativo for o mês atual
-  useEffect(() => {
-    const currentMonthKey = `${now.getFullYear()}-${now.getMonth()}`;
-    if (activeMonth === currentMonthKey && todayRef.current) {
-      todayRef.current.scrollIntoView({ behavior: 'instant', block: 'start' });
-    }
-  }, [activeMonth]);
-
   const handleFilterChange = (name) => {
     const next = filter === name ? null : name;
     setFilter(next);
@@ -86,6 +78,14 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     const k = `${now.getFullYear()}-${now.getMonth()}`;
     return months.some(m => m.key === k) ? k : months[0].key;
   })();
+
+  // Scrolla para hoje quando o mês ativo for o mês atual
+  useEffect(() => {
+    const currentMonthKey = `${now.getFullYear()}-${now.getMonth()}`;
+    if (activeMonth === currentMonthKey && todayRef.current) {
+      todayRef.current.scrollIntoView({ behavior: 'instant', block: 'start' });
+    }
+  }, [activeMonth]);
 
   const monthDays = useMemo(
     () => schedule.filter(d => `${d.date.getFullYear()}-${d.date.getMonth()}` === activeMonth),
