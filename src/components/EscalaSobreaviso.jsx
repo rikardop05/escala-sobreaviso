@@ -144,7 +144,9 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
       setSubForm({ show: false, titular: "", substituto: "", from: todayStr, until: "" });
     } catch (e) {
       console.error('Erro ao salvar substituição:', e);
-      setSubError('Erro ao salvar. Verifique se o Vercel KV está conectado ao projeto.');
+      let msg = e.message;
+      try { msg = JSON.parse(e.message)?.error || e.message; } catch {}
+      setSubError(`Erro: ${msg}`);
     } finally {
       setSubSaving(false);
     }
