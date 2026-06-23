@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useApi } from '../lib/api';
 import {
   PEOPLE, DOW, DOW_SHORT, MONTHS, MONTHS_SHORT,
@@ -35,6 +35,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
   const [subsLoading, setSubsLoading] = useState(true);
   const [subSaving,   setSubSaving]   = useState(false);
   const [subError,    setSubError]    = useState(null);
+  const todayRef = useRef(null);
 
   // Carrega substituições do servidor
   useEffect(() => {
@@ -49,6 +50,14 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     const id = setInterval(() => setNow(new Date()), 60000);
     return () => clearInterval(id);
   }, []);
+
+  // Scrolla para hoje quando o mês ativo for o mês atual
+  useEffect(() => {
+    const currentMonthKey = `${now.getFullYear()}-${now.getMonth()}`;
+    if (activeMonth === currentMonthKey && todayRef.current) {
+      todayRef.current.scrollIntoView({ behavior: 'instant', block: 'start' });
+    }
+  }, [activeMonth]);
 
   const handleFilterChange = (name) => {
     const next = filter === name ? null : name;
@@ -430,8 +439,8 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
               return (sub ? sub.substituto : s.person) === filter || s.person === filter;
             }) || d.folga === filter;
             return (
-              <div key={dayKey(d.date)} className="rounded-xl overflow-hidden"
-                style={{ border:`${isToday?2:1}px solid ${isToday?T.cardBorderToday:T.cardBorder}`, opacity: isPast?0.45:filter&&!hasFiltered?0.35:1, background:isWeekend?T.cardBgWeekend:T.cardBg }}>
+              <div key={dayKey(d.date)} ref={isToday ? todayRef : null} className="rounded-xl overflow-hidden"
+                style={{ scrollMarginTop:'64px', border:`${isToday?2:1}px solid ${isToday?T.cardBorderToday:T.cardBorder}`, opacity: isPast?0.45:filter&&!hasFiltered?0.35:1, background:isWeekend?T.cardBgWeekend:T.cardBg }}>
                 <div className="flex items-stretch">
                   <div className="flex flex-col items-center justify-center w-16 shrink-0 py-3"
                     style={{ background:isWeekend?T.dateColBgWeekend:T.dateColBg, borderRight:`1px solid ${T.dateColBorder}` }}>
