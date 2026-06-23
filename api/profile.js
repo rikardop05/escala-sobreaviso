@@ -1,6 +1,5 @@
-import { kv } from '@vercel/kv';
+import { kvGet, kvSet } from './_redis.js';
 
-// Decodifica o JWT localmente sem chamada de rede (adequado para app interno)
 function getUserId(req) {
   const token = req.headers['authorization']?.slice(7);
   if (!token) throw Object.assign(new Error('Sem autorização'), { status: 401 });
@@ -23,19 +22,17 @@ export default async function handler(req, res) {
 
   try {
     if (req.method === 'GET') {
-      const profile = await kv.get(`user:${userId}:profile`) ?? {};
+      const profile = await kvGet(`user:${userId}:profile`) ?? {};
       return res.status(200).json(profile);
     }
-
     if (req.method === 'POST') {
-      await kv.set(`user:${userId}:profile`, req.body);
+      await kvSet(`user:${userId}:profile`, req.body);
       return res.status(200).json(req.body);
     }
-
     res.setHeader('Allow', 'GET, POST');
     return res.status(405).json({ error: 'Method not allowed' });
   } catch (e) {
-    console.error('[profile] kv error:', e.message);
-    return res.status(500).json({ error: 'Erro interno' });
+    console.error('[profile] redis error:', e.message);
+    return res.status(500).json({ error: 'Erro interno: ' + e.message });
   }
 }
