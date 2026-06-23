@@ -417,18 +417,21 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
         )}
 
         {/* NAVEGAÇÃO DE MESES */}
-        <div className="flex gap-2 overflow-x-auto pb-2 mb-3" style={{ scrollbarWidth:"thin" }}>
-          {months.map(m => (
-            <button key={m.key} onClick={() => handleMonthChange(m.key)} className="px-3 py-1.5 rounded-lg text-sm font-bold whitespace-nowrap transition-all"
-              style={{ background:activeMonth===m.key?T.monthActiveBg:T.monthDefBg, color:activeMonth===m.key?T.monthActiveColor:T.monthDefColor, border:"1px solid "+(activeMonth===m.key?T.monthActiveBorder:T.monthDefBorder) }}>
-              {MONTHS_SHORT[m.m]}/{String(m.y).slice(2)}
-            </button>
-          ))}
+        <div className="rounded-xl px-3 py-2 mb-3" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}` }}>
+          <div className="flex gap-2 overflow-x-auto" style={{ scrollbarWidth:"thin", scrollbarColor:`${T.cardBorder} transparent` }}>
+            {months.map(m => (
+              <button key={m.key} onClick={() => handleMonthChange(m.key)} className="px-3 py-1.5 rounded-lg text-sm font-bold whitespace-nowrap transition-all flex-shrink-0"
+                style={{ background:activeMonth===m.key?T.monthActiveBg:T.monthDefBg, color:activeMonth===m.key?T.monthActiveColor:T.monthDefColor, border:"1px solid "+(activeMonth===m.key?T.monthActiveBorder:T.monthDefBorder) }}>
+                {MONTHS_SHORT[m.m]}/{String(m.y).slice(2)}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* CALENDÁRIO */}
-        <h2 className="font-bold text-lg mb-3" style={{ color:T.textPrimary }}>{am?`${MONTHS[am.m]} de ${am.y}`:""}</h2>
-        <div className="space-y-2">
+        <h2 className="font-bold text-lg mb-2" style={{ color:T.textPrimary }}>{am?`${MONTHS[am.m]} de ${am.y}`:""}</h2>
+        <div style={{ height:'62vh', overflowY:'auto', scrollbarWidth:'thin', scrollbarColor:`${T.cardBorder} transparent`, paddingRight:'2px' }}>
+        <div className="space-y-2 pb-4">
           {monthDays.map(d => {
             const isToday   = sameDay(d.date, now);
             const isWeekend = d.dow === 0 || d.dow === 6;
@@ -440,7 +443,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
             }) || d.folga === filter;
             return (
               <div key={dayKey(d.date)} ref={isToday ? todayRef : null} className="rounded-xl overflow-hidden"
-                style={{ scrollMarginTop:'64px', border:`${isToday?2:1}px solid ${isToday?T.cardBorderToday:T.cardBorder}`, opacity: isPast?0.45:filter&&!hasFiltered?0.35:1, background:isWeekend?T.cardBgWeekend:T.cardBg }}>
+                style={{ scrollMarginTop:'8px', border:`${isToday?2:1}px solid ${isToday?T.cardBorderToday:T.cardBorder}`, opacity: isPast?0.45:filter&&!hasFiltered?0.35:1, background:isWeekend?T.cardBgWeekend:T.cardBg }}>
                 <div className="flex items-stretch">
                   <div className="flex flex-col items-center justify-center w-16 shrink-0 py-3"
                     style={{ background:isWeekend?T.dateColBgWeekend:T.dateColBg, borderRight:`1px solid ${T.dateColBorder}` }}>
@@ -481,8 +484,9 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
             );
           })}
         </div>
+        </div>
 
-        <div className="mt-6 text-center text-xs" style={{ color:T.textMuted }}>
+        <div className="mt-4 text-center text-xs" style={{ color:T.textMuted }}>
           Ciclo de fim de semana ancorado em 13/06/2026 (Semana 1) · Escala seg–sex fixa · 5 semanas de rotação
         </div>
       </div>
