@@ -105,7 +105,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     [schedule, activeMonth]
   );
 
-  const onCallBase = currentOnCall(now);
+  const onCallBase = currentOnCall(now, schedule);
   const onCall = onCallBase ? (() => {
     const sub = getActiveSub(onCallBase.person, todayStr, subs);
     return sub ? { ...onCallBase, person: sub.substituto, coveringFor: onCallBase.person } : onCallBase;

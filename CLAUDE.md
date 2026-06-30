@@ -141,7 +141,7 @@ Overrides são persistidos em Redis na chave global `schedule_overrides`.
 O admin edita via UI (modo edição no calendário) → POST `/api/schedule`.
 Todos os componentes que usam `buildSchedule()` recebem os overrides para consistência financeira.
 
-**Nota**: O widget "Agora" (currentOnCall) usa a escala base, não os overrides.
+O widget "Agora" (`currentOnCall(now, schedule)`) recebe o array já construído por `buildSchedule(overrides)`, portanto reflete overrides do admin.
 
 ### Substituições
 

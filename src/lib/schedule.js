@@ -134,33 +134,41 @@ export function buildSchedule(overrides = {}) {
   return days;
 }
 
-export function currentOnCall(now) {
+// schedule: the array returned by buildSchedule(overrides) — shifts already have overrides merged.
+// Time-window boundaries are identical to the base implementation; only the data source changes.
+export function currentOnCall(now, schedule) {
   const dow = now.getDay();
   const h   = now.getHours() + now.getMinutes() / 60;
-  const weekendOf = (d) => WEEKEND_CYCLE[cycleIndex(d.getDay()===6 ? d : new Date(d.getTime()-MS_DAY))];
-  if (dow === 6) {
-    const rot = weekendOf(now);
-    return h < 12
-      ? { person: rot.sabDia,   label: "Sábado · Dia",   time: "00:00 – 12:00" }
-      : { person: rot.sabNoite, label: "Sábado · Noite", time: "12:00 – 00:00" };
+
+  const findDay = (d) => schedule.find(e => sameDay(e.date, d));
+
+  if (dow === 6 || dow === 0) {
+    const today = findDay(now);
+    if (!today) return null;
+    const shift = today.shifts[h < 12 ? 0 : 1];
+    if (!shift) return null;
+    return { person: shift.person, label: `${DOW[dow]} · ${shift.period}`, time: shift.time };
   }
-  if (dow === 0) {
-    const rot = weekendOf(now);
-    return h < 12
-      ? { person: rot.domDia,   label: "Domingo · Dia",   time: "00:00 – 12:00" }
-      : { person: rot.domNoite, label: "Domingo · Noite", time: "12:00 – 00:00" };
+
+  // Weekday (Mon–Fri)
+  let targetDay, shiftIdx;
+  if (h < 4) {
+    targetDay = findDay(now);   shiftIdx = 0; // Madrugada
+  } else if (h < 9) {
+    targetDay = findDay(now);   shiftIdx = 1; // Manhã
+  } else if (h >= 18 && (dow === 5 || h < 23)) {
+    targetDay = findDay(now);   shiftIdx = 2; // Noite (Sexta runs to 24:00 — no 23:00 hand-off)
+  } else if (h >= 23) {
+    // 23:00+: next day's Madrugada has already started (Mon–Thu; Fri caught above).
+    targetDay = findDay(new Date(now.getTime() + MS_DAY)); shiftIdx = 0;
+  } else {
+    return null; // 09:00–18:00: no active shift
   }
-  const today = WEEKDAY_SHIFTS[dow];
-  if (h < 4)   return { person: today[0].person, label: `${DOW[dow]} · Madrugada`, time: today[0].time };
-  if (h < 9)   return { person: today[1].person, label: `${DOW[dow]} · Manhã`,     time: today[1].time };
-  if (h >= 18) {
-    if (dow === 5) return { person: today[2].person, label: "Sexta · Noite", time: today[2].time };
-    if (h < 23)   return { person: today[2].person, label: `${DOW[dow]} · Noite`, time: today[2].time };
-    // At 23:00+ the Madrugada shift (23:00–04:00) has already started — report next day's person.
-    const next = WEEKDAY_SHIFTS[dow + 1];
-    return { person: next[0].person, label: `${DOW[dow+1]} · Madrugada`, time: next[0].time };
-  }
-  return null;
+
+  if (!targetDay) return null;
+  const shift = targetDay.shifts[shiftIdx];
+  if (!shift) return null;
+  return { person: shift.person, label: `${DOW[targetDay.date.getDay()]} · ${shift.period}`, time: shift.time };
 }
 
 export function getActiveSub(person, dateStr, subs) {
