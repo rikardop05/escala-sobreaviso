@@ -254,4 +254,4 @@ Ao adicionar membros à equipe em `_allowlist.js`, atualizar também `TEAM_MEMBE
 - **Erros ao cliente**: sempre genéricos (`"Unauthorized"`, `"Forbidden"`, `"Internal error"`). Detalhes só no `console.error`.
 - **API helpers privados**: `api/_*.js` (prefixo `_`) não são expostos pelo Vercel como rotas públicas.
 - **Postgres**: `db/schema.sql` é planejamento futuro. Não há migrations em execução.
-- **Versão legada**: não tocar em `index.html`, `escala-sobreaviso.jsx`, `libs/`, `main.py`.
+- **Arquivo histórico**: `_arquivo/legado-standalone/` contém a versão antiga standalone (index.html + CDN + pywebview). `_arquivo/planejamento/` contém o schema PostgreSQL futuro. Não alterar — apenas para registro.

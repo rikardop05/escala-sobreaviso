@@ -1,11 +1,6 @@
 # Backups locais
 backup/
 
-# Arquivos de build/desktop
-build.bat
-executar.bat
-main.py
-
 # Dependências
 node_modules/
 
