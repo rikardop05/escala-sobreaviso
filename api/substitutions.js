@@ -1,5 +1,6 @@
 import { kvGet, kvSet } from './_redis.js';
 import { requireUser } from './_auth.js';
+import { validate, checkBodySize, SubPostSchema } from './_validate.js';
 
 export default async function handler(req, res) {
   let memberId, role;
@@ -17,20 +18,31 @@ export default async function handler(req, res) {
 
     if (req.method === 'POST') {
       if (role === 'viewer') return res.status(403).json({ error: 'Forbidden' });
-      const { titular, substituto } = req.body;
+
+      if (!checkBodySize(req.body)) return res.status(400).json({ error: 'Bad request' });
+      const { ok, data: body } = validate(SubPostSchema, req.body);
+      if (!ok) return res.status(400).json({ error: 'Bad request' });
+
+      const { titular, substituto } = body;
       // Member can only create substitutions that involve their own memberId
       if (role === 'member' && titular !== memberId && substituto !== memberId) {
         return res.status(403).json({ error: 'Forbidden' });
       }
+
       const subs = await kvGet('substitutions') ?? [];
-      const newSub = { ...req.body, id: String(Date.now()) };
+      const newSub = { ...body, id: String(Date.now()) };
       await kvSet('substitutions', [...subs, newSub]);
       return res.status(200).json(newSub);
     }
 
     if (req.method === 'DELETE') {
       if (role === 'viewer') return res.status(403).json({ error: 'Forbidden' });
+
       const { id } = req.query;
+      if (!id || typeof id !== 'string' || id.trim() === '') {
+        return res.status(400).json({ error: 'Bad request' });
+      }
+
       const subs = await kvGet('substitutions') ?? [];
       const target = subs.find(s => s.id === id);
       if (!target) return res.status(404).json({ error: 'Not found' });

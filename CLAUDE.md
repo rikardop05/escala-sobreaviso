@@ -227,6 +227,24 @@ Handler usa role para controle de acesso, memberId para isolar dados
 
 ---
 
+## Validação de Input (Zod)
+
+`api/_validate.js` centraliza todos os schemas Zod e os helpers `validate()` / `checkBodySize()`.
+
+| Endpoint | Schema |
+|----------|--------|
+| `schedule` POST | `SchedulePatchSchema` — record `dayKey → shiftIdx ('0'|'1'|'2') → OverrideObj | null`. `person` validado contra nomes da equipe. |
+| `substitutions` POST | `SubPostSchema` — campos obrigatórios tipados; `until >= from`; `titular ≠ substituto`. |
+| `substitutions` DELETE | `id` query string não-vazia (checagem inline). |
+| `ch` POST | `ChPostSchema` — `entries[]` (com `tipo` enum), `params` record, `person` string. Todos opcionais. |
+
+Ordem de execução: `requireUser` → checagem de role → `checkBodySize` (50 KB) → `validate(schema)` → Redis.
+Erros de validação: log server-side dos primeiros 5 issues; resposta sempre `400 { error: 'Bad request' }`.
+
+Ao adicionar membros à equipe em `_allowlist.js`, atualizar também `TEAM_MEMBERS` em `api/_validate.js`.
+
+---
+
 ## Regras de Manutenção
 
 - **Documentação**: atualizar este `CLAUDE.md` sempre que uma função ou ponto central mudar.

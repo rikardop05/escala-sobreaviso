@@ -1,5 +1,6 @@
 import { kvGet, kvSet } from './_redis.js';
 import { requireUser } from './_auth.js';
+import { validate, checkBodySize, SchedulePatchSchema } from './_validate.js';
 
 // Persists admin-defined overrides on top of the deterministic base schedule.
 //
@@ -28,9 +29,10 @@ export default async function handler(req, res) {
     if (req.method === 'POST') {
       if (role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
 
-      // Body: patch object { [dayKey]: { [shiftIndex]: overrideObj | null } }
-      // null = revert that shift to base schedule
-      const patch = req.body;
+      if (!checkBodySize(req.body)) return res.status(400).json({ error: 'Bad request' });
+      const { ok, data: patch } = validate(SchedulePatchSchema, req.body);
+      if (!ok) return res.status(400).json({ error: 'Bad request' });
+
       const current = await kvGet('schedule_overrides') ?? {};
 
       for (const [day, shifts] of Object.entries(patch)) {

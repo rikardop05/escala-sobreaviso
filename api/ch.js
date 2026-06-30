@@ -1,5 +1,6 @@
 import { kvGet, kvSet } from './_redis.js';
 import { requireUser } from './_auth.js';
+import { validate, checkBodySize, ChPostSchema } from './_validate.js';
 
 // Keys use memberId (not userId) so the admin can read/write any member's data.
 // ⚠ Migration note: previous keys were 'user:{clerkId}:ch_*'.
@@ -28,7 +29,11 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'POST') {
-      const { entries, params, person: bodyPerson } = req.body;
+      if (!checkBodySize(req.body)) return res.status(400).json({ error: 'Bad request' });
+      const { ok, data: body } = validate(ChPostSchema, req.body);
+      if (!ok) return res.status(400).json({ error: 'Bad request' });
+
+      const { entries, params, person: bodyPerson } = body;
       // Admin can write to any member's data via body.person
       const target = (role === 'admin' && bodyPerson) ? bodyPerson : memberId;
       await Promise.all([
