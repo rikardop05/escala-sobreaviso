@@ -26,6 +26,7 @@ function PersonTag({ name, dim, subOf }) {
 
 export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProfile }) {
   const api = useApi();
+  const isAdmin = profile?.role === 'admin';
 
   const [now,      setNow]      = useState(new Date());
   const [filter,   setFilter]   = useState(profile?.filter ?? null);
@@ -37,12 +38,23 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
   const [subError,    setSubError]    = useState(null);
   const todayRef = useRef(null);
 
-  // Carrega substituições do servidor
+  // ─── OVERRIDES DE ESCALA ─────────────────────────────────────────────────────
+  const [overrides,      setOverrides]      = useState({});
+  const [editMode,       setEditMode]       = useState(false);
+  const [selectedShifts, setSelectedShifts] = useState(new Set());
+  const [editForm,       setEditForm]       = useState({ person: '', period: '', time: '', dur: '' });
+  const [editSaving,     setEditSaving]     = useState(false);
+  const [editError,      setEditError]      = useState(null);
+
+  // Carrega substituições e overrides do servidor
   useEffect(() => {
     api('/api/substitutions')
       .then(data => setSubs(data || []))
       .catch(console.error)
       .finally(() => setSubsLoading(false));
+    api('/api/schedule')
+      .then(data => setOverrides(data || {}))
+      .catch(console.error);
   }, []);
 
   // Relógio
@@ -62,7 +74,8 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     saveProfile({ monthKey: key });
   };
 
-  const schedule = useMemo(() => buildSchedule(), []);
+  // Schedule recomputes when overrides change (admin edits reflect immediately)
+  const schedule = useMemo(() => buildSchedule(overrides), [overrides]);
   const todayStr = dayKey(now);
 
   const months = useMemo(() => {
@@ -152,7 +165,6 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
       setSubs(prev => [...prev, saved]);
       setSubForm({ show: false, titular: "", substituto: "", from: todayStr, until: "" });
     } catch (e) {
-      console.error('Erro ao salvar substituição:', e);
       let msg = e.message;
       try { msg = JSON.parse(e.message)?.error || e.message; } catch {}
       setSubError(`Erro: ${msg}`);
@@ -167,6 +179,79 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
       await api(`/api/substitutions?id=${id}`, { method: 'DELETE' });
     } catch (e) {
       console.error('Erro ao remover substituição:', e);
+    }
+  }
+
+  // ─── EDIÇÃO DE ESCALA (ADMIN) ─────────────────────────────────────────────
+
+  function toggleEditMode() {
+    setEditMode(e => !e);
+    setSelectedShifts(new Set());
+    setEditError(null);
+    setEditForm({ person: '', period: '', time: '', dur: '' });
+  }
+
+  function toggleShift(dk, shiftIdx) {
+    const key = `${dk}-${shiftIdx}`;
+    setSelectedShifts(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  async function applyEditOverrides() {
+    if (!selectedShifts.size || editSaving) return;
+    setEditSaving(true);
+    setEditError(null);
+    // Build patch: { [dayKey]: { [shiftIndex]: overrideObj | null } }
+    const patch = {};
+    for (const key of selectedShifts) {
+      const lastDash = key.lastIndexOf('-');
+      const dk = key.slice(0, lastDash);
+      const idx = key.slice(lastDash + 1);
+      if (!patch[dk]) patch[dk] = {};
+      const override = {};
+      if (editForm.person)  override.person  = editForm.person;
+      if (editForm.period)  override.period  = editForm.period;
+      if (editForm.time)    override.time    = editForm.time;
+      if (editForm.dur)     override.dur     = editForm.dur;
+      patch[dk][idx] = Object.keys(override).length ? override : null;
+    }
+    try {
+      const updated = await api('/api/schedule', { method: 'POST', body: patch });
+      setOverrides(updated);
+      setSelectedShifts(new Set());
+      setEditForm({ person: '', period: '', time: '', dur: '' });
+    } catch (e) {
+      let msg = e.message;
+      try { msg = JSON.parse(e.message)?.error || e.message; } catch {}
+      setEditError(`Erro: ${msg}`);
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  async function resetSelectedShifts() {
+    if (!selectedShifts.size || editSaving) return;
+    setEditSaving(true);
+    const patch = {};
+    for (const key of selectedShifts) {
+      const lastDash = key.lastIndexOf('-');
+      const dk = key.slice(0, lastDash);
+      const idx = key.slice(lastDash + 1);
+      if (!patch[dk]) patch[dk] = {};
+      patch[dk][idx] = null;
+    }
+    try {
+      const updated = await api('/api/schedule', { method: 'POST', body: patch });
+      setOverrides(updated);
+      setSelectedShifts(new Set());
+    } catch (e) {
+      console.error('Erro ao resetar:', e);
+    } finally {
+      setEditSaving(false);
     }
   }
 
@@ -286,12 +371,15 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                 </span>
               )}
             </div>
-            <button
-              onClick={subForm.show ? () => setSubForm(f => ({ ...f, show:false })) : openSubForm}
-              style={{ background:"transparent", border:`1px solid ${T.cardBorder}`, borderRadius:"9999px", padding:"0.2rem 0.65rem", fontSize:"0.72rem", fontWeight:"700", cursor:"pointer", color:T.textSecondary }}
-            >
-              {subForm.show ? "Cancelar" : "+ Adicionar"}
-            </button>
+            {/* Viewers cannot create substitutions */}
+            {profile?.role !== 'viewer' && (
+              <button
+                onClick={subForm.show ? () => setSubForm(f => ({ ...f, show:false })) : openSubForm}
+                style={{ background:"transparent", border:`1px solid ${T.cardBorder}`, borderRadius:"9999px", padding:"0.2rem 0.65rem", fontSize:"0.72rem", fontWeight:"700", cursor:"pointer", color:T.textSecondary }}
+              >
+                {subForm.show ? "Cancelar" : "+ Adicionar"}
+              </button>
+            )}
           </div>
 
           {subs.length === 0 && !subForm.show && !subsLoading && (
@@ -299,21 +387,28 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
           )}
           {subsLoading && <div className="text-xs" style={{ color:T.textMuted }}>Carregando...</div>}
 
-          {subs.map((s, i) => (
-            <div key={s.id} className="flex items-center justify-between py-2 flex-wrap gap-y-1"
-              style={{ borderTop: i === 0 ? `1px solid ${T.upcomingDivider}` : `1px solid ${T.upcomingDivider}` }}>
-              <div className="flex items-center gap-2 flex-wrap text-sm">
-                <PersonTag name={s.titular} />
-                <span style={{ color:T.textMuted, fontSize:"1rem" }}>→</span>
-                <PersonTag name={s.substituto} />
-                <span className="text-xs font-mono" style={{ color:T.textMuted }}>{fmtDS(s.from)} – {fmtDS(s.until)}</span>
+          {subs.map((s, i) => {
+            // Show delete only to admin, or to member if they appear in the substitution
+            const canDelete = isAdmin
+              || (profile?.role === 'member' && (s.titular === profile?.memberId || s.substituto === profile?.memberId));
+            return (
+              <div key={s.id} className="flex items-center justify-between py-2 flex-wrap gap-y-1"
+                style={{ borderTop: `1px solid ${T.upcomingDivider}` }}>
+                <div className="flex items-center gap-2 flex-wrap text-sm">
+                  <PersonTag name={s.titular} />
+                  <span style={{ color:T.textMuted, fontSize:"1rem" }}>→</span>
+                  <PersonTag name={s.substituto} />
+                  <span className="text-xs font-mono" style={{ color:T.textMuted }}>{fmtDS(s.from)} – {fmtDS(s.until)}</span>
+                </div>
+                {canDelete && (
+                  <button onClick={() => removeSub(s.id)}
+                    style={{ background:"transparent", border:"none", cursor:"pointer", color:T.textMuted, fontSize:"1rem", lineHeight:1, padding:"0 0.25rem" }}>
+                    ✕
+                  </button>
+                )}
               </div>
-              <button onClick={() => removeSub(s.id)}
-                style={{ background:"transparent", border:"none", cursor:"pointer", color:T.textMuted, fontSize:"1rem", lineHeight:1, padding:"0 0.25rem" }}>
-                ✕
-              </button>
-            </div>
-          ))}
+            );
+          })}
 
           {subForm.show && (
             <div className="mt-3 pt-3" style={{ borderTop:`1px solid ${T.cardBorder}` }}>
@@ -416,16 +511,26 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
           </div>
         )}
 
-        {/* NAVEGAÇÃO DE MESES */}
-        <div className="rounded-xl px-3 py-2 mb-3" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}` }}>
-          <div className="flex gap-2 overflow-x-auto" style={{ scrollbarWidth:"thin", scrollbarColor:`${T.cardBorder} transparent` }}>
-            {months.map(m => (
-              <button key={m.key} onClick={() => handleMonthChange(m.key)} className="px-3 py-1.5 rounded-lg text-sm font-bold whitespace-nowrap transition-all flex-shrink-0"
-                style={{ background:activeMonth===m.key?T.monthActiveBg:T.monthDefBg, color:activeMonth===m.key?T.monthActiveColor:T.monthDefColor, border:"1px solid "+(activeMonth===m.key?T.monthActiveBorder:T.monthDefBorder) }}>
-                {MONTHS_SHORT[m.m]}/{String(m.y).slice(2)}
-              </button>
-            ))}
+        {/* NAVEGAÇÃO DE MESES + BOTÃO DE EDIÇÃO (admin) */}
+        <div className="flex items-center gap-2 mb-3">
+          <div className="flex-1 rounded-xl px-3 py-2" style={{ background:T.cardBg, border:`1px solid ${editMode ? '#6366F1' : T.cardBorder}` }}>
+            <div className="flex gap-2 overflow-x-auto" style={{ scrollbarWidth:"thin", scrollbarColor:`${T.cardBorder} transparent` }}>
+              {months.map(m => (
+                <button key={m.key} onClick={() => handleMonthChange(m.key)} className="px-3 py-1.5 rounded-lg text-sm font-bold whitespace-nowrap transition-all flex-shrink-0"
+                  style={{ background:activeMonth===m.key?T.monthActiveBg:T.monthDefBg, color:activeMonth===m.key?T.monthActiveColor:T.monthDefColor, border:"1px solid "+(activeMonth===m.key?T.monthActiveBorder:T.monthDefBorder) }}>
+                  {MONTHS_SHORT[m.m]}/{String(m.y).slice(2)}
+                </button>
+              ))}
+            </div>
           </div>
+          {isAdmin && (
+            <button
+              onClick={toggleEditMode}
+              style={{ flexShrink:0, background: editMode ? '#6366F1' : T.cardBg, color: editMode ? '#fff' : T.textSecondary, border:`1px solid ${editMode ? '#6366F1' : T.cardBorder}`, borderRadius:"0.75rem", padding:"0.5rem 0.85rem", fontSize:"0.75rem", fontWeight:"700", cursor:"pointer", whiteSpace:"nowrap" }}
+            >
+              {editMode ? '✕ Sair da edição' : '✏ Editar Escala'}
+            </button>
+          )}
         </div>
 
         {/* CALENDÁRIO */}
@@ -463,17 +568,39 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                         </span>
                       </div>
                     )}
-                    <div className="space-y-1">
+                    <div className="space-y-0.5">
                       {d.shifts.map((s, i) => {
                         const sub = getActiveSub(s.person, dk, subs);
                         const effectivePerson = sub ? sub.substituto : s.person;
                         const dim = !!(filter && effectivePerson !== filter && s.person !== filter);
+                        const shiftKey = `${dk}-${i}`;
+                        const isSelected = selectedShifts.has(shiftKey);
+                        const hasOverride = !!(overrides[dk]?.[String(i)]);
                         return (
-                          <div key={i} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm" style={{ opacity: dim?0.3:1 }}>
-                            <span className="w-24 font-semibold" style={{ color:T.periodColor }}>{s.period}</span>
-                            <span className="font-mono text-xs w-28" style={{ color:T.timeColor }}>{s.time}</span>
+                          <div key={i}
+                            onClick={() => editMode && toggleShift(dk, i)}
+                            className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm"
+                            style={{
+                              opacity: dim ? 0.3 : 1,
+                              cursor: editMode ? 'pointer' : 'default',
+                              background: isSelected ? 'rgba(99,102,241,0.12)' : 'transparent',
+                              borderRadius: '0.375rem',
+                              padding: editMode ? '0.2rem 0.35rem' : '0.1rem 0',
+                              outline: isSelected ? '1.5px solid #6366F1' : 'none',
+                              margin: editMode ? '0.05rem 0' : undefined,
+                            }}>
+                            {editMode && (
+                              <span style={{ width:'1rem', height:'1rem', borderRadius:'3px', border:`1.5px solid ${isSelected?'#6366F1':T.cardBorder}`, background:isSelected?'#6366F1':'transparent', display:'inline-flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+                                {isSelected && <span style={{ color:'#fff', fontSize:'0.6rem', fontWeight:'900', lineHeight:1 }}>✓</span>}
+                              </span>
+                            )}
+                            <span className="w-24 font-semibold" style={{ color: hasOverride ? '#818CF8' : T.periodColor }}>{s.period}</span>
+                            <span className="font-mono text-xs w-28" style={{ color: hasOverride ? '#818CF8' : T.timeColor }}>{s.time}</span>
                             <span className="font-mono text-xs w-7" style={{ color:T.durColor }}>{s.dur}</span>
                             <PersonTag name={effectivePerson} subOf={sub ? s.person : null} />
+                            {hasOverride && (
+                              <span style={{ fontSize:'0.6rem', color:'#818CF8', fontWeight:'700', background:'rgba(99,102,241,0.1)', borderRadius:'3px', padding:'0 3px' }}>editado</span>
+                            )}
                           </div>
                         );
                       })}
@@ -485,6 +612,65 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
           })}
         </div>
         </div>
+
+        {/* PAINEL DE EDIÇÃO (admin, sticky na parte inferior) */}
+        {isAdmin && editMode && (
+          <div style={{ position:'sticky', bottom:'1rem', marginTop:'1rem', background: dark ? '#1E293B' : '#fff', border:`1.5px solid ${selectedShifts.size ? '#6366F1' : T.cardBorder}`, borderRadius:'1rem', padding:'1rem', boxShadow:'0 8px 32px rgba(0,0,0,0.35)', zIndex:40 }}>
+            <div className="flex items-center justify-between mb-3">
+              <span style={{ fontWeight:700, fontSize:'0.875rem', color:T.textPrimary }}>
+                {selectedShifts.size === 0
+                  ? 'Clique nos turnos do calendário para selecioná-los'
+                  : `${selectedShifts.size} turno${selectedShifts.size > 1 ? 's' : ''} selecionado${selectedShifts.size > 1 ? 's' : ''}`}
+              </span>
+              {selectedShifts.size > 0 && (
+                <button onClick={() => setSelectedShifts(new Set())} style={{ background:'none', border:'none', cursor:'pointer', fontSize:'0.78rem', color:T.textMuted }}>
+                  Limpar seleção
+                </button>
+              )}
+            </div>
+
+            {selectedShifts.size > 0 && (
+              <>
+                <div className="grid gap-3 mb-3" style={{ gridTemplateColumns:'repeat(auto-fit, minmax(130px, 1fr))' }}>
+                  <div>
+                    <div className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color:T.labelColor }}>Pessoa</div>
+                    <select value={editForm.person} onChange={e => setEditForm(f => ({ ...f, person:e.target.value }))} style={selStyle}>
+                      <option value="">Manter original</option>
+                      {Object.keys(PEOPLE).map(p => <option key={p} value={p}>{p}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color:T.labelColor }}>Período</div>
+                    <input value={editForm.period} onChange={e => setEditForm(f => ({ ...f, period:e.target.value }))}
+                      placeholder="ex: Madrugada" style={selStyle} />
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color:T.labelColor }}>Horário</div>
+                    <input value={editForm.time} onChange={e => setEditForm(f => ({ ...f, time:e.target.value }))}
+                      placeholder="ex: 23:00 – 04:00" style={selStyle} />
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color:T.labelColor }}>Duração</div>
+                    <input value={editForm.dur} onChange={e => setEditForm(f => ({ ...f, dur:e.target.value }))}
+                      placeholder="ex: 5h" style={selStyle} />
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2 items-center">
+                  <button onClick={applyEditOverrides} disabled={editSaving}
+                    style={{ background:editSaving?T.cardBorder:'#6366F1', color:'#fff', border:'none', borderRadius:'0.5rem', padding:'0.4rem 1rem', fontWeight:700, fontSize:'0.8rem', cursor:editSaving?'not-allowed':'pointer' }}>
+                    {editSaving ? 'Salvando...' : 'Aplicar alteração'}
+                  </button>
+                  <button onClick={resetSelectedShifts} disabled={editSaving}
+                    style={{ background:'transparent', color:'#EF4444', border:'1px solid #EF4444', borderRadius:'0.5rem', padding:'0.4rem 0.85rem', fontWeight:700, fontSize:'0.8rem', cursor:editSaving?'not-allowed':'pointer' }}>
+                    Resetar para padrão
+                  </button>
+                </div>
+                {editError && <p style={{ color:'#EF4444', fontSize:'0.75rem', marginTop:'0.5rem' }}>{editError}</p>}
+              </>
+            )}
+          </div>
+        )}
 
         <div className="mt-4 text-center text-xs" style={{ color:T.textMuted }}>
           Ciclo de fim de semana ancorado em 13/06/2026 (Semana 1) · Escala seg–sex fixa · 5 semanas de rotação

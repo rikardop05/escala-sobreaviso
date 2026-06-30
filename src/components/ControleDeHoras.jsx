@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useApi } from '../lib/api';
 import {
-  PEOPLE, MONTHS, durationHours, fmtHM, brl,
+  PEOPLE, CH_NAMES, MONTHS, durationHours, fmtHM, brl,
   buildSchedule, dayKey, getActiveSub,
 } from '../lib/schedule';
 
@@ -21,12 +21,18 @@ function parseShiftTime(timeStr) {
 export default function ControleDeHoras({ dark, profile }) {
   const api = useApi();
   const now = new Date();
+  const isAdmin = profile?.role === 'admin';
 
   const [entries,        setEntries]        = useState([]);
   const [paramsByPerson, setParamsByPerson] = useState({});
   const [subs,           setSubs]           = useState([]);
+  const [overrides,      setOverrides]      = useState({});
   const [dataLoading,    setDataLoading]    = useState(true);
-  const person = profile?.memberId;
+
+  // Admin can switch to view any CH_NAMES member; member is locked to their own
+  const [viewPerson, setViewPerson] = useState(profile?.memberId ?? null);
+  const person = isAdmin ? (viewPerson ?? profile?.memberId) : profile?.memberId;
+
   const [monthIdx, setMonthIdx] = useState(now.getMonth());
   const [year,     setYear]     = useState(now.getFullYear());
   const [editId,   setEditId]   = useState(null);
@@ -34,28 +40,39 @@ export default function ControleDeHoras({ dark, profile }) {
   const blank = { tipo: "Hora Extra", data: "", inicio: "", fim: "", projeto: "", atividade: "" };
   const [form, setForm] = useState(blank);
 
-  // Carrega dados
+  // Reload CH data when admin switches person
   useEffect(() => {
+    setDataLoading(true);
+    const query = isAdmin && person ? `?person=${encodeURIComponent(person)}` : '';
     Promise.all([
-      api('/api/ch'),
+      api(`/api/ch${query}`),
       api('/api/substitutions'),
-    ]).then(([chData, subData]) => {
+      api('/api/schedule'),
+    ]).then(([chData, subData, overridesData]) => {
       setEntries(chData.entries || []);
       setParamsByPerson(chData.params || {});
       setSubs(subData || []);
+      setOverrides(overridesData || {});
     }).catch(console.error)
       .finally(() => setDataLoading(false));
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [person]);
 
   const saveEntries = useCallback(async (newEntries) => {
-    try { await api('/api/ch', { method: 'POST', body: { entries: newEntries } }); }
-    catch (e) { console.error('Erro ao salvar lançamentos:', e); }
-  }, [api]);
+    try {
+      const body = { entries: newEntries };
+      if (isAdmin && person !== profile?.memberId) body.person = person;
+      await api('/api/ch', { method: 'POST', body });
+    } catch (e) { console.error('Erro ao salvar lançamentos:', e); }
+  }, [api, isAdmin, person, profile?.memberId]);
 
   const saveParams = useCallback(async (newParams) => {
-    try { await api('/api/ch', { method: 'POST', body: { params: newParams } }); }
-    catch (e) { console.error('Erro ao salvar parâmetros:', e); }
-  }, [api]);
+    try {
+      const body = { params: newParams };
+      if (isAdmin && person !== profile?.memberId) body.person = person;
+      await api('/api/ch', { method: 'POST', body });
+    } catch (e) { console.error('Erro ao salvar parâmetros:', e); }
+  }, [api, isAdmin, person, profile?.memberId]);
 
   // ─── TEMA ──────────────────────────────────────────────────────────────────
   const CT = dark ? {
@@ -95,8 +112,8 @@ export default function ControleDeHoras({ dark, profile }) {
     saveParams(newParams);
   };
 
-  // ─── ENTRADAS DA ESCALA (SA automático) ────────────────────────────────────
-  const schedule = useMemo(() => buildSchedule(), []);
+  // ─── ENTRADAS DA ESCALA (SA automático, com overrides) ─────────────────────
+  const schedule = useMemo(() => buildSchedule(overrides), [overrides]);
 
   const scheduleEntries = useMemo(() => {
     if (!person) return [];
@@ -256,11 +273,17 @@ export default function ControleDeHoras({ dark, profile }) {
         <div className="flex flex-wrap gap-3 mb-4 items-end">
           <div>
             <div className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color:CT.textLabel }}>Responsável</div>
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-bold"
-              style={{ background: p.color, color: "#fff" }}>
-              <span className="w-2 h-2 rounded-full bg-white opacity-70" />
-              {person}
-            </div>
+            {isAdmin ? (
+              <select style={{ ...inputStyle, width:'auto' }} value={viewPerson || ''} onChange={e => { setViewPerson(e.target.value); setEditId(null); setForm(blank); }}>
+                {CH_NAMES.map(name => <option key={name} value={name}>{name}</option>)}
+              </select>
+            ) : (
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-bold"
+                style={{ background: p.color, color: "#fff" }}>
+                <span className="w-2 h-2 rounded-full bg-white opacity-70" />
+                {person}
+              </div>
+            )}
           </div>
           <div>
             <div className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color:CT.textLabel }}>Mês</div>

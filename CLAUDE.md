@@ -4,7 +4,7 @@ App interno da MT Fintech para a equipe de sobreaviso (6 pessoas).
 Gerencia o calendário de plantões e o controle financeiro de horas.
 
 **URL em produção**: https://escala-sobreaviso.vercel.app
-**Repo**: https://github.com/rikardop05/escala-sobreaviso
+**Repo**: https://github.com/rikardop05/escala-sobreaviso (DEVE permanecer PRIVADO — contém e-mails)
 
 ---
 
@@ -26,27 +26,67 @@ Gerencia o calendário de plantões e o controle financeiro de horas.
 ```
 src/
   main.jsx                  ClerkProvider + ReactDOM root; publishable key hardcoded (público por design)
-  App.jsx                   Guard de auth, ProfileSetup, navegação por abas
+  App.jsx                   Guard de auth, roteamento por role, navegação por abas (sem ProfileSetup)
   index.css                 Tailwind directives
   lib/
     api.js                  Hook useApi() — fetch autenticado com JWT Clerk
     schedule.js             Toda a lógica de geração da escala (leia seção Escala abaixo)
   components/
-    EscalaSobreaviso.jsx    Calendário mensal, filtro por pessoa, painel de substituições
-    ControleDeHoras.jsx     CH: parâmetros, lançamentos HE/Comp, relatório, exportação CSV
+    EscalaSobreaviso.jsx    Calendário mensal, filtro, substituições, edição de escala (admin)
+    ControleDeHoras.jsx     CH: parâmetros, lançamentos HE/Comp, relatório, exportação CSV; admin pode ver qualquer membro
 
 api/
-  _auth.js                  requireUser(req) — verificação real do JWT via @clerk/backend
+  _allowlist.js             EDITAR AQUI: mapeamento email→{memberId, role}; resolveAccess()
+  _auth.js                  requireUser(req) — verifica JWT + busca email via Clerk API + resolve role
   _redis.js                 kvGet / kvSet — helpers JSON sobre ioredis
-  profile.js                GET/POST perfil do usuário autenticado
-  substitutions.js          GET/POST/DELETE substituições (dado compartilhado entre todos)
-  ch.js                     GET/POST lançamentos e parâmetros CH (isolado por userId)
+  profile.js                GET/POST preferências do usuário (dark, filter, monthKey); role/memberId vêm da allowlist
+  substitutions.js          GET/POST/DELETE substituições; controle de acesso por role no backend
+  ch.js                     GET/POST lançamentos e parâmetros CH; admin acessa qualquer membro
+  schedule.js               GET/POST overrides de escala; POST bloqueado para não-admin
 
 db/
   schema.sql                Schema PostgreSQL — target da migração futura; não está em uso
 
 vercel.json                 SPA rewrite: qualquer rota não-/api/* → /index.html
 ```
+
+---
+
+## Sistema de Acesso (Allowlist)
+
+### Como configurar
+
+Edite `api/_allowlist.js` — é o único arquivo que precisa ser alterado para adicionar/remover pessoas:
+
+```js
+export const ALLOWLIST = {
+  'email@dominio.com.br': { memberId: 'Ricardo', role: 'member' },
+  'admin@dominio.com.br': { memberId: 'Ricardo', role: 'admin'  },
+};
+```
+
+Regras:
+- `memberId` **deve bater exatamente** com uma chave de `PEOPLE` em `src/lib/schedule.js`
+- E-mails são comparados em lowercase (case-insensitive)
+- Qualquer e-mail fora da lista → `role: 'viewer'` automático (sem CH, sem edição)
+
+### Roles e permissões
+
+| Role | Escala | Substituições | CH | Editar Escala |
+|------|--------|---------------|----|---------------|
+| `viewer` | Leitura | Leitura | — | — |
+| `member` | Leitura | Criar/deletar quando for titular ou substituto | Próprio painel | — |
+| `admin` | Leitura | Qualquer | Todos os painéis | Sim |
+
+**Toda autorização é garantida no backend** (`requireUser` retorna role da allowlist, nunca do cliente).
+
+### Como `requireUser` funciona
+
+1. Extrai Bearer token do header `Authorization`
+2. `verifyToken(token, options)` — verifica assinatura, emissor, expiração
+3. `clerkClient.users.getUser(userId)` — busca e-mail verificado via Clerk API
+4. `resolveAccess(email)` — cruza com a allowlist
+5. Retorna `{ userId, email, memberId, role }`
 
 ---
 
@@ -70,11 +110,7 @@ Cada dia da semana tem 3 turnos fixos:
 | Manhã | 04:00 – 09:00 | 5h |
 | Noite | 18:00 – 23:00 (sexta: 24:00) | 5h / 6h |
 
-A atribuição de pessoa por turno por dia está em `WEEKDAY_SHIFTS[dow]`.
-
 ### Fins de semana — `WEEKEND_CYCLE` (5 semanas de rotação)
-
-Cada sábado inicia um ciclo de 2 dias (sáb + dom).
 
 ```
 Dia  (sáb/dom): 00:00 – 12:00  (12h)
@@ -82,26 +118,32 @@ Noite (sáb/dom): 12:00 – 00:00 (12h)
 Folga FDS: um membro diferente por semana
 ```
 
-**Algoritmo `cycleIndex(saturday)`:**
-```js
-diff  = (saturday - ANCHOR) / (7 dias)   // semanas desde o âncora
-index = ((diff % 5) + 5) % 5             // sempre positivo, mesmo para datas anteriores ao âncora
-```
-
 **`ANCHOR = 2026-06-13`** — o sábado que corresponde à Semana 1 do ciclo.
-⚠️ Alterar o ANCHOR invalida toda a escala histórica e futura.
+⚠️ Alterar ANCHOR invalida toda a escala histórica e futura.
 
 **`RANGE_START = 2026-06-08`** / **`RANGE_END = 2027-06-30`** — período gerado por `buildSchedule()`.
-Estender o range requer apenas atualizar `RANGE_END`.
+Para estender: atualizar apenas `RANGE_END`.
+
+**`cycleIndex(saturday)`** → index 0–4 via `((diff % 5) + 5) % 5`. O `+5` garante resultado positivo para datas anteriores ao ANCHOR.
+
+### Overrides de escala (admin)
+
+`buildSchedule(overrides = {})` aceita um objeto de overrides:
+```js
+// { 'YYYY-MM-DD': { '0': { person, period, time, dur }, '1': null } }
+// null = revert para base
+```
+
+Overrides são persistidos em Redis na chave global `schedule_overrides`.
+O admin edita via UI (modo edição no calendário) → POST `/api/schedule`.
+Todos os componentes que usam `buildSchedule()` recebem os overrides para consistência financeira.
+
+**Nota**: O widget "Agora" (currentOnCall) usa a escala base, não os overrides.
 
 ### Substituições
 
-`getActiveSub(person, dateStr, subs)` busca em `subs` a primeira entrada onde:
-- `s.titular === person`
-- `dateStr >= s.from && dateStr <= s.until`
-
-Se encontrar, o plantão do `titular` passa a ser exibido com o nome do `substituto`.
-A lista `subs` é compartilhada (todos veem as mesmas substituições).
+`getActiveSub(person, dateStr, subs)` → busca substituição ativa onde `titular === person` e `dateStr` está no período.
+Lista `subs` é compartilhada (todos veem as mesmas substituições via chave global Redis).
 
 ---
 
@@ -109,18 +151,18 @@ A lista `subs` é compartilhada (todos veem as mesmas substituições).
 
 ### Acesso
 
-Apenas membros cujo `profile.memberId` está em `CH_NAMES` veem a aba CH.
-Visitantes (memberId ausente) e Alice não têm acesso.
+`canAccessCH = role === 'admin' || role === 'member'`
 
-### Entradas automáticas (SA)
+Admin pode trocar o "Responsável" via dropdown para ver/editar CH de qualquer membro.
+Member só vê/edita o próprio painel.
 
-`scheduleEntries` em `ControleDeHoras.jsx` deriva os turnos SA direto de `buildSchedule()`,
-filtrado por `person` + `month` + substituições ativas. O usuário não precisa lançar SA manualmente.
+### Redis — Chaves CH
 
-### Entradas manuais (HE e Compensação)
+Chaves usam `memberId` (não `userId`) para permitir acesso cross-user do admin:
+- `member:{memberId}:ch_entries` — lançamentos HE/Comp
+- `member:{memberId}:ch_params` — parâmetros de remuneração/jornada
 
-Formulário só oferece "Hora Extra" e "Compensação". SA não pode ser criado manualmente.
-Armazenados em Redis como array JSON por usuário.
+⚠️ Migração: chaves anteriores eram `user:{clerkId}:ch_*`. Dados existentes não são migrados automaticamente.
 
 ### Cálculo financeiro
 
@@ -128,12 +170,9 @@ Armazenados em Redis como array JSON por usuário.
 valorHora       = remuneracao / jornada
 valorSobreaviso = (valorHora / 3)   × horasSA   ← adicional de 1/3
 valorHoraExtra  = (valorHora × 1.5) × horasHE   ← adicional de 50%
-valorTotal      = valorSobreaviso + valorHoraExtra
 ```
 
-### Exportação CSV
-
-UTF-8 BOM (`﻿`) para compatibilidade com Excel. Separador `;`. Inclui seção de resumo financeiro ao final.
+SA vem de `buildSchedule(overrides)` — reflete edições do admin no cálculo e no CSV exportado.
 
 ---
 
@@ -149,70 +188,49 @@ useApi() [src/lib/api.js]
   fetch(/api/*)
     ↓
 requireUser(req) [api/_auth.js]
-  verifyToken(token, options)   ← assinatura + emissor + expiração
-  return { userId: payload.sub }
+  verifyToken()        ← assinatura + emissor + expiração
+  clerkClient.getUser()← e-mail verificado via Clerk API
+  resolveAccess()      ← allowlist → { memberId, role }
+  return { userId, email, memberId, role }
     ↓
-Handler usa userId para isolar dados no Redis
+Handler usa role para controle de acesso, memberId para isolar dados
 ```
 
-### Opções de verificação em `_auth.js`
+### Variáveis de ambiente (Vercel)
 
-| Variável de ambiente | Comportamento |
-|---------------------|---------------|
-| `CLERK_JWT_KEY` (PEM) | Verificação local, sem chamada de rede — **preferido para serverless** |
-| `CLERK_SECRET_KEY` | Busca JWK no cold start (~100 ms extra), depois usa cache da instância |
-
-Se nenhuma estiver definida, `verifyToken` lança e o endpoint retorna 401.
+| Variável | Uso |
+|----------|-----|
+| `REDIS_URL` | Auto-injetada pelo Vercel KV — ioredis connection |
+| `CLERK_JWT_KEY` | RSA PEM pública (Clerk → API Keys → JWT Public Key). Verificação local, sem rede. **Preferido.** |
+| `CLERK_SECRET_KEY` | **Sempre necessário** — usado para `users.getUser()` buscar o e-mail do usuário |
 
 ### Profile e localStorage
 
-`App.jsx` usa localStorage (`escala_profile_{userId}`) como cache para evitar flicker:
-
-1. Montagem: lê localStorage → se tem dados, mostra o app imediatamente (sem tela de loading)
-2. GET `/api/profile` em background sempre acontece
-3. Se servidor retorna `memberId !== undefined` → atualiza localStorage
-4. Se servidor falha e localStorage tem dados → mantém o cache (resiliente a falhas de API)
-5. Se localStorage vazio e servidor falha → mostra ProfileSetup
-
-### ProfileSetup
-
-Primeira vez que o usuário autentica, ele escolhe seu nome da equipe.
-A escolha é **permanente** (sem troca via app). Salva em Redis e localStorage.
-Visitantes escolhem "Só visualizar" — recebem `memberId: null`.
+1. Montagem: lê `localStorage` → mostra app imediatamente se há cache válido
+2. GET `/api/profile` → `{ memberId, role, dark, filter, monthKey }` (memberId/role da allowlist)
+3. `saveProfile` só persiste preferências (`dark`, `filter`, `monthKey`) — role/memberId são somente-leitura
 
 ---
 
-## Redis — Chaves e Formato
+## Redis — Todas as Chaves
 
 | Chave | Formato | Proprietário |
 |-------|---------|--------------|
-| `user:{clerkId}:profile` | `{ memberId, dark, filter, monthKey }` | Por usuário |
-| `user:{clerkId}:ch_entries` | `[{ id, person, tipo, data, inicio, fim, projeto, atividade }]` | Por usuário |
-| `user:{clerkId}:ch_params` | `{ [memberId]: { remuneracao, jornada } }` | Por usuário |
+| `user:{clerkId}:profile` | `{ dark, filter, monthKey }` | Por usuário |
+| `member:{memberId}:ch_entries` | `[{ id, person, tipo, data, inicio, fim, projeto, atividade }]` | Por membro |
+| `member:{memberId}:ch_params` | `{ [memberId]: { remuneracao, jornada } }` | Por membro |
 | `substitutions` | `[{ id, titular, substituto, from, until }]` | Compartilhado |
-
-`kvGet` retorna `null` se a chave não existir (não lança). `kvSet` serializa para JSON string.
-
----
-
-## Variáveis de Ambiente (Vercel)
-
-| Variável | Origem | Uso |
-|----------|--------|-----|
-| `REDIS_URL` | Auto-injetada ao conectar Vercel KV | ioredis connection |
-| `CLERK_JWT_KEY` | Clerk Dashboard → API Keys → JWT Public Key | Verificação JWT sem rede |
-| `CLERK_SECRET_KEY` | Clerk Dashboard → API Keys | Verificação JWT com JWK fetch |
-
-A publishable key Clerk (`pk_test_...`) está hardcoded em `src/main.jsx` — é pública por design
-e termina no bundle independentemente; não há risco em deixá-la no código.
+| `schedule_overrides` | `{ [dayKey]: { [shiftIdx]: { person, period, time, dur } } }` | Compartilhado |
 
 ---
 
 ## Regras de Manutenção
 
 - **Documentação**: atualizar este `CLAUDE.md` sempre que uma função ou ponto central mudar.
-- **Commits**: mensagens em português, descritivas, com `Co-Authored-By: Claude Sonnet 4.6`.
-- **Segredos**: `.env.local` nunca commitado (`.gitignore`). `CLERK_SECRET_KEY` só no Vercel.
-- **API helpers privados**: arquivos `api/_*.js` (prefixo `_`) não são expostos pelo Vercel como rotas.
-- **Erros ao cliente**: sempre genéricos (`"Unauthorized"`, `"Internal error"`). Detalhes só no `console.error`.
-- **Schema SQL**: `db/schema.sql` é planejamento futuro. Não há migrations em execução.
+- **Allowlist**: editar apenas `api/_allowlist.js`. Não armazenar e-mails em nenhum outro lugar.
+- **Repositório**: DEVE ser privado — contém e-mails da equipe em `_allowlist.js`.
+- **Segredos**: `.env.local` nunca commitado. `CLERK_SECRET_KEY` só no Vercel.
+- **Erros ao cliente**: sempre genéricos (`"Unauthorized"`, `"Forbidden"`, `"Internal error"`). Detalhes só no `console.error`.
+- **API helpers privados**: `api/_*.js` (prefixo `_`) não são expostos pelo Vercel como rotas públicas.
+- **Postgres**: `db/schema.sql` é planejamento futuro. Não há migrations em execução.
+- **Versão legada**: não tocar em `index.html`, `escala-sobreaviso.jsx`, `libs/`, `main.py`.

@@ -99,7 +99,9 @@ export function cycleIndex(saturday) {
   return ((diff % 5) + 5) % 5;
 }
 
-export function buildSchedule() {
+// overrides: { [dayKey]: { [shiftIndex]: { person, period, time, dur } } }
+// Admin-defined overrides are merged on top of the base schedule per shift.
+export function buildSchedule(overrides = {}) {
   const days = [];
   for (let t = RANGE_START.getTime(); t <= RANGE_END.getTime(); t += MS_DAY) {
     const d = new Date(t);
@@ -119,6 +121,13 @@ export function buildSchedule() {
            { period:"Noite",time:"12:00 – 00:00", dur:"12h", person: rot.sabNoite }]
         : [{ period:"Dia",  time:"00:00 – 12:00", dur:"12h", person: rot.domDia   },
            { period:"Noite",time:"12:00 – 00:00", dur:"12h", person: rot.domNoite }];
+    }
+    const dk = dayKey(d);
+    if (overrides[dk]) {
+      shifts = shifts.map((s, i) => {
+        const ov = overrides[dk][String(i)];
+        return ov ? { ...s, ...ov } : s;
+      });
     }
     days.push({ date: new Date(d), dow, shifts, folga, cycleWeek });
   }

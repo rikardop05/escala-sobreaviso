@@ -1,33 +1,39 @@
 import { kvGet, kvSet } from './_redis.js';
 import { requireUser } from './_auth.js';
 
-// Keys are now namespaced per user, fixing the IDOR where any authenticated
-// user could read/overwrite any other user's financial data.
-// Note: data previously stored under the global keys 'ch_entries' / 'ch_params'
-// will no longer be found. Each user starts with a clean slate under their own key.
+// Keys use memberId (not userId) so the admin can read/write any member's data.
+// ⚠ Migration note: previous keys were 'user:{clerkId}:ch_*'.
+//   Existing CH data must be manually re-entered after this change.
 
 export default async function handler(req, res) {
-  let userId;
+  let memberId, role;
   try {
-    ({ userId } = await requireUser(req));
+    ({ memberId, role } = await requireUser(req));
   } catch (e) {
     return res.status(e.status || 401).json({ error: 'Unauthorized' });
   }
 
+  // CH requires a valid team member identity
+  if (!memberId) return res.status(403).json({ error: 'Forbidden' });
+
   try {
     if (req.method === 'GET') {
+      // Admin can query any member's data via ?person=Name
+      const target = (role === 'admin' && req.query.person) ? req.query.person : memberId;
       const [entries, params] = await Promise.all([
-        kvGet(`user:${userId}:ch_entries`),
-        kvGet(`user:${userId}:ch_params`),
+        kvGet(`member:${target}:ch_entries`),
+        kvGet(`member:${target}:ch_params`),
       ]);
       return res.status(200).json({ entries: entries ?? [], params: params ?? {} });
     }
 
     if (req.method === 'POST') {
-      const { entries, params } = req.body;
+      const { entries, params, person: bodyPerson } = req.body;
+      // Admin can write to any member's data via body.person
+      const target = (role === 'admin' && bodyPerson) ? bodyPerson : memberId;
       await Promise.all([
-        entries !== undefined ? kvSet(`user:${userId}:ch_entries`, entries) : Promise.resolve(),
-        params  !== undefined ? kvSet(`user:${userId}:ch_params`,  params)  : Promise.resolve(),
+        entries !== undefined ? kvSet(`member:${target}:ch_entries`, entries) : Promise.resolve(),
+        params  !== undefined ? kvSet(`member:${target}:ch_params`,  params)  : Promise.resolve(),
       ]);
       return res.status(200).json({ ok: true });
     }
