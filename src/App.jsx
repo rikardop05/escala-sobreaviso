@@ -21,14 +21,14 @@ function MainApp() {
     if (!user?.id) return;
 
     // Load from localStorage immediately — avoids loading flash on warm sessions.
-    // Old cached profiles (pre-allowlist) have memberId but no role; still show them
-    // while the API call resolves in background.
+    // Only trust cache entries that include role (post-allowlist format).
+    // Old caches without role are discarded so the API response always wins.
     let hasLocal = false;
     try {
       const cached = localStorage.getItem(storageKey);
       if (cached) {
         const p = JSON.parse(cached);
-        if (p && p.memberId !== undefined) {
+        if (p && typeof p.role === 'string') {
           setProfile(p);
           if (typeof p.dark === 'boolean') setDark(p.dark);
           setLoading(false);

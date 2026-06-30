@@ -83,8 +83,11 @@ Regras:
 ### Como `requireUser` funciona
 
 1. Extrai Bearer token do header `Authorization`
-2. `verifyToken(token, options)` — verifica assinatura, emissor, expiração
-3. `clerkClient.users.getUser(userId)` — busca e-mail verificado via Clerk API
+2. `verifyToken(token, options)` — verifica assinatura, emissor, expiração. Lança 401 em falha.
+3. Resolução de e-mail (dois caminhos, ordem de preferência):
+   - **Estratégia 1 — payload JWT**: lê `payload.email` se presente (sem network). Requer configurar o JWT template no Clerk Dashboard → JWT Templates → Default → adicionar `{ "email": "{{user.primary_email_address}}" }`.
+   - **Estratégia 2 — Clerk Users API**: `clerkClient.users.getUser(userId)`. Requer `CLERK_SECRET_KEY` no Vercel.
+   - Se nenhuma funcionar: e-mail fica `null`, usuário recebe `role: 'viewer'` automaticamente (sem 401). O log do servidor mostrará o erro.
 4. `resolveAccess(email)` — cruza com a allowlist
 5. Retorna `{ userId, email, memberId, role }`
 
@@ -202,7 +205,7 @@ Handler usa role para controle de acesso, memberId para isolar dados
 |----------|-----|
 | `REDIS_URL` | Auto-injetada pelo Vercel KV — ioredis connection |
 | `CLERK_JWT_KEY` | RSA PEM pública (Clerk → API Keys → JWT Public Key). Verificação local, sem rede. **Preferido.** |
-| `CLERK_SECRET_KEY` | **Sempre necessário** — usado para `users.getUser()` buscar o e-mail do usuário |
+| `CLERK_SECRET_KEY` | Necessário para a Estratégia 2 de resolução de e-mail (Users API). Também necessário se `CLERK_JWT_KEY` estiver ausente. Sem esta variável, todos os usuários recebem `role: 'viewer'`. |
 
 ### Profile e localStorage
 
