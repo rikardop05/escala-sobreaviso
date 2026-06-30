@@ -19,12 +19,11 @@ const OverrideObj = z.object({
 });
 
 // { 'YYYY-MM-DD': { '0'|'1'|'2': OverrideObj | null } }
+// Note: inner key uses z.string() — z.enum() as record key in Zod v4 requires ALL
+// enum values to be present, which would reject partial patches.
 export const SchedulePatchSchema = z.record(
   z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  z.record(
-    z.enum(['0', '1', '2']),
-    z.union([OverrideObj, z.null()])
-  )
+  z.record(z.string(), z.union([OverrideObj, z.null()]))
 ).refine(obj => Object.keys(obj).length <= 366, 'Patch exceeds maximum day count');
 
 // ─── SUBSTITUTIONS ───────────────────────────────────────────────────────────
