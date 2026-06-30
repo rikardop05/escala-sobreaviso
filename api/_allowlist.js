@@ -11,8 +11,12 @@
 // ⚠ MANTENHA O REPOSITÓRIO PRIVADO — este arquivo contém e-mails da equipe.
 
 export const ALLOWLIST = {
-  // 'email@dominio.com.br': { memberId: 'NomeExato', role: 'member' },
-  // 'admin@dominio.com.br': { memberId: 'NomeExato', role: 'admin'  },
+  'alice.santos@mtpagamentos.com.br':   { memberId: 'Alice',         role: 'member' },
+  'emanoel.barros@mtpagamentos.com.br': { memberId: 'Emanoel',       role: 'member' },
+  'raul.vitti@mtpagamentos.com.br':     { memberId: 'Raul',          role: 'member' },
+  'marcus.silva@mtpagamentos.com.br':   { memberId: 'Marcus Túlio',  role: 'member' },
+  'ricardo.correa@mtpagamentos.com.br': { memberId: 'Ricardo',       role: 'member' },
+  'carlos.beda@mtpagamentos.com.br':    { memberId: 'Carlos',        role: 'admin'  },
 };
 
 /**
