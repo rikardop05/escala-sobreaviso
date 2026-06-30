@@ -29,8 +29,8 @@ export const SchedulePatchSchema = z.record(
 // ─── SUBSTITUTIONS ───────────────────────────────────────────────────────────
 
 export const SubPostSchema = z.object({
-  titular:    z.string().min(1).max(60),
-  substituto: z.string().min(1).max(60),
+  titular:    TeamMember,
+  substituto: TeamMember,
   from:  DateStr,
   until: DateStr,
 })
@@ -41,7 +41,7 @@ export const SubPostSchema = z.object({
 
 const EntrySchema = z.object({
   id:        z.string().min(1),
-  person:    z.string().min(1).max(60),
+  person:    TeamMember,
   tipo:      z.enum(['Sobreaviso', 'Hora Extra', 'Compensação']),
   data:      DateStr,
   inicio:    z.string().max(10),
