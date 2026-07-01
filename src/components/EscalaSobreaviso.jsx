@@ -258,6 +258,15 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
   const fmtDate = (d) => `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}`;
   const am = months.find(m => m.key === activeMonth);
 
+  // Substitutions that overlap the currently displayed month
+  const monthSubs = useMemo(() => {
+    if (!am) return subs;
+    const firstDay = `${am.y}-${String(am.m + 1).padStart(2, '0')}-01`;
+    const lastDate  = new Date(am.y, am.m + 1, 0);
+    const lastDay   = `${am.y}-${String(am.m + 1).padStart(2, '0')}-${String(lastDate.getDate()).padStart(2, '0')}`;
+    return subs.filter(s => s.from <= lastDay && s.until >= firstDay);
+  }, [subs, activeMonth, months]);
+
   // ─── TEMA ────────────────────────────────────────────────────────────────────
   const T = dark ? {
     pageBg:"#0F172A", cardBg:"#1E293B", cardBgWeekend:"#1A2336",
@@ -358,124 +367,6 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
               );
             })}
           </div>
-        </div>
-
-        {/* SUBSTITUIÇÕES */}
-        <div className="rounded-2xl p-4 mb-4" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}` }}>
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold uppercase tracking-wider" style={{ color:T.labelColor }}>Substituições</span>
-              {subs.length > 0 && (
-                <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ background:"#DBEAFE", color:"#1D4ED8" }}>
-                  {subs.length} ativa{subs.length > 1 ? "s" : ""}
-                </span>
-              )}
-            </div>
-            {/* Viewers cannot create substitutions */}
-            {profile?.role !== 'viewer' && (
-              <button
-                onClick={subForm.show ? () => setSubForm(f => ({ ...f, show:false })) : openSubForm}
-                style={{ background:"transparent", border:`1px solid ${T.cardBorder}`, borderRadius:"9999px", padding:"0.2rem 0.65rem", fontSize:"0.72rem", fontWeight:"700", cursor:"pointer", color:T.textSecondary }}
-              >
-                {subForm.show ? "Cancelar" : "+ Adicionar"}
-              </button>
-            )}
-          </div>
-
-          {subs.length === 0 && !subForm.show && !subsLoading && (
-            <div className="text-xs" style={{ color:T.textMuted }}>Nenhuma substituição ativa. Use para férias ou trocas eventuais.</div>
-          )}
-          {subsLoading && <div className="text-xs" style={{ color:T.textMuted }}>Carregando...</div>}
-
-          {subs.map((s, i) => {
-            // Show delete only to admin, or to member if they appear in the substitution
-            const canDelete = isAdmin
-              || (profile?.role === 'member' && (s.titular === profile?.memberId || s.substituto === profile?.memberId));
-            return (
-              <div key={s.id} className="flex items-center justify-between py-2 flex-wrap gap-y-1"
-                style={{ borderTop: `1px solid ${T.upcomingDivider}` }}>
-                <div className="flex items-center gap-2 flex-wrap text-sm">
-                  <PersonTag name={s.titular} />
-                  <span style={{ color:T.textMuted, fontSize:"1rem" }}>→</span>
-                  <PersonTag name={s.substituto} />
-                  <span className="text-xs font-mono" style={{ color:T.textMuted }}>{fmtDS(s.from)} – {fmtDS(s.until)}</span>
-                </div>
-                {canDelete && (
-                  <button onClick={() => removeSub(s.id)}
-                    style={{ background:"transparent", border:"none", cursor:"pointer", color:T.textMuted, fontSize:"1rem", lineHeight:1, padding:"0 0.25rem" }}>
-                    ✕
-                  </button>
-                )}
-              </div>
-            );
-          })}
-
-          {subForm.show && (
-            <div className="mt-3 pt-3" style={{ borderTop:`1px solid ${T.cardBorder}` }}>
-              <div className="grid grid-cols-2 gap-3 mb-3">
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider" style={{ color:T.labelColor }}>Titular (ausente)</label>
-                  <select value={subForm.titular} onChange={e => setSubForm(f => ({ ...f, titular:e.target.value, substituto: f.substituto===e.target.value?"":f.substituto }))} style={selStyle}>
-                    <option value="">Selecionar...</option>
-                    {Object.keys(PEOPLE).map(p => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider" style={{ color:T.labelColor }}>Substituto</label>
-                  <select value={subForm.substituto} onChange={e => setSubForm(f => ({ ...f, substituto:e.target.value }))} style={selStyle}>
-                    <option value="">Selecionar...</option>
-                    {Object.keys(PEOPLE).filter(p => p !== subForm.titular).map(p => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider" style={{ color:T.labelColor }}>De</label>
-                  <input type="date" value={subForm.from} onChange={e => setSubForm(f => ({ ...f, from:e.target.value }))} style={selStyle} />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider" style={{ color:T.labelColor }}>Até</label>
-                  <input type="date" value={subForm.until} onChange={e => setSubForm(f => ({ ...f, until:e.target.value }))} style={selStyle} />
-                </div>
-              </div>
-              <button onClick={addSub} disabled={!canSave || subSaving}
-                style={{ background:canSave&&!subSaving?T.saveBg:T.cardBorder, color:canSave&&!subSaving?T.saveColor:T.textMuted, border:"none", borderRadius:"0.5rem", padding:"0.4rem 1.1rem", fontWeight:"700", fontSize:"0.8rem", cursor:canSave&&!subSaving?"pointer":"not-allowed", transition:"background 0.15s" }}>
-                {subSaving ? "Salvando..." : "Salvar substituição"}
-              </button>
-              {subError && (
-                <p style={{ color:"#EF4444", fontSize:"0.75rem", fontWeight:"600", marginTop:"0.5rem", marginBottom:0 }}>{subError}</p>
-              )}
-
-              {coverSuggestions.length > 0 && (
-                <div className="mt-4 pt-3" style={{ borderTop:`1px solid ${T.upcomingDivider}` }}>
-                  <div className="text-[10px] font-bold uppercase tracking-wider mb-2" style={{ color:T.labelColor }}>
-                    {subForm.substituto
-                      ? `${subForm.substituto} cobrirá ${coverSuggestions.length} dia${coverSuggestions.length>1?"s":""} de ${subForm.titular || "..."}`
-                      : `${coverSuggestions.length} dia${coverSuggestions.length>1?"s":""} a cobrir — quem está livre`}
-                  </div>
-                  <div>
-                    {coverSuggestions.slice(0, 12).map((day, i) => (
-                      <div key={i} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-0.5 text-xs py-1.5"
-                        style={{ borderTop: i > 0 ? `1px solid ${T.upcomingDivider}` : "none" }}>
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono font-bold" style={{ color:T.textSecondary }}>{fmtDate(day.date)}</span>
-                          <span style={{ color:T.textMuted }}>{DOW_SHORT[day.dow]}</span>
-                          <span style={{ color:T.periodColor }}>{day.shifts.map(s => s.period).join(" + ")}</span>
-                          <span style={{ color:T.timeColor }}>{day.shifts.map(s => s.time).join(" / ")}</span>
-                        </div>
-                        {!subForm.substituto && (
-                          <span style={{ color: day.available.length ? T.textSecondary : "#EF4444" }}>
-                            {day.available.length ? `Livres: ${day.available.join(", ")}` : "⚠ Todos ocupados"}
-                          </span>
-                        )}
-                      </div>
-                    ))}
-                    {coverSuggestions.length > 12 && (
-                      <div className="text-xs mt-1" style={{ color:T.textMuted }}>… e mais {coverSuggestions.length - 12} dias</div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
         </div>
 
         {/* PRÓXIMOS PLANTÕES */}
@@ -611,6 +502,124 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
             );
           })}
         </div>
+        </div>
+
+        {/* SUBSTITUIÇÕES */}
+        <div className="rounded-2xl p-4 mt-4" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}` }}>
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold uppercase tracking-wider" style={{ color:T.labelColor }}>Substituições</span>
+              {monthSubs.length > 0 && (
+                <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ background:"#DBEAFE", color:"#1D4ED8" }}>
+                  {monthSubs.length} ativa{monthSubs.length > 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+            {/* Viewers cannot create substitutions */}
+            {profile?.role !== 'viewer' && (
+              <button
+                onClick={subForm.show ? () => setSubForm(f => ({ ...f, show:false })) : openSubForm}
+                style={{ background:"transparent", border:`1px solid ${T.cardBorder}`, borderRadius:"9999px", padding:"0.2rem 0.65rem", fontSize:"0.72rem", fontWeight:"700", cursor:"pointer", color:T.textSecondary }}
+              >
+                {subForm.show ? "Cancelar" : "+ Adicionar"}
+              </button>
+            )}
+          </div>
+
+          {monthSubs.length === 0 && !subForm.show && !subsLoading && (
+            <div className="text-xs" style={{ color:T.textMuted }}>Nenhuma substituição neste mês. Use para férias ou trocas eventuais.</div>
+          )}
+          {subsLoading && <div className="text-xs" style={{ color:T.textMuted }}>Carregando...</div>}
+
+          {monthSubs.map((s, i) => {
+            // Show delete only to admin, or to member if they appear in the substitution
+            const canDelete = isAdmin
+              || (profile?.role === 'member' && (s.titular === profile?.memberId || s.substituto === profile?.memberId));
+            return (
+              <div key={s.id} className="flex items-center justify-between py-2 flex-wrap gap-y-1"
+                style={{ borderTop: `1px solid ${T.upcomingDivider}` }}>
+                <div className="flex items-center gap-2 flex-wrap text-sm">
+                  <PersonTag name={s.titular} />
+                  <span style={{ color:T.textMuted, fontSize:"1rem" }}>→</span>
+                  <PersonTag name={s.substituto} />
+                  <span className="text-xs font-mono" style={{ color:T.textMuted }}>{fmtDS(s.from)} – {fmtDS(s.until)}</span>
+                </div>
+                {canDelete && (
+                  <button onClick={() => removeSub(s.id)}
+                    style={{ background:"transparent", border:"none", cursor:"pointer", color:T.textMuted, fontSize:"1rem", lineHeight:1, padding:"0 0.25rem" }}>
+                    ✕
+                  </button>
+                )}
+              </div>
+            );
+          })}
+
+          {subForm.show && (
+            <div className="mt-3 pt-3" style={{ borderTop:`1px solid ${T.cardBorder}` }}>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider" style={{ color:T.labelColor }}>Titular (ausente)</label>
+                  <select value={subForm.titular} onChange={e => setSubForm(f => ({ ...f, titular:e.target.value, substituto: f.substituto===e.target.value?"":f.substituto }))} style={selStyle}>
+                    <option value="">Selecionar...</option>
+                    {Object.keys(PEOPLE).map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider" style={{ color:T.labelColor }}>Substituto</label>
+                  <select value={subForm.substituto} onChange={e => setSubForm(f => ({ ...f, substituto:e.target.value }))} style={selStyle}>
+                    <option value="">Selecionar...</option>
+                    {Object.keys(PEOPLE).filter(p => p !== subForm.titular).map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider" style={{ color:T.labelColor }}>De</label>
+                  <input type="date" value={subForm.from} onChange={e => setSubForm(f => ({ ...f, from:e.target.value }))} style={selStyle} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider" style={{ color:T.labelColor }}>Até</label>
+                  <input type="date" value={subForm.until} onChange={e => setSubForm(f => ({ ...f, until:e.target.value }))} style={selStyle} />
+                </div>
+              </div>
+              <button onClick={addSub} disabled={!canSave || subSaving}
+                style={{ background:canSave&&!subSaving?T.saveBg:T.cardBorder, color:canSave&&!subSaving?T.saveColor:T.textMuted, border:"none", borderRadius:"0.5rem", padding:"0.4rem 1.1rem", fontWeight:"700", fontSize:"0.8rem", cursor:canSave&&!subSaving?"pointer":"not-allowed", transition:"background 0.15s" }}>
+                {subSaving ? "Salvando..." : "Salvar substituição"}
+              </button>
+              {subError && (
+                <p style={{ color:"#EF4444", fontSize:"0.75rem", fontWeight:"600", marginTop:"0.5rem", marginBottom:0 }}>{subError}</p>
+              )}
+
+              {coverSuggestions.length > 0 && (
+                <div className="mt-4 pt-3" style={{ borderTop:`1px solid ${T.upcomingDivider}` }}>
+                  <div className="text-[10px] font-bold uppercase tracking-wider mb-2" style={{ color:T.labelColor }}>
+                    {subForm.substituto
+                      ? `${subForm.substituto} cobrirá ${coverSuggestions.length} dia${coverSuggestions.length>1?"s":""} de ${subForm.titular || "..."}`
+                      : `${coverSuggestions.length} dia${coverSuggestions.length>1?"s":""} a cobrir — quem está livre`}
+                  </div>
+                  <div>
+                    {coverSuggestions.slice(0, 12).map((day, i) => (
+                      <div key={i} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-0.5 text-xs py-1.5"
+                        style={{ borderTop: i > 0 ? `1px solid ${T.upcomingDivider}` : "none" }}>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold" style={{ color:T.textSecondary }}>{fmtDate(day.date)}</span>
+                          <span style={{ color:T.textMuted }}>{DOW_SHORT[day.dow]}</span>
+                          <span style={{ color:T.periodColor }}>{day.shifts.map(s => s.period).join(" + ")}</span>
+                          <span style={{ color:T.timeColor }}>{day.shifts.map(s => s.time).join(" / ")}</span>
+                        </div>
+                        {!subForm.substituto && (
+                          <span style={{ color: day.available.length ? T.textSecondary : "#EF4444" }}>
+                            {day.available.length ? `Livres: ${day.available.join(", ")}` : "⚠ Todos ocupados"}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                    {coverSuggestions.length > 12 && (
+                      <div className="text-xs mt-1" style={{ color:T.textMuted }}>… e mais {coverSuggestions.length - 12} dias</div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* PAINEL DE EDIÇÃO (admin, sticky na parte inferior) */}
