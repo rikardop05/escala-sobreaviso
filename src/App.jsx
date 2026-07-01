@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { SignedIn, SignedOut, RedirectToSignIn, UserButton, useUser } from '@clerk/clerk-react';
+import { SignedIn, SignedOut, UserButton, useUser, useClerk } from '@clerk/clerk-react';
 import { useApi } from './lib/api';
 import EscalaSobreaviso from './components/EscalaSobreaviso';
 import ControleDeHoras from './components/ControleDeHoras';
@@ -142,13 +142,68 @@ function MainApp() {
   );
 }
 
+// ─── VISUALIZAÇÃO PÚBLICA (não autenticado) ───────────────────────────────────
+// Mostra a escala em modo somente-leitura com botão "Entrar".
+// GET /api/schedule e GET /api/substitutions são públicos — sem token necessário.
+
+function PublicApp() {
+  const { openSignIn } = useClerk();
+  const [dark, setDark] = useState(true);
+
+  const navBg = dark ? "#020617" : "#1E293B";
+
+  const tabStyle = {
+    background: "rgba(255,255,255,0.15)",
+    color: "#fff",
+    border: "1px solid rgba(255,255,255,0.25)",
+    borderRadius: "9999px",
+    padding: "0.3rem 1rem",
+    fontSize: "0.8rem",
+    fontWeight: "700",
+    cursor: "pointer",
+    letterSpacing: "0.02em",
+  };
+
+  return (
+    <div>
+      <div style={{
+        background: navBg,
+        padding: "0.5rem 1rem",
+        display: "flex",
+        alignItems: "center",
+        gap: "0.5rem",
+        position: "sticky",
+        top: 0,
+        zIndex: 50,
+        borderBottom: "1px solid rgba(255,255,255,0.06)",
+        transition: "background 0.2s",
+      }}>
+        <span style={{ fontSize: "0.8rem", fontWeight: "700", color: "#fff", letterSpacing: "0.02em" }}>
+          📅 Escala
+        </span>
+        <div style={{ marginLeft: "auto" }}>
+          <button onClick={() => openSignIn()} style={tabStyle}>
+            Entrar
+          </button>
+        </div>
+      </div>
+      <EscalaSobreaviso
+        dark={dark}
+        onToggleDark={() => setDark(d => !d)}
+        profile={{ role: 'viewer', memberId: null }}
+        saveProfile={() => {}}
+      />
+    </div>
+  );
+}
+
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
 
 export default function App() {
   return (
     <>
       <SignedOut>
-        <RedirectToSignIn />
+        <PublicApp />
       </SignedOut>
       <SignedIn>
         <MainApp />

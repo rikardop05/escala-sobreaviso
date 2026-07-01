@@ -3,17 +3,18 @@ import { requireUser } from './_auth.js';
 import { validate, checkBodySize, SubPostSchema } from './_validate.js';
 
 export default async function handler(req, res) {
-  let memberId, role;
   try {
-    ({ memberId, role } = await requireUser(req));
-  } catch (e) {
-    return res.status(e.status || 401).json({ error: 'Unauthorized' });
-  }
-
-  try {
+    // GET is public — anyone can read substitutions
     if (req.method === 'GET') {
       const subs = await kvGet('substitutions') ?? [];
       return res.status(200).json(subs);
+    }
+
+    let memberId, role;
+    try {
+      ({ memberId, role } = await requireUser(req));
+    } catch (e) {
+      return res.status(e.status || 401).json({ error: 'Unauthorized' });
     }
 
     if (req.method === 'POST') {

@@ -10,7 +10,7 @@ export function useApi() {
       ...opts,
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...opts.headers,
       },
       ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),

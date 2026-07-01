@@ -74,11 +74,15 @@ Regras:
 
 | Role | Escala | Substituições | CH | Editar Escala |
 |------|--------|---------------|----|---------------|
+| público (sem login) | Leitura | Leitura | — | — |
 | `viewer` | Leitura | Leitura | — | — |
 | `member` | Leitura | Criar/deletar quando for titular ou substituto | Próprio painel | — |
 | `admin` | Leitura | Qualquer | Todos os painéis | Sim |
 
-**Toda autorização é garantida no backend** (`requireUser` retorna role da allowlist, nunca do cliente).
+**GET `/api/schedule` e GET `/api/substitutions` são públicos** — retornam dados sem autenticação para suportar a visualização pública.
+Escrita (POST/DELETE) sempre requer auth; CH (`/api/ch`) sempre requer auth.
+
+**Toda autorização de escrita é garantida no backend** (`requireUser` retorna role da allowlist, nunca do cliente).
 
 ### Como `requireUser` funciona
 
@@ -183,11 +187,14 @@ SA vem de `buildSchedule(overrides)` — reflete edições do admin no cálculo 
 
 ### Fluxo completo
 
+Não autenticado: `<PublicApp>` em `src/App.jsx` renderiza escala + botão "Entrar".
+`useApi()` omite `Authorization` quando token é null — endpoints GET públicos funcionam sem header.
+
 ```
 Browser → Clerk (Google OAuth) → JWT
     ↓
 useApi() [src/lib/api.js]
-  getToken() → Bearer <JWT>
+  getToken() → Bearer <JWT>  (null se não autenticado — omitido no header)
   fetch(/api/*)
     ↓
 requireUser(req) [api/_auth.js]

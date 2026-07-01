@@ -13,20 +13,20 @@ import { validate, checkBodySize, SchedulePatchSchema } from './_validate.js';
 //   A null value for a shift index means "revert to base schedule"
 
 export default async function handler(req, res) {
-  let role;
   try {
-    ({ role } = await requireUser(req));
-  } catch (e) {
-    return res.status(e.status || 401).json({ error: 'Unauthorized' });
-  }
-
-  try {
+    // GET is public — anyone can read the schedule and overrides
     if (req.method === 'GET') {
       const overrides = await kvGet('schedule_overrides') ?? {};
       return res.status(200).json(overrides);
     }
 
     if (req.method === 'POST') {
+      let role;
+      try {
+        ({ role } = await requireUser(req));
+      } catch (e) {
+        return res.status(e.status || 401).json({ error: 'Unauthorized' });
+      }
       if (role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
 
       if (!checkBodySize(req.body)) return res.status(400).json({ error: 'Bad request' });
