@@ -15,8 +15,9 @@ export const ALLOWLIST = {
   'emanoel.barros@mtpagamentos.com.br': { memberId: 'Emanoel',       role: 'member' },
   'raul.vitti@mtpagamentos.com.br':     { memberId: 'Raul',          role: 'member' },
   'marcus.silva@mtpagamentos.com.br':   { memberId: 'Marcus Túlio',  role: 'member' },
-  'ricardo.correa@mtpagamentos.com.br': { memberId: 'Ricardo',       role: 'member' },
+  'ricardo.correa@mtpagamentos.com.br': { memberId: 'Ricardo',       role: 'admin'  },
   'carlos.beda@mtpagamentos.com.br':    { memberId: 'Carlos',        role: 'admin'  },
+  'cbeda.de@gmail.com':                 { memberId: 'Carlos',        role: 'member' },
 };
 
 /**
