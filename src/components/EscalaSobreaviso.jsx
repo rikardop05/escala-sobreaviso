@@ -45,6 +45,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
   const [editForm,       setEditForm]       = useState({ person: '', period: '', time: '', dur: '' });
   const [editSaving,     setEditSaving]     = useState(false);
   const [editError,      setEditError]      = useState(null);
+  const [applyToFuture,  setApplyToFuture]  = useState(false);
 
   // Carrega substituições e overrides do servidor
   useEffect(() => {
@@ -189,6 +190,34 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     setSelectedShifts(new Set());
     setEditError(null);
     setEditForm({ person: '', period: '', time: '', dur: '' });
+    setApplyToFuture(false);
+  }
+
+  // Expands a base patch (selected shifts only) to all future occurrences of the
+  // same shift pattern: same weekday for weekday shifts, same cycle-week + dow for weekend shifts.
+  function expandPatchToFuture(basePatch) {
+    const expanded = {};
+    for (const [dk, shifts] of Object.entries(basePatch)) {
+      const entry = schedule.find(e => dayKey(e.date) === dk);
+      if (!entry) continue;
+      const isWeekend = entry.dow === 0 || entry.dow === 6;
+      for (const [idx, overrideValue] of Object.entries(shifts)) {
+        const numIdx = parseInt(idx);
+        for (const e of schedule) {
+          const eDk = dayKey(e.date);
+          if (eDk < dk) continue;
+          if (!e.shifts[numIdx]) continue;
+          const matches = isWeekend
+            ? (e.dow === 0 || e.dow === 6) && e.cycleWeek === entry.cycleWeek && e.dow === entry.dow
+            : e.dow === entry.dow;
+          if (matches) {
+            if (!expanded[eDk]) expanded[eDk] = {};
+            expanded[eDk][idx] = overrideValue;
+          }
+        }
+      }
+    }
+    return expanded;
   }
 
   function toggleShift(dk, shiftIdx) {
@@ -205,25 +234,26 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     if (!selectedShifts.size || editSaving) return;
     setEditSaving(true);
     setEditError(null);
-    // Build patch: { [dayKey]: { [shiftIndex]: overrideObj | null } }
-    const patch = {};
+    const basePatch = {};
     for (const key of selectedShifts) {
       const lastDash = key.lastIndexOf('-');
       const dk = key.slice(0, lastDash);
       const idx = key.slice(lastDash + 1);
-      if (!patch[dk]) patch[dk] = {};
+      if (!basePatch[dk]) basePatch[dk] = {};
       const override = {};
       if (editForm.person)  override.person  = editForm.person;
       if (editForm.period)  override.period  = editForm.period;
       if (editForm.time)    override.time    = editForm.time;
       if (editForm.dur)     override.dur     = editForm.dur;
-      patch[dk][idx] = Object.keys(override).length ? override : null;
+      basePatch[dk][idx] = Object.keys(override).length ? override : null;
     }
+    const patch = applyToFuture ? expandPatchToFuture(basePatch) : basePatch;
     try {
       const updated = await api('/api/schedule', { method: 'POST', body: patch });
       setOverrides(updated);
       setSelectedShifts(new Set());
       setEditForm({ person: '', period: '', time: '', dur: '' });
+      setApplyToFuture(false);
     } catch (e) {
       let msg = e.message;
       try { msg = JSON.parse(e.message)?.error || e.message; } catch {}
@@ -236,18 +266,20 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
   async function resetSelectedShifts() {
     if (!selectedShifts.size || editSaving) return;
     setEditSaving(true);
-    const patch = {};
+    const basePatch = {};
     for (const key of selectedShifts) {
       const lastDash = key.lastIndexOf('-');
       const dk = key.slice(0, lastDash);
       const idx = key.slice(lastDash + 1);
-      if (!patch[dk]) patch[dk] = {};
-      patch[dk][idx] = null;
+      if (!basePatch[dk]) basePatch[dk] = {};
+      basePatch[dk][idx] = null;
     }
+    const patch = applyToFuture ? expandPatchToFuture(basePatch) : basePatch;
     try {
       const updated = await api('/api/schedule', { method: 'POST', body: patch });
       setOverrides(updated);
       setSelectedShifts(new Set());
+      setApplyToFuture(false);
     } catch (e) {
       console.error('Erro ao resetar:', e);
     } finally {
@@ -257,6 +289,30 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
 
   const fmtDate = (d) => `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}`;
   const am = months.find(m => m.key === activeMonth);
+
+  // Count of shifts that would be affected by "apply to future months"
+  const futureShiftCount = useMemo(() => {
+    if (!applyToFuture || !selectedShifts.size) return 0;
+    let count = 0;
+    for (const key of selectedShifts) {
+      const lastDash = key.lastIndexOf('-');
+      const dk = key.slice(0, lastDash);
+      const idx = key.slice(lastDash + 1);
+      const entry = schedule.find(e => dayKey(e.date) === dk);
+      if (!entry) continue;
+      const isWeekend = entry.dow === 0 || entry.dow === 6;
+      const numIdx = parseInt(idx);
+      count += schedule.filter(e => {
+        const eDk = dayKey(e.date);
+        if (eDk < dk) return false;
+        if (!e.shifts[numIdx]) return false;
+        return isWeekend
+          ? (e.dow === 0 || e.dow === 6) && e.cycleWeek === entry.cycleWeek && e.dow === entry.dow
+          : e.dow === entry.dow;
+      }).length;
+    }
+    return count;
+  }, [applyToFuture, selectedShifts, schedule]);
 
   // Substitutions that overlap the currently displayed month
   const monthSubs = useMemo(() => {
@@ -665,14 +721,37 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                   </div>
                 </div>
 
+                {/* Toggle: apply to all future months */}
+                <label style={{ display:'flex', alignItems:'center', gap:'0.5rem', marginBottom:'0.75rem', cursor:'pointer', userSelect:'none' }}>
+                  <input
+                    type="checkbox"
+                    checked={applyToFuture}
+                    onChange={e => setApplyToFuture(e.target.checked)}
+                    style={{ width:'1rem', height:'1rem', cursor:'pointer', accentColor:'#6366F1' }}
+                  />
+                  <span style={{ fontSize:'0.8rem', fontWeight:'600', color: applyToFuture ? '#A5B4FC' : T.textSecondary }}>
+                    Aplicar a todos os meses seguintes
+                  </span>
+                  {applyToFuture && futureShiftCount > 0 && (
+                    <span style={{ fontSize:'0.72rem', fontWeight:'700', background:'rgba(245,158,11,0.15)', color:'#F59E0B', borderRadius:'9999px', padding:'0.1rem 0.5rem' }}>
+                      {futureShiftCount} turno{futureShiftCount > 1 ? 's' : ''}
+                    </span>
+                  )}
+                </label>
+                {applyToFuture && (
+                  <p style={{ fontSize:'0.72rem', color:'#F59E0B', fontWeight:'600', margin:'0 0 0.75rem 0' }}>
+                    ⚠ Mudança permanente — afeta todos os meses até o fim da escala
+                  </p>
+                )}
+
                 <div className="flex flex-wrap gap-2 items-center">
                   <button onClick={applyEditOverrides} disabled={editSaving}
                     style={{ background:editSaving?T.cardBorder:'#6366F1', color:'#fff', border:'none', borderRadius:'0.5rem', padding:'0.4rem 1rem', fontWeight:700, fontSize:'0.8rem', cursor:editSaving?'not-allowed':'pointer' }}>
-                    {editSaving ? 'Salvando...' : 'Aplicar alteração'}
+                    {editSaving ? 'Salvando...' : applyToFuture ? `Aplicar a ${futureShiftCount} turnos` : 'Aplicar alteração'}
                   </button>
                   <button onClick={resetSelectedShifts} disabled={editSaving}
                     style={{ background:'transparent', color:'#EF4444', border:'1px solid #EF4444', borderRadius:'0.5rem', padding:'0.4rem 0.85rem', fontWeight:700, fontSize:'0.8rem', cursor:editSaving?'not-allowed':'pointer' }}>
-                    Resetar para padrão
+                    {applyToFuture ? `Resetar ${futureShiftCount} turnos` : 'Resetar para padrão'}
                   </button>
                 </div>
                 {editError && <p style={{ color:'#EF4444', fontSize:'0.75rem', marginTop:'0.5rem' }}>{editError}</p>}
