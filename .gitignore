@@ -15,3 +15,9 @@ dist/
 # Sistema
 .DS_Store
 Thumbs.db
+
+# Tooling local (skills de agente, snapshots de critique, config do Claude Code)
+.agents/
+.impeccable/
+.claude/
+skills-lock.json

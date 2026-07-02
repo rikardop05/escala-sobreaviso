@@ -31,7 +31,9 @@ src/
   lib/
     api.js                  Hook useApi() — fetch autenticado com JWT Clerk
     schedule.js             Toda a lógica de geração da escala (leia seção Escala abaixo)
+    theme.js                Tema unificado getTheme(dark) — tokens de cor AA usados pelos dois views (não criar temas locais)
   components/
+    ui.jsx                  Kit compartilhado: Icon (SVGs), SaveStatus, Snackbar (undo), ConfirmDialog, Skeleton, friendlyError()
     EscalaSobreaviso.jsx    Calendário mensal, filtro, substituições, edição de escala (admin)
     ControleDeHoras.jsx     CH: parâmetros, lançamentos HE/Comp, relatório, exportação CSV; admin pode ver qualquer membro
 
@@ -103,8 +105,8 @@ Escrita (POST/DELETE) sempre requer auth; CH (`/api/ch`) sempre requer auth.
 
 ```js
 PEOPLE    = { Emanoel, "Marcus Túlio", Ricardo, Carlos, Raul, Alice }
-CH_NAMES  = ["Raul", "Emanoel", "Marcus Túlio", "Ricardo", "Carlos"]
-// Alice não participa do Controle de Horas financeiro
+CH_NAMES  = ["Raul", "Emanoel", "Marcus Túlio", "Ricardo", "Carlos", "Alice"]
+// Todos os membros participam do Controle de Horas (Alice incluída em jul/2026)
 ```
 
 ### Turnos de semana (seg–sex) — `WEEKDAY_SHIFTS`
@@ -249,6 +251,19 @@ Ordem de execução: `requireUser` → checagem de role → `checkBodySize` (50 
 Erros de validação: log server-side dos primeiros 5 issues; resposta sempre `400 { error: 'Bad request' }`.
 
 Ao adicionar membros à equipe em `_allowlist.js`, atualizar também `TEAM_MEMBERS` em `api/_validate.js`.
+
+---
+
+## Padrões de UI (front)
+
+- **Tema**: sempre via `getTheme(dark)` em `src/lib/theme.js`. Tokens cumprem WCAG AA; não criar dicionários de tema locais nos componentes.
+- **Ícones**: SVGs do componente `Icon` em `src/components/ui.jsx` — nunca emoji como ícone.
+- **Persistência com feedback**: toda escrita mostra estado (`SaveStatus`: Salvando…/Salvo/Erro com "Tentar de novo") e faz rollback do estado otimista em falha. Parâmetros do CH têm debounce de 600ms.
+- **Exclusões**: otimistas com `Snackbar` de undo (~6s); nada de window.confirm. Ações em massa ("aplicar/resetar a todos os meses seguintes") pedem `ConfirmDialog`.
+- **Erros ao usuário**: sempre via `friendlyError()` — mensagens em PT-BR com ação sugerida; detalhes só no console.
+- **View por hash**: `#escala` / `#controle` — refresh preserva a aba; `document.title` acompanha.
+- **monthKey salvo no passado é ignorado** na montagem — o app abre no mês atual.
+- **Acessibilidade**: foco visível global via `:focus-visible` (index.css); alvos de toque ≥40–44px; seleção de turnos no modo edição usa role="checkbox" + teclado; `prefers-reduced-motion` respeitado.
 
 ---
 

@@ -1,10 +1,12 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useApi } from '../lib/api';
 import {
   PEOPLE, DOW, DOW_SHORT, MONTHS, MONTHS_SHORT,
   MS_DAY, dayKey, sameDay, fmtDS,
   buildSchedule, currentOnCall, getActiveSub, getCoverSuggestions,
 } from '../lib/schedule';
+import { getTheme, ACCENT, DANGER, WARN } from '../lib/theme';
+import { Icon, Snackbar, ConfirmDialog, Skeleton, friendlyError } from './ui';
 
 function PersonTag({ name, dim, subOf }) {
   const p = PEOPLE[name] || { color: "#555", bg: "#eee" };
@@ -24,38 +26,61 @@ function PersonTag({ name, dim, subOf }) {
   );
 }
 
+// Ignora um monthKey salvo que aponta para um mês já passado —
+// quem abre o app quer ver o mês atual, não o último visitado.
+function freshMonthKey(saved) {
+  if (!saved) return null;
+  const [y, m] = String(saved).split('-').map(Number);
+  const now = new Date();
+  if (Number.isNaN(y) || Number.isNaN(m)) return null;
+  if (y < now.getFullYear() || (y === now.getFullYear() && m < now.getMonth())) return null;
+  return saved;
+}
+
 export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProfile }) {
   const api = useApi();
   const isAdmin = profile?.role === 'admin';
 
   const [now,      setNow]      = useState(new Date());
   const [filter,   setFilter]   = useState(profile?.filter ?? null);
-  const [monthKey, setMonthKey] = useState(profile?.monthKey ?? null);
+  const [monthKey, setMonthKey] = useState(() => freshMonthKey(profile?.monthKey));
   const [subs,     setSubs]     = useState([]);
   const [subForm,  setSubForm]  = useState({ show: false, titular: "", substituto: "", from: "", until: "" });
   const [subsLoading, setSubsLoading] = useState(true);
   const [subSaving,   setSubSaving]   = useState(false);
   const [subError,    setSubError]    = useState(null);
+  const [undoSub,     setUndoSub]     = useState(null); // substituição recém-removida, restaurável
+  const undoTimer = useRef(null);
   const todayRef = useRef(null);
 
   // ─── OVERRIDES DE ESCALA ─────────────────────────────────────────────────────
-  const [overrides,      setOverrides]      = useState({});
+  const [overrides,         setOverrides]         = useState({});
+  const [overridesLoading,  setOverridesLoading]  = useState(true);
+  const [overridesError,    setOverridesError]    = useState(false);
   const [editMode,       setEditMode]       = useState(false);
   const [selectedShifts, setSelectedShifts] = useState(new Set());
   const [editForm,       setEditForm]       = useState({ person: '', period: '', time: '', dur: '' });
   const [editSaving,     setEditSaving]     = useState(false);
   const [editError,      setEditError]      = useState(null);
   const [applyToFuture,  setApplyToFuture]  = useState(false);
+  const [confirmAction,  setConfirmAction]  = useState(null); // 'apply' | 'reset' | null
 
   // Carrega substituições e overrides do servidor
+  const loadOverrides = useCallback(() => {
+    setOverridesLoading(true);
+    setOverridesError(false);
+    api('/api/schedule')
+      .then(data => setOverrides(data || {}))
+      .catch(err => { console.error(err); setOverridesError(true); })
+      .finally(() => setOverridesLoading(false));
+  }, [api]);
+
   useEffect(() => {
     api('/api/substitutions')
       .then(data => setSubs(data || []))
       .catch(console.error)
       .finally(() => setSubsLoading(false));
-    api('/api/schedule')
-      .then(data => setOverrides(data || {}))
-      .catch(console.error);
+    loadOverrides();
   }, []);
 
   // Relógio
@@ -88,18 +113,21 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     return [...seen.values()];
   }, [schedule]);
 
-  const activeMonth = monthKey || (() => {
-    const k = `${now.getFullYear()}-${now.getMonth()}`;
-    return months.some(m => m.key === k) ? k : months[0].key;
-  })();
+  const currentMonthKey = `${now.getFullYear()}-${now.getMonth()}`;
+  const activeMonth = monthKey || (months.some(m => m.key === currentMonthKey) ? currentMonthKey : months[0].key);
 
   // Scrolla para hoje quando o mês ativo for o mês atual
   useEffect(() => {
-    const currentMonthKey = `${now.getFullYear()}-${now.getMonth()}`;
     if (activeMonth === currentMonthKey && todayRef.current) {
       todayRef.current.scrollIntoView({ behavior: 'instant', block: 'start' });
     }
-  }, [activeMonth]);
+  }, [activeMonth, overridesLoading]);
+
+  const goToToday = () => {
+    handleMonthChange(currentMonthKey);
+    // Se já estamos no mês atual o effect não redispara — força o scroll
+    setTimeout(() => todayRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  };
 
   const monthDays = useMemo(
     () => schedule.filter(d => `${d.date.getFullYear()}-${d.date.getMonth()}` === activeMonth),
@@ -166,20 +194,44 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
       setSubs(prev => [...prev, saved]);
       setSubForm({ show: false, titular: "", substituto: "", from: todayStr, until: "" });
     } catch (e) {
-      let msg = e.message;
-      try { msg = JSON.parse(e.message)?.error || e.message; } catch {}
-      setSubError(`Erro: ${msg}`);
+      setSubError(friendlyError(e));
     } finally {
       setSubSaving(false);
     }
   }
 
-  async function removeSub(id) {
-    setSubs(prev => prev.filter(s => s.id !== id));
+  // Remoção otimista com undo: a UI remove na hora, o snackbar oferece "Desfazer"
+  // por alguns segundos e uma falha na API restaura a lista com aviso.
+  async function removeSub(sub) {
+    setSubError(null);
+    setSubs(prev => prev.filter(s => s.id !== sub.id));
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    setUndoSub(sub);
+    undoTimer.current = setTimeout(() => setUndoSub(null), 6000);
     try {
-      await api(`/api/substitutions?id=${id}`, { method: 'DELETE' });
+      await api(`/api/substitutions?id=${sub.id}`, { method: 'DELETE' });
     } catch (e) {
       console.error('Erro ao remover substituição:', e);
+      clearTimeout(undoTimer.current);
+      setUndoSub(null);
+      setSubs(prev => [...prev, sub]);
+      setSubError(friendlyError(e));
+    }
+  }
+
+  async function undoRemoveSub() {
+    if (!undoSub) return;
+    const sub = undoSub;
+    clearTimeout(undoTimer.current);
+    setUndoSub(null);
+    try {
+      const saved = await api('/api/substitutions', {
+        method: 'POST',
+        body: { titular: sub.titular, substituto: sub.substituto, from: sub.from, until: sub.until },
+      });
+      setSubs(prev => [...prev, saved]);
+    } catch (e) {
+      setSubError(friendlyError(e));
     }
   }
 
@@ -230,61 +282,61 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     });
   }
 
-  async function applyEditOverrides() {
-    if (!selectedShifts.size || editSaving) return;
-    setEditSaving(true);
-    setEditError(null);
+  function buildBasePatch(useForm) {
     const basePatch = {};
     for (const key of selectedShifts) {
       const lastDash = key.lastIndexOf('-');
       const dk = key.slice(0, lastDash);
       const idx = key.slice(lastDash + 1);
       if (!basePatch[dk]) basePatch[dk] = {};
-      const override = {};
-      if (editForm.person)  override.person  = editForm.person;
-      if (editForm.period)  override.period  = editForm.period;
-      if (editForm.time)    override.time    = editForm.time;
-      if (editForm.dur)     override.dur     = editForm.dur;
-      basePatch[dk][idx] = Object.keys(override).length ? override : null;
+      if (useForm) {
+        const override = {};
+        if (editForm.person)  override.person  = editForm.person;
+        if (editForm.period)  override.period  = editForm.period;
+        if (editForm.time)    override.time    = editForm.time;
+        if (editForm.dur)     override.dur     = editForm.dur;
+        basePatch[dk][idx] = Object.keys(override).length ? override : null;
+      } else {
+        basePatch[dk][idx] = null;
+      }
     }
-    const patch = applyToFuture ? expandPatchToFuture(basePatch) : basePatch;
+    return basePatch;
+  }
+
+  async function postPatch(patch, clearForm) {
+    setEditSaving(true);
+    setEditError(null);
     try {
       const updated = await api('/api/schedule', { method: 'POST', body: patch });
       setOverrides(updated);
       setSelectedShifts(new Set());
-      setEditForm({ person: '', period: '', time: '', dur: '' });
+      if (clearForm) setEditForm({ person: '', period: '', time: '', dur: '' });
       setApplyToFuture(false);
     } catch (e) {
-      let msg = e.message;
-      try { msg = JSON.parse(e.message)?.error || e.message; } catch {}
-      setEditError(`Erro: ${msg}`);
+      setEditError(friendlyError(e));
     } finally {
       setEditSaving(false);
     }
   }
 
-  async function resetSelectedShifts() {
+  function applyEditOverrides() {
     if (!selectedShifts.size || editSaving) return;
-    setEditSaving(true);
-    const basePatch = {};
-    for (const key of selectedShifts) {
-      const lastDash = key.lastIndexOf('-');
-      const dk = key.slice(0, lastDash);
-      const idx = key.slice(lastDash + 1);
-      if (!basePatch[dk]) basePatch[dk] = {};
-      basePatch[dk][idx] = null;
-    }
-    const patch = applyToFuture ? expandPatchToFuture(basePatch) : basePatch;
-    try {
-      const updated = await api('/api/schedule', { method: 'POST', body: patch });
-      setOverrides(updated);
-      setSelectedShifts(new Set());
-      setApplyToFuture(false);
-    } catch (e) {
-      console.error('Erro ao resetar:', e);
-    } finally {
-      setEditSaving(false);
-    }
+    if (applyToFuture) { setConfirmAction('apply'); return; }
+    postPatch(buildBasePatch(true), true);
+  }
+
+  function resetSelectedShifts() {
+    if (!selectedShifts.size || editSaving) return;
+    if (applyToFuture) { setConfirmAction('reset'); return; }
+    postPatch(buildBasePatch(false), false);
+  }
+
+  function confirmPendingAction() {
+    const action = confirmAction;
+    setConfirmAction(null);
+    const useForm = action === 'apply';
+    const base = buildBasePatch(useForm);
+    postPatch(expandPatchToFuture(base), useForm);
   }
 
   const fmtDate = (d) => `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}`;
@@ -323,111 +375,112 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     return subs.filter(s => s.from <= lastDay && s.until >= firstDay);
   }, [subs, activeMonth, months]);
 
-  // ─── TEMA ────────────────────────────────────────────────────────────────────
-  const T = dark ? {
-    pageBg:"#0F172A", cardBg:"#1E293B", cardBgWeekend:"#1A2336",
-    cardBorder:"#334155", cardBorderToday:"#94A3B8",
-    headerGrad:"linear-gradient(135deg,#020617 0%,#0F172A 100%)",
-    dateColBg:"#162032", dateColBgWeekend:"#1C2840", dateColBorder:"#334155",
-    upcomingBg:"#1E293B", upcomingBorder:"#334155", upcomingDivider:"#263347",
-    cycleBg:"#334155", cycleColor:"#94A3B8",
-    labelColor:"#475569", textPrimary:"#F1F5F9", textSecondary:"#94A3B8", textMuted:"#64748B",
-    periodColor:"#94A3B8", timeColor:"#64748B", durColor:"#475569",
-    dateNumColor:"#CBD5E1", monthShortColor:"#475569",
-    filterAllBg:"#F1F5F9", filterAllColor:"#0F172A", filterAllBorder:"#F1F5F9",
-    filterDefBg:"#1E293B", filterDefColor:"#64748B", filterDefBorder:"#334155",
-    monthActiveBg:"#F1F5F9", monthActiveColor:"#0F172A", monthActiveBorder:"#F1F5F9",
-    monthDefBg:"#1E293B", monthDefColor:"#64748B", monthDefBorder:"#334155",
-    inputBg:"#0F172A", saveBg:"#F1F5F9", saveColor:"#0F172A",
-  } : {
-    pageBg:"#EEF1F6", cardBg:"#fff", cardBgWeekend:"#FDFBEF",
-    cardBorder:"#E2E8F0", cardBorderToday:"#1E293B",
-    headerGrad:"linear-gradient(135deg,#1E293B 0%,#334155 100%)",
-    dateColBg:"#F1F5F9", dateColBgWeekend:"#F5EFD0", dateColBorder:"#E2E8F0",
-    upcomingBg:"#fff", upcomingBorder:"#E2E8F0", upcomingDivider:"#F1F5F9",
-    cycleBg:"#E2E8F0", cycleColor:"#475569",
-    labelColor:"#64748B", textPrimary:"#1E293B", textSecondary:"#475569", textMuted:"#94A3B8",
-    periodColor:"#475569", timeColor:"#94A3B8", durColor:"#94A3B8",
-    dateNumColor:"#1E293B", monthShortColor:"#94A3B8",
-    filterAllBg:"#1E293B", filterAllColor:"#fff", filterAllBorder:"#1E293B",
-    filterDefBg:"#fff", filterDefColor:"#475569", filterDefBorder:"#CBD5E1",
-    monthActiveBg:"#1E293B", monthActiveColor:"#fff", monthActiveBorder:"#1E293B",
-    monthDefBg:"#fff", monthDefColor:"#475569", monthDefBorder:"#E2E8F0",
-    inputBg:"#fff", saveBg:"#1E293B", saveColor:"#fff",
-  };
+  const T = getTheme(dark);
 
   const selStyle = {
-    display:"block", width:"100%", padding:"0.35rem 0.5rem", fontSize:"0.8rem",
-    borderRadius:"0.4rem", border:`1px solid ${T.cardBorder}`,
-    background:T.inputBg, color:T.textPrimary, marginTop:"0.25rem", outline:"none",
+    display:"block", width:"100%", padding:"0.5rem 0.6rem", fontSize:"0.85rem", minHeight:"2.5rem",
+    borderRadius:"0.4rem", border:`1px solid ${T.inputBorder}`,
+    background:T.inputBg, color:T.textPrimary, marginTop:"0.25rem",
   };
+
+  const labelStyle = { fontSize:"0.72rem", fontWeight:600, color:T.labelColor };
+
+  const scheduleReady = !overridesLoading;
 
   return (
     <div style={{ minHeight:"100vh", background:T.pageBg, fontFamily:"'Segoe UI',system-ui,sans-serif", color:T.textPrimary, transition:"background 0.2s,color 0.2s" }}>
       <div className="max-w-3xl mx-auto px-4 py-6">
 
         {/* CABEÇALHO */}
-        <div className="rounded-2xl p-5 mb-5 text-white" style={{ background:T.headerGrad, position:"relative" }}>
+        <header className="rounded-2xl p-5 mb-5 text-white" style={{ background:T.headerGrad, position:"relative" }}>
           <button
             onClick={onToggleDark}
-            style={{ position:"absolute", top:"0.75rem", right:"0.75rem", background:"rgba(255,255,255,0.12)", color:"#fff", border:"1px solid rgba(255,255,255,0.22)", borderRadius:"9999px", padding:"0.2rem 0.65rem", fontSize:"0.7rem", fontWeight:"600", cursor:"pointer", letterSpacing:"0.03em", lineHeight:"1.6" }}
+            aria-label={dark ? "Mudar para tema claro" : "Mudar para tema escuro"}
+            style={{ position:"absolute", top:"0.6rem", right:"0.6rem", display:"inline-flex", alignItems:"center", gap:"0.35rem", background:"rgba(255,255,255,0.12)", color:"#fff", border:"1px solid rgba(255,255,255,0.22)", borderRadius:"9999px", padding:"0.5rem 0.85rem", minHeight:"2.75rem", fontSize:"0.72rem", fontWeight:"600", cursor:"pointer", letterSpacing:"0.02em" }}
           >
-            {dark ? "☀ Claro" : "🌙 Escuro"}
+            <Icon name={dark ? "sun" : "moon"} size={14} />
+            {dark ? "Claro" : "Escuro"}
           </button>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <div className="text-xs uppercase tracking-widest opacity-60 mb-1">Escala de Sobreaviso</div>
+              <h1 className="text-sm font-semibold opacity-80 mb-1" style={{ letterSpacing:"0.01em" }}>Escala de Sobreaviso</h1>
               <div className="text-2xl font-bold">{DOW[now.getDay()]}, {fmtDate(now)}/{now.getFullYear()}</div>
             </div>
-            <div className="rounded-xl px-4 py-3 min-w-[200px]" style={{ background:"rgba(255,255,255,0.08)", borderLeft:`4px solid ${onCallColor}` }}>
-              <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider opacity-70">
+            <div className="rounded-xl px-4 py-3 min-w-[200px]" style={{ background:"rgba(255,255,255,0.08)", borderLeft:`4px solid ${scheduleReady ? onCallColor : "rgba(255,255,255,0.25)"}` }}>
+              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider opacity-80">
                 <span className="relative flex w-2 h-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-60" style={{ background:onCallColor }} />
-                  <span className="relative inline-flex rounded-full w-2 h-2" style={{ background:onCallColor }} />
+                  <span className="animate-ping motion-reduce:animate-none absolute inline-flex h-full w-full rounded-full opacity-60" style={{ background:scheduleReady ? onCallColor : "#94A3B8" }} />
+                  <span className="relative inline-flex rounded-full w-2 h-2" style={{ background:scheduleReady ? onCallColor : "#94A3B8" }} />
                 </span>
                 Agora
               </div>
-              {onCall ? (
+              {!scheduleReady ? (
+                <div role="status" aria-label="Carregando escala">
+                  <Skeleton w="8rem" h="1.35rem" T={{ skeletonBg:"rgba(255,255,255,0.18)" }} style={{ margin:"0.35rem 0 0.3rem" }} />
+                  <Skeleton w="11rem" h="0.8rem" T={{ skeletonBg:"rgba(255,255,255,0.12)" }} />
+                </div>
+              ) : onCall ? (
                 <>
                   <div className="text-lg font-bold" style={{ color: onCallColor === "#37474F" ? "#CBD5E1" : onCallColor }}>{onCall.person}</div>
-                  <div className="text-xs opacity-70">
+                  <div className="text-xs opacity-80">
                     {onCall.label} · {onCall.time}
-                    {onCall.coveringFor && <span className="ml-1 opacity-80">· cobre {onCall.coveringFor}</span>}
+                    {onCall.coveringFor && <span className="ml-1">· cobre {onCall.coveringFor}</span>}
                   </div>
                 </>
               ) : (
                 <>
                   <div className="text-lg font-bold opacity-90">Sem sobreaviso</div>
-                  <div className="text-xs opacity-70">Horário comercial (09:00 – 18:00)</div>
+                  <div className="text-xs opacity-80">Horário comercial (09:00 – 18:00)</div>
                 </>
               )}
             </div>
           </div>
-        </div>
+        </header>
+
+        {overridesError && (
+          <div role="alert" className="rounded-xl px-4 py-3 mb-4 flex items-center justify-between gap-3 flex-wrap"
+            style={{ background:"rgba(245,158,11,0.12)", border:`1px solid ${WARN}` }}>
+            <span className="flex items-center gap-2 text-sm font-semibold" style={{ color:WARN }}>
+              <Icon name="alert" size={16} />
+              Não foi possível carregar as edições da escala — mostrando a escala base.
+            </span>
+            <button onClick={loadOverrides}
+              style={{ background:"transparent", border:`1px solid ${WARN}`, color:WARN, borderRadius:"9999px", padding:"0.35rem 0.9rem", fontSize:"0.75rem", fontWeight:700, cursor:"pointer", minHeight:"2.25rem" }}>
+              Tentar de novo
+            </button>
+          </div>
+        )}
 
         {/* FILTRO */}
-        <div className="mb-4">
-          <div className="text-xs font-bold uppercase tracking-wider mb-2" style={{ color:T.labelColor }}>Filtrar por responsável</div>
+        <section className="mb-4" aria-label="Filtro por responsável">
+          <h2 className="text-sm font-semibold mb-2" style={{ color:T.textSecondary }}>Filtrar por responsável</h2>
           <div className="flex flex-wrap gap-2">
-            <button onClick={() => { setFilter(null); saveProfile({ filter: null }); }} className="px-3 py-1.5 rounded-full text-sm font-bold transition-all"
-              style={{ background:!filter?T.filterAllBg:T.filterDefBg, color:!filter?T.filterAllColor:T.filterDefColor, border:"1.5px solid "+(!filter?T.filterAllBorder:T.filterDefBorder) }}>
+            <button onClick={() => { setFilter(null); saveProfile({ filter: null }); }} className="px-3.5 rounded-full text-sm font-bold transition-all"
+              style={{ minHeight:"2.5rem", background:!filter?T.filterAllBg:T.filterDefBg, color:!filter?T.filterAllColor:T.filterDefColor, border:"1.5px solid "+(!filter?T.filterAllBorder:T.filterDefBorder) }}>
               Todos
             </button>
             {Object.entries(PEOPLE).map(([name, p]) => {
-              const isFeriasHoje = activeTitulares.has(name);
+              const temSubHoje = activeTitulares.has(name);
               return (
-                <button key={name} onClick={() => handleFilterChange(name)} className="px-3 py-1.5 rounded-full text-sm font-bold transition-all"
-                  style={{ background:filter===name?p.color:T.filterDefBg, color:filter===name?"#fff":p.color, border:`1.5px solid ${filter===name?p.color:T.filterDefBorder}` }}>
-                  {name}{isFeriasHoje ? " 🌴" : ""}
+                <button key={name} onClick={() => handleFilterChange(name)} className="px-3.5 rounded-full text-sm font-bold transition-all inline-flex items-center gap-1.5"
+                  aria-pressed={filter === name}
+                  style={{ minHeight:"2.5rem", background:filter===name?p.color:T.filterDefBg, color:filter===name?"#fff":p.color, border:`1.5px solid ${filter===name?p.color:T.filterDefBorder}` }}>
+                  {name}
+                  {temSubHoje && <Icon name="umbrella" size={13} />}
                 </button>
               );
             })}
           </div>
-        </div>
+          {activeTitulares.size > 0 && (
+            <p className="flex items-center gap-1.5 text-xs mt-2" style={{ color:T.textMuted }}>
+              <Icon name="umbrella" size={12} /> = com substituição ativa hoje (ausente, coberto por outra pessoa)
+            </p>
+          )}
+        </section>
 
         {/* PRÓXIMOS PLANTÕES */}
         {filter && (
-          <div className="rounded-2xl p-4 mb-5" style={{ background:T.upcomingBg, border:`1px solid ${T.upcomingBorder}` }}>
+          <section className="rounded-2xl p-4 mb-5" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}` }}>
             <div className="flex items-center gap-2 mb-3">
               <span className="w-3 h-3 rounded-full" style={{ background: PEOPLE[filter].color }} />
               <h2 className="font-bold text-base">Próximos sobreavisos de {filter}</h2>
@@ -438,12 +491,14 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
               <div>
                 {upcoming.map((u, i) => (
                   <div key={i} className="flex items-center justify-between py-2 text-sm gap-2 flex-wrap"
-                    style={{ borderTop: i>0?`1px solid ${T.upcomingDivider}`:"none", opacity: u.coveredBy ? 0.5 : 1 }}>
+                    style={{ borderTop: i>0?`1px solid ${T.divider}`:"none", opacity: u.coveredBy ? 0.5 : 1 }}>
                     <div className="flex items-center gap-3 flex-wrap">
                       <span className="font-mono font-bold w-14" style={{ color:T.textSecondary }}>{fmtDate(u.date)}</span>
                       <span className="w-10" style={{ color:T.textMuted }}>{DOW_SHORT[u.dow]}</span>
                       {u.kind === "folga" ? (
-                        <span className="rounded-md px-2 py-0.5 text-xs font-bold" style={{ background:"#FEF9C3", color:"#854D0E" }}>🏖 Folga FDS</span>
+                        <span className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-bold" style={{ background:"#FEF9C3", color:"#854D0E" }}>
+                          <Icon name="umbrella" size={12} /> Folga FDS
+                        </span>
                       ) : (
                         <span className="font-semibold" style={{ color: PEOPLE[filter].color }}>{u.period}</span>
                       )}
@@ -455,16 +510,21 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                 ))}
               </div>
             )}
-          </div>
+          </section>
         )}
 
         {/* NAVEGAÇÃO DE MESES + BOTÃO DE EDIÇÃO (admin) */}
         <div className="flex items-center gap-2 mb-3">
-          <div className="flex-1 min-w-0 rounded-xl px-3 py-2" style={{ background:T.cardBg, border:`1px solid ${editMode ? '#6366F1' : T.cardBorder}` }}>
-            <div className="flex gap-2 overflow-x-auto" style={{ scrollbarWidth:"thin", scrollbarColor:`${T.cardBorder} transparent` }}>
+          <div className="flex-1 min-w-0 rounded-xl px-3 py-1.5" style={{ background:T.cardBg, border:`1px solid ${editMode ? ACCENT : T.cardBorder}` }}>
+            <div className="flex gap-2 overflow-x-auto items-center" style={{ scrollbarWidth:"thin", scrollbarColor:`${T.cardBorder} transparent` }}>
+              <button onClick={goToToday} className="px-3 rounded-lg text-sm font-bold whitespace-nowrap transition-all flex-shrink-0"
+                style={{ minHeight:"2.5rem", background:"transparent", color:ACCENT, border:`1px solid ${ACCENT}` }}>
+                Hoje
+              </button>
               {months.map(m => (
-                <button key={m.key} onClick={() => handleMonthChange(m.key)} className="px-3 py-1.5 rounded-lg text-sm font-bold whitespace-nowrap transition-all flex-shrink-0"
-                  style={{ background:activeMonth===m.key?T.monthActiveBg:T.monthDefBg, color:activeMonth===m.key?T.monthActiveColor:T.monthDefColor, border:"1px solid "+(activeMonth===m.key?T.monthActiveBorder:T.monthDefBorder) }}>
+                <button key={m.key} onClick={() => handleMonthChange(m.key)} className="px-3 rounded-lg text-sm font-bold whitespace-nowrap transition-all flex-shrink-0"
+                  aria-current={activeMonth === m.key ? 'true' : undefined}
+                  style={{ minHeight:"2.5rem", background:activeMonth===m.key?T.monthActiveBg:T.monthDefBg, color:activeMonth===m.key?T.monthActiveColor:T.monthDefColor, border:"1px solid "+(activeMonth===m.key?T.monthActiveBorder:T.monthDefBorder) }}>
                   {MONTHS_SHORT[m.m]}/{String(m.y).slice(2)}
                 </button>
               ))}
@@ -473,16 +533,21 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
           {isAdmin && (
             <button
               onClick={toggleEditMode}
-              style={{ flexShrink:0, background: editMode ? '#6366F1' : T.cardBg, color: editMode ? '#fff' : T.textSecondary, border:`1px solid ${editMode ? '#6366F1' : T.cardBorder}`, borderRadius:"0.75rem", padding:"0.5rem 0.85rem", fontSize:"0.75rem", fontWeight:"700", cursor:"pointer", whiteSpace:"nowrap" }}
+              style={{ flexShrink:0, display:"inline-flex", alignItems:"center", gap:"0.35rem", background: editMode ? ACCENT : T.cardBg, color: editMode ? '#fff' : T.textSecondary, border:`1px solid ${editMode ? ACCENT : T.cardBorder}`, borderRadius:"0.75rem", padding:"0.5rem 0.85rem", minHeight:"2.75rem", fontSize:"0.75rem", fontWeight:"700", cursor:"pointer", whiteSpace:"nowrap" }}
             >
-              {editMode ? '✕ Sair da edição' : '✏ Editar Escala'}
+              <Icon name={editMode ? "x" : "pencil"} size={14} />
+              {editMode ? 'Sair da edição' : 'Editar Escala'}
             </button>
           )}
         </div>
 
         {/* CALENDÁRIO */}
         <h2 className="font-bold text-lg mb-2" style={{ color:T.textPrimary }}>{am?`${MONTHS[am.m]} de ${am.y}`:""}</h2>
-        <div style={{ height:'62vh', overflowY:'auto', scrollbarWidth:'thin', scrollbarColor:`${T.cardBorder} transparent`, paddingRight:'2px' }}>
+        {!scheduleReady ? (
+          <div className="space-y-2 pb-4" role="status" aria-label="Carregando calendário">
+            {[0,1,2,3].map(i => <Skeleton key={i} h="4.5rem" T={T} style={{ borderRadius:"0.75rem" }} />)}
+          </div>
+        ) : (
         <div className="space-y-2 pb-4">
           {monthDays.map(d => {
             const isToday   = sameDay(d.date, now);
@@ -495,23 +560,23 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
             }) || d.folga === filter;
             return (
               <div key={dayKey(d.date)} ref={isToday ? todayRef : null} className="rounded-xl overflow-hidden"
-                style={{ scrollMarginTop:'8px', border:`${isToday?2:1}px solid ${isToday?T.cardBorderToday:T.cardBorder}`, opacity: isPast?0.45:filter&&!hasFiltered?0.35:1, background:isWeekend?T.cardBgWeekend:T.cardBg }}>
+                style={{ scrollMarginTop:'64px', border:`${isToday?2:1}px solid ${isToday?T.cardBorderToday:T.cardBorder}`, opacity: isPast?0.45:filter&&!hasFiltered?0.35:1, background:isWeekend?T.cardBgWeekend:T.cardBg }}>
                 <div className="flex items-stretch">
                   <div className="flex flex-col items-center justify-center w-16 shrink-0 py-3"
                     style={{ background:isWeekend?T.dateColBgWeekend:T.dateColBg, borderRight:`1px solid ${T.dateColBorder}` }}>
                     <div className="text-[10px] font-bold uppercase tracking-wide" style={{ color:T.textMuted }}>{DOW_SHORT[d.dow]}</div>
                     <div className="text-xl font-bold leading-tight" style={{ color:T.dateNumColor }}>{String(d.date.getDate()).padStart(2,"0")}</div>
-                    <div className="text-[10px]" style={{ color:T.monthShortColor }}>{MONTHS_SHORT[d.date.getMonth()]}</div>
+                    <div className="text-[10px] font-semibold" style={{ color:T.monthShortColor }}>{MONTHS_SHORT[d.date.getMonth()]}</div>
                     {isToday && <div className="mt-1 text-[9px] font-bold text-white bg-slate-800 rounded px-1.5 py-0.5">HOJE</div>}
                   </div>
                   <div className="flex-1 px-3 py-2">
                     {isWeekend && d.dow === 6 && (
                       <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                        <span className="text-[10px] font-bold uppercase tracking-wider rounded px-1.5 py-0.5" style={{ background:T.cycleBg, color:T.cycleColor }}>
+                        <span className="text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:T.cycleBg, color:T.cycleColor }}>
                           Semana {d.cycleWeek} do ciclo
                         </span>
-                        <span className="text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:"#FEF9C3", color:"#854D0E", opacity: filter&&d.folga!==filter?0.4:1 }}>
-                          🏖 Folga FDS: {d.folga}
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:"#FEF9C3", color:"#854D0E", opacity: filter&&d.folga!==filter?0.4:1 }}>
+                          <Icon name="umbrella" size={11} /> Folga FDS: {d.folga}
                         </span>
                       </div>
                     )}
@@ -523,27 +588,37 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                         const shiftKey = `${dk}-${i}`;
                         const isSelected = selectedShifts.has(shiftKey);
                         const hasOverride = !!(overrides[dk]?.[String(i)]);
+                        const shiftProps = editMode ? {
+                          role: 'checkbox',
+                          'aria-checked': isSelected,
+                          'aria-label': `${DOW_SHORT[d.dow]} ${fmtDate(d.date)} · ${s.period} ${s.time} · ${effectivePerson}`,
+                          tabIndex: 0,
+                          onClick: () => toggleShift(dk, i),
+                          onKeyDown: (e) => {
+                            if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggleShift(dk, i); }
+                          },
+                        } : {};
                         return (
                           <div key={i}
-                            onClick={() => editMode && toggleShift(dk, i)}
+                            {...shiftProps}
                             className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm"
                             style={{
                               opacity: dim ? 0.3 : 1,
                               cursor: editMode ? 'pointer' : 'default',
                               background: isSelected ? 'rgba(99,102,241,0.12)' : 'transparent',
                               borderRadius: '0.375rem',
-                              padding: editMode ? '0.2rem 0.35rem' : '0.1rem 0',
-                              outline: isSelected ? '1.5px solid #6366F1' : 'none',
+                              padding: editMode ? '0.45rem 0.35rem' : '0.1rem 0',
+                              outline: isSelected ? `1.5px solid ${ACCENT}` : undefined,
                               margin: editMode ? '0.05rem 0' : undefined,
                             }}>
                             {editMode && (
-                              <span style={{ width:'1rem', height:'1rem', borderRadius:'3px', border:`1.5px solid ${isSelected?'#6366F1':T.cardBorder}`, background:isSelected?'#6366F1':'transparent', display:'inline-flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
-                                {isSelected && <span style={{ color:'#fff', fontSize:'0.6rem', fontWeight:'900', lineHeight:1 }}>✓</span>}
+                              <span aria-hidden="true" style={{ width:'1rem', height:'1rem', borderRadius:'3px', border:`1.5px solid ${isSelected?ACCENT:T.cardBorder}`, background:isSelected?ACCENT:'transparent', display:'inline-flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+                                {isSelected && <Icon name="check" size={11} style={{ color:'#fff' }} />}
                               </span>
                             )}
-                            <span className="w-24 font-semibold" style={{ color: hasOverride ? '#818CF8' : T.periodColor }}>{s.period}</span>
-                            <span className="font-mono text-xs w-28" style={{ color: hasOverride ? '#818CF8' : T.timeColor }}>{s.time}</span>
-                            <span className="font-mono text-xs w-7" style={{ color:T.durColor }}>{s.dur}</span>
+                            <span className="w-24 font-semibold" style={{ color: hasOverride ? '#818CF8' : T.textSecondary }}>{s.period}</span>
+                            <span className="font-mono text-xs w-28" style={{ color: hasOverride ? '#818CF8' : T.textMuted }}>{s.time}</span>
+                            <span className="font-mono text-xs w-7" style={{ color:T.textMuted }}>{s.dur}</span>
                             <PersonTag name={effectivePerson} subOf={sub ? s.person : null} />
                             {hasOverride && (
                               <span style={{ fontSize:'0.6rem', color:'#818CF8', fontWeight:'700', background:'rgba(99,102,241,0.1)', borderRadius:'3px', padding:'0 3px' }}>editado</span>
@@ -558,13 +633,13 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
             );
           })}
         </div>
-        </div>
+        )}
 
         {/* SUBSTITUIÇÕES */}
-        <div className="rounded-2xl p-4 mt-4" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}` }}>
+        <section className="rounded-2xl p-4 mt-4" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}` }}>
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-bold uppercase tracking-wider" style={{ color:T.labelColor }}>Substituições</span>
+              <h2 className="text-sm font-semibold" style={{ color:T.textSecondary }}>Substituições</h2>
               {monthSubs.length > 0 && (
                 <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ background:"#DBEAFE", color:"#1D4ED8" }}>
                   {monthSubs.length} ativa{monthSubs.length > 1 ? "s" : ""}
@@ -575,35 +650,42 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
             {profile?.role !== 'viewer' && (
               <button
                 onClick={subForm.show ? () => setSubForm(f => ({ ...f, show:false })) : openSubForm}
-                style={{ background:"transparent", border:`1px solid ${T.cardBorder}`, borderRadius:"9999px", padding:"0.2rem 0.65rem", fontSize:"0.72rem", fontWeight:"700", cursor:"pointer", color:T.textSecondary }}
+                style={{ display:"inline-flex", alignItems:"center", gap:"0.3rem", background:"transparent", border:`1px solid ${T.cardBorder}`, borderRadius:"9999px", padding:"0.4rem 0.85rem", minHeight:"2.5rem", fontSize:"0.75rem", fontWeight:"700", cursor:"pointer", color:T.textSecondary }}
               >
-                {subForm.show ? "Cancelar" : "+ Adicionar"}
+                {subForm.show ? <><Icon name="x" size={13} /> Cancelar</> : <><Icon name="plus" size={13} /> Adicionar</>}
               </button>
             )}
           </div>
 
+          {subError && (
+            <p role="alert" className="flex items-center gap-1.5 text-xs font-semibold mb-2" style={{ color:DANGER }}>
+              <Icon name="alert" size={13} /> {subError}
+            </p>
+          )}
+
           {monthSubs.length === 0 && !subForm.show && !subsLoading && (
             <div className="text-xs" style={{ color:T.textMuted }}>Nenhuma substituição neste mês. Use para férias ou trocas eventuais.</div>
           )}
-          {subsLoading && <div className="text-xs" style={{ color:T.textMuted }}>Carregando...</div>}
+          {subsLoading && <div className="text-xs" role="status" style={{ color:T.textMuted }}>Carregando substituições…</div>}
 
-          {monthSubs.map((s, i) => {
+          {monthSubs.map((s) => {
             // Show delete only to admin, or to member if they appear in the substitution
             const canDelete = isAdmin
               || (profile?.role === 'member' && (s.titular === profile?.memberId || s.substituto === profile?.memberId));
             return (
-              <div key={s.id} className="flex items-center justify-between py-2 flex-wrap gap-y-1"
-                style={{ borderTop: `1px solid ${T.upcomingDivider}` }}>
+              <div key={s.id} className="flex items-center justify-between py-1.5 flex-wrap gap-y-1"
+                style={{ borderTop: `1px solid ${T.divider}` }}>
                 <div className="flex items-center gap-2 flex-wrap text-sm">
                   <PersonTag name={s.titular} />
-                  <span style={{ color:T.textMuted, fontSize:"1rem" }}>→</span>
+                  <span aria-hidden="true" style={{ color:T.textMuted, fontSize:"1rem" }}>→</span>
                   <PersonTag name={s.substituto} />
                   <span className="text-xs font-mono" style={{ color:T.textMuted }}>{fmtDS(s.from)} – {fmtDS(s.until)}</span>
                 </div>
                 {canDelete && (
-                  <button onClick={() => removeSub(s.id)}
-                    style={{ background:"transparent", border:"none", cursor:"pointer", color:T.textMuted, fontSize:"1rem", lineHeight:1, padding:"0 0.25rem" }}>
-                    ✕
+                  <button onClick={() => removeSub(s)}
+                    aria-label={`Excluir substituição: ${s.substituto} cobre ${s.titular} de ${fmtDS(s.from)} a ${fmtDS(s.until)}`}
+                    style={{ background:"transparent", border:"none", cursor:"pointer", color:T.textMuted, display:"inline-flex", alignItems:"center", justifyContent:"center", width:"2.75rem", height:"2.75rem", borderRadius:"0.5rem", flexShrink:0 }}>
+                    <Icon name="x" size={16} />
                   </button>
                 )}
               </div>
@@ -614,56 +696,57 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
             <div className="mt-3 pt-3" style={{ borderTop:`1px solid ${T.cardBorder}` }}>
               <div className="grid grid-cols-2 gap-3 mb-3">
                 <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider" style={{ color:T.labelColor }}>Titular (ausente)</label>
+                  <label style={labelStyle}>Titular (ausente)
                   <select value={subForm.titular} onChange={e => setSubForm(f => ({ ...f, titular:e.target.value, substituto: f.substituto===e.target.value?"":f.substituto }))} style={selStyle}>
-                    <option value="">Selecionar...</option>
+                    <option value="">Selecionar…</option>
                     {Object.keys(PEOPLE).map(p => <option key={p} value={p}>{p}</option>)}
                   </select>
+                  </label>
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider" style={{ color:T.labelColor }}>Substituto</label>
+                  <label style={labelStyle}>Substituto
                   <select value={subForm.substituto} onChange={e => setSubForm(f => ({ ...f, substituto:e.target.value }))} style={selStyle}>
-                    <option value="">Selecionar...</option>
+                    <option value="">Selecionar…</option>
                     {Object.keys(PEOPLE).filter(p => p !== subForm.titular).map(p => <option key={p} value={p}>{p}</option>)}
                   </select>
+                  </label>
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider" style={{ color:T.labelColor }}>De</label>
+                  <label style={labelStyle}>De
                   <input type="date" value={subForm.from} onChange={e => setSubForm(f => ({ ...f, from:e.target.value }))} style={selStyle} />
+                  </label>
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider" style={{ color:T.labelColor }}>Até</label>
+                  <label style={labelStyle}>Até
                   <input type="date" value={subForm.until} onChange={e => setSubForm(f => ({ ...f, until:e.target.value }))} style={selStyle} />
+                  </label>
                 </div>
               </div>
               <button onClick={addSub} disabled={!canSave || subSaving}
-                style={{ background:canSave&&!subSaving?T.saveBg:T.cardBorder, color:canSave&&!subSaving?T.saveColor:T.textMuted, border:"none", borderRadius:"0.5rem", padding:"0.4rem 1.1rem", fontWeight:"700", fontSize:"0.8rem", cursor:canSave&&!subSaving?"pointer":"not-allowed", transition:"background 0.15s" }}>
-                {subSaving ? "Salvando..." : "Salvar substituição"}
+                style={{ background:canSave&&!subSaving?T.saveBg:T.cardBorder, color:canSave&&!subSaving?T.saveColor:T.textMuted, border:"none", borderRadius:"0.5rem", padding:"0.5rem 1.1rem", minHeight:"2.75rem", fontWeight:"700", fontSize:"0.8rem", cursor:canSave&&!subSaving?"pointer":"not-allowed", transition:"background 0.15s" }}>
+                {subSaving ? "Salvando…" : "Salvar substituição"}
               </button>
-              {subError && (
-                <p style={{ color:"#EF4444", fontSize:"0.75rem", fontWeight:"600", marginTop:"0.5rem", marginBottom:0 }}>{subError}</p>
-              )}
 
               {coverSuggestions.length > 0 && (
-                <div className="mt-4 pt-3" style={{ borderTop:`1px solid ${T.upcomingDivider}` }}>
-                  <div className="text-[10px] font-bold uppercase tracking-wider mb-2" style={{ color:T.labelColor }}>
+                <div className="mt-4 pt-3" style={{ borderTop:`1px solid ${T.divider}` }}>
+                  <h3 className="text-xs font-semibold mb-2" style={{ color:T.labelColor }}>
                     {subForm.substituto
-                      ? `${subForm.substituto} cobrirá ${coverSuggestions.length} dia${coverSuggestions.length>1?"s":""} de ${subForm.titular || "..."}`
+                      ? `${subForm.substituto} cobrirá ${coverSuggestions.length} dia${coverSuggestions.length>1?"s":""} de ${subForm.titular || "…"}`
                       : `${coverSuggestions.length} dia${coverSuggestions.length>1?"s":""} a cobrir — quem está livre`}
-                  </div>
+                  </h3>
                   <div>
                     {coverSuggestions.slice(0, 12).map((day, i) => (
                       <div key={i} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-0.5 text-xs py-1.5"
-                        style={{ borderTop: i > 0 ? `1px solid ${T.upcomingDivider}` : "none" }}>
+                        style={{ borderTop: i > 0 ? `1px solid ${T.divider}` : "none" }}>
                         <div className="flex items-center gap-2">
                           <span className="font-mono font-bold" style={{ color:T.textSecondary }}>{fmtDate(day.date)}</span>
                           <span style={{ color:T.textMuted }}>{DOW_SHORT[day.dow]}</span>
-                          <span style={{ color:T.periodColor }}>{day.shifts.map(s => s.period).join(" + ")}</span>
-                          <span style={{ color:T.timeColor }}>{day.shifts.map(s => s.time).join(" / ")}</span>
+                          <span style={{ color:T.textSecondary }}>{day.shifts.map(s => s.period).join(" + ")}</span>
+                          <span style={{ color:T.textMuted }}>{day.shifts.map(s => s.time).join(" / ")}</span>
                         </div>
                         {!subForm.substituto && (
-                          <span style={{ color: day.available.length ? T.textSecondary : "#EF4444" }}>
-                            {day.available.length ? `Livres: ${day.available.join(", ")}` : "⚠ Todos ocupados"}
+                          <span className="inline-flex items-center gap-1" style={{ color: day.available.length ? T.textSecondary : DANGER }}>
+                            {day.available.length ? `Livres: ${day.available.join(", ")}` : <><Icon name="alert" size={12} /> Todos ocupados</>}
                           </span>
                         )}
                       </div>
@@ -676,19 +759,19 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
               )}
             </div>
           )}
-        </div>
+        </section>
 
         {/* PAINEL DE EDIÇÃO (admin, sticky na parte inferior) */}
         {isAdmin && editMode && (
-          <div style={{ position:'sticky', bottom:'1rem', marginTop:'1rem', background: dark ? '#1E293B' : '#fff', border:`1.5px solid ${selectedShifts.size ? '#6366F1' : T.cardBorder}`, borderRadius:'1rem', padding:'1rem', boxShadow:'0 8px 32px rgba(0,0,0,0.35)', zIndex:40 }}>
+          <div style={{ position:'sticky', bottom:'1rem', marginTop:'1rem', background:T.cardBg, border:`1.5px solid ${selectedShifts.size ? ACCENT : T.cardBorder}`, borderRadius:'1rem', padding:'1rem', boxShadow:'0 8px 32px rgba(0,0,0,0.35)', zIndex:40 }}>
             <div className="flex items-center justify-between mb-3">
-              <span style={{ fontWeight:700, fontSize:'0.875rem', color:T.textPrimary }}>
+              <span style={{ fontWeight:700, fontSize:'0.875rem', color:T.textPrimary }} role="status">
                 {selectedShifts.size === 0
-                  ? 'Clique nos turnos do calendário para selecioná-los'
+                  ? 'Toque nos turnos do calendário para selecioná-los'
                   : `${selectedShifts.size} turno${selectedShifts.size > 1 ? 's' : ''} selecionado${selectedShifts.size > 1 ? 's' : ''}`}
               </span>
               {selectedShifts.size > 0 && (
-                <button onClick={() => setSelectedShifts(new Set())} style={{ background:'none', border:'none', cursor:'pointer', fontSize:'0.78rem', color:T.textMuted }}>
+                <button onClick={() => setSelectedShifts(new Set())} style={{ background:'none', border:'none', cursor:'pointer', fontSize:'0.78rem', color:T.textMuted, padding:'0.5rem', minHeight:'2.5rem' }}>
                   Limpar seleção
                 </button>
               )}
@@ -698,72 +781,101 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
               <>
                 <div className="grid gap-3 mb-3" style={{ gridTemplateColumns:'repeat(auto-fit, minmax(130px, 1fr))' }}>
                   <div>
-                    <div className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color:T.labelColor }}>Pessoa</div>
+                    <label style={labelStyle}>Pessoa
                     <select value={editForm.person} onChange={e => setEditForm(f => ({ ...f, person:e.target.value }))} style={selStyle}>
                       <option value="">Manter original</option>
                       {Object.keys(PEOPLE).map(p => <option key={p} value={p}>{p}</option>)}
                     </select>
+                    </label>
                   </div>
                   <div>
-                    <div className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color:T.labelColor }}>Período</div>
+                    <label style={labelStyle}>Período
                     <input value={editForm.period} onChange={e => setEditForm(f => ({ ...f, period:e.target.value }))}
                       placeholder="ex: Madrugada" style={selStyle} />
+                    </label>
                   </div>
                   <div>
-                    <div className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color:T.labelColor }}>Horário</div>
+                    <label style={labelStyle}>Horário
                     <input value={editForm.time} onChange={e => setEditForm(f => ({ ...f, time:e.target.value }))}
                       placeholder="ex: 23:00 – 04:00" style={selStyle} />
+                    </label>
                   </div>
                   <div>
-                    <div className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color:T.labelColor }}>Duração</div>
+                    <label style={labelStyle}>Duração
                     <input value={editForm.dur} onChange={e => setEditForm(f => ({ ...f, dur:e.target.value }))}
                       placeholder="ex: 5h" style={selStyle} />
+                    </label>
                   </div>
                 </div>
 
                 {/* Toggle: apply to all future months */}
-                <label style={{ display:'flex', alignItems:'center', gap:'0.5rem', marginBottom:'0.75rem', cursor:'pointer', userSelect:'none' }}>
+                <label style={{ display:'flex', alignItems:'center', gap:'0.5rem', marginBottom:'0.75rem', cursor:'pointer', userSelect:'none', minHeight:'2.5rem' }}>
                   <input
                     type="checkbox"
                     checked={applyToFuture}
                     onChange={e => setApplyToFuture(e.target.checked)}
-                    style={{ width:'1rem', height:'1rem', cursor:'pointer', accentColor:'#6366F1' }}
+                    style={{ width:'1.1rem', height:'1.1rem', cursor:'pointer', accentColor:ACCENT }}
                   />
                   <span style={{ fontSize:'0.8rem', fontWeight:'600', color: applyToFuture ? '#A5B4FC' : T.textSecondary }}>
                     Aplicar a todos os meses seguintes
                   </span>
                   {applyToFuture && futureShiftCount > 0 && (
-                    <span style={{ fontSize:'0.72rem', fontWeight:'700', background:'rgba(245,158,11,0.15)', color:'#F59E0B', borderRadius:'9999px', padding:'0.1rem 0.5rem' }}>
+                    <span style={{ fontSize:'0.72rem', fontWeight:'700', background:'rgba(245,158,11,0.15)', color:WARN, borderRadius:'9999px', padding:'0.1rem 0.5rem' }}>
                       {futureShiftCount} turno{futureShiftCount > 1 ? 's' : ''}
                     </span>
                   )}
                 </label>
                 {applyToFuture && (
-                  <p style={{ fontSize:'0.72rem', color:'#F59E0B', fontWeight:'600', margin:'0 0 0.75rem 0' }}>
-                    ⚠ Mudança permanente — afeta todos os meses até o fim da escala
+                  <p className="flex items-center gap-1.5" style={{ fontSize:'0.72rem', color:WARN, fontWeight:'600', margin:'0 0 0.75rem 0' }}>
+                    <Icon name="alert" size={13} /> Mudança permanente — afeta todos os meses até o fim da escala
                   </p>
                 )}
 
                 <div className="flex flex-wrap gap-2 items-center">
                   <button onClick={applyEditOverrides} disabled={editSaving}
-                    style={{ background:editSaving?T.cardBorder:'#6366F1', color:'#fff', border:'none', borderRadius:'0.5rem', padding:'0.4rem 1rem', fontWeight:700, fontSize:'0.8rem', cursor:editSaving?'not-allowed':'pointer' }}>
-                    {editSaving ? 'Salvando...' : applyToFuture ? `Aplicar a ${futureShiftCount} turnos` : 'Aplicar alteração'}
+                    style={{ background:editSaving?T.cardBorder:ACCENT, color:'#fff', border:'none', borderRadius:'0.5rem', padding:'0.5rem 1rem', minHeight:'2.75rem', fontWeight:700, fontSize:'0.8rem', cursor:editSaving?'not-allowed':'pointer' }}>
+                    {editSaving ? 'Salvando…' : applyToFuture ? `Aplicar a ${futureShiftCount} turnos` : 'Aplicar alteração'}
                   </button>
                   <button onClick={resetSelectedShifts} disabled={editSaving}
-                    style={{ background:'transparent', color:'#EF4444', border:'1px solid #EF4444', borderRadius:'0.5rem', padding:'0.4rem 0.85rem', fontWeight:700, fontSize:'0.8rem', cursor:editSaving?'not-allowed':'pointer' }}>
+                    style={{ background:'transparent', color:DANGER, border:`1px solid ${DANGER}`, borderRadius:'0.5rem', padding:'0.5rem 0.85rem', minHeight:'2.75rem', fontWeight:700, fontSize:'0.8rem', cursor:editSaving?'not-allowed':'pointer' }}>
                     {applyToFuture ? `Resetar ${futureShiftCount} turnos` : 'Resetar para padrão'}
                   </button>
                 </div>
-                {editError && <p style={{ color:'#EF4444', fontSize:'0.75rem', marginTop:'0.5rem' }}>{editError}</p>}
+                {editError && (
+                  <p role="alert" className="flex items-center gap-1.5" style={{ color:DANGER, fontSize:'0.75rem', fontWeight:600, marginTop:'0.5rem' }}>
+                    <Icon name="alert" size={13} /> {editError}
+                  </p>
+                )}
               </>
             )}
           </div>
         )}
 
-        <div className="mt-4 text-center text-xs" style={{ color:T.textMuted }}>
+        <footer className="mt-4 text-center text-xs" style={{ color:T.footerText }}>
           Ciclo de fim de semana ancorado em 13/06/2026 (Semana 1) · Escala seg–sex fixa · 5 semanas de rotação
-        </div>
+        </footer>
       </div>
+
+      <Snackbar
+        open={!!undoSub}
+        message={undoSub ? `Substituição de ${undoSub.titular} removida` : ''}
+        actionLabel="Desfazer"
+        onAction={undoRemoveSub}
+        T={T}
+      />
+
+      <ConfirmDialog
+        open={!!confirmAction}
+        title={confirmAction === 'reset' ? `Resetar ${futureShiftCount} turnos?` : `Aplicar alteração a ${futureShiftCount} turnos?`}
+        body={confirmAction === 'reset'
+          ? 'Isso remove as edições feitas nesses turnos em todos os meses seguintes e restaura a escala padrão. Essa ação não pode ser desfeita.'
+          : 'A alteração será aplicada a todos os meses seguintes, até o fim da escala. Ela pode ser revertida turno a turno com "Resetar para padrão".'}
+        confirmLabel={confirmAction === 'reset' ? `Resetar ${futureShiftCount} turnos` : `Aplicar a ${futureShiftCount} turnos`}
+        cancelLabel="Cancelar"
+        onConfirm={confirmPendingAction}
+        onCancel={() => setConfirmAction(null)}
+        T={T}
+      />
     </div>
   );
 }

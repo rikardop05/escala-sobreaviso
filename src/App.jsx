@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { SignedIn, SignedOut, UserButton, useUser, useClerk } from '@clerk/clerk-react';
 import { useApi } from './lib/api';
+import { Icon } from './components/ui';
 import EscalaSobreaviso from './components/EscalaSobreaviso';
 import ControleDeHoras from './components/ControleDeHoras';
 
@@ -9,13 +10,25 @@ import ControleDeHoras from './components/ControleDeHoras';
 function MainApp() {
   const api = useApi();
   const { user } = useUser();
-  const [view, setView]       = useState('escala');
+  // A aba vive no hash da URL — refresh e links compartilhados preservam a view
+  const [view, setViewState] = useState(() => window.location.hash === '#controle' ? 'controle' : 'escala');
   const [dark, setDark]       = useState(true);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const storageKey = user?.id ? `escala_profile_${user.id}` : null;
   const canAccessCH = profile?.role === 'admin' || profile?.role === 'member';
+
+  const setView = (v) => {
+    setViewState(v);
+    window.history.replaceState(null, '', v === 'controle' ? '#controle' : '#escala');
+  };
+
+  useEffect(() => {
+    document.title = view === 'controle'
+      ? 'Controle de Horas — Escala de Sobreaviso'
+      : 'Escala de Sobreaviso';
+  }, [view]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -78,7 +91,7 @@ function MainApp() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: "#0F172A" }}>
-        <div className="text-slate-400 text-sm">Carregando...</div>
+        <div className="text-slate-400 text-sm" role="status">Carregando seu perfil…</div>
       </div>
     );
   }
@@ -86,11 +99,15 @@ function MainApp() {
   const navBg = dark ? "#020617" : "#1E293B";
 
   const tabStyle = (active) => ({
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "0.4rem",
     background: active ? "rgba(255,255,255,0.15)" : "transparent",
-    color: active ? "#fff" : "rgba(255,255,255,0.45)",
+    color: active ? "#fff" : "rgba(255,255,255,0.7)",
     border: "1px solid " + (active ? "rgba(255,255,255,0.25)" : "transparent"),
     borderRadius: "9999px",
-    padding: "0.3rem 1rem",
+    padding: "0.55rem 1rem",
+    minHeight: "2.75rem",
     fontSize: "0.8rem",
     fontWeight: "700",
     cursor: "pointer",
@@ -100,9 +117,9 @@ function MainApp() {
 
   return (
     <div>
-      <div style={{
+      <nav aria-label="Seções do aplicativo" style={{
         background: navBg,
-        padding: "0.5rem 1rem",
+        padding: "0.35rem 1rem",
         display: "flex",
         alignItems: "center",
         gap: "0.5rem",
@@ -112,17 +129,17 @@ function MainApp() {
         borderBottom: "1px solid rgba(255,255,255,0.06)",
         transition: "background 0.2s",
       }}>
-        <button onClick={() => setView('escala')} style={tabStyle(view === 'escala')}>
-          📅 Escala
+        <button onClick={() => setView('escala')} style={tabStyle(view === 'escala')} aria-current={view === 'escala' ? 'page' : undefined}>
+          <Icon name="calendar" size={15} /> Escala
         </button>
         {canAccessCH && (
-          <button onClick={() => setView('controle')} style={tabStyle(view === 'controle')}>
-            ⏱ Controle de Horas
+          <button onClick={() => setView('controle')} style={tabStyle(view === 'controle')} aria-current={view === 'controle' ? 'page' : undefined}>
+            <Icon name="clock" size={15} /> Controle de Horas
           </button>
         )}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "0.75rem" }}>
           {profile?.memberId && (
-            <span style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.45)", fontWeight: "600" }}>
+            <span style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.7)", fontWeight: "600" }}>
               {profile.memberId}
               {profile.role === 'admin' && (
                 <span style={{ marginLeft: "0.3rem", fontSize: "0.6rem", background: "rgba(250,204,21,0.15)", color: "#FCD34D", borderRadius: "3px", padding: "1px 4px", verticalAlign: "middle" }}>
@@ -133,7 +150,7 @@ function MainApp() {
           )}
           <UserButton afterSignOutUrl="/" />
         </div>
-      </div>
+      </nav>
 
       {view === 'escala' || !canAccessCH
         ? <EscalaSobreaviso dark={dark} onToggleDark={toggleDark} profile={profile} saveProfile={saveProfile} />
@@ -152,23 +169,11 @@ function PublicApp() {
 
   const navBg = dark ? "#020617" : "#1E293B";
 
-  const tabStyle = {
-    background: "rgba(255,255,255,0.15)",
-    color: "#fff",
-    border: "1px solid rgba(255,255,255,0.25)",
-    borderRadius: "9999px",
-    padding: "0.3rem 1rem",
-    fontSize: "0.8rem",
-    fontWeight: "700",
-    cursor: "pointer",
-    letterSpacing: "0.02em",
-  };
-
   return (
     <div>
-      <div style={{
+      <header style={{
         background: navBg,
-        padding: "0.5rem 1rem",
+        padding: "0.35rem 1rem",
         display: "flex",
         alignItems: "center",
         gap: "0.5rem",
@@ -177,16 +182,28 @@ function PublicApp() {
         zIndex: 50,
         borderBottom: "1px solid rgba(255,255,255,0.06)",
         transition: "background 0.2s",
+        minHeight: "3.25rem",
       }}>
-        <span style={{ fontSize: "0.8rem", fontWeight: "700", color: "#fff", letterSpacing: "0.02em" }}>
-          📅 Escala
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem", fontSize: "0.85rem", fontWeight: "700", color: "#fff" }}>
+          <Icon name="calendar" size={15} /> Escala de Sobreaviso
         </span>
         <div style={{ marginLeft: "auto" }}>
-          <button onClick={() => openSignIn()} style={tabStyle}>
+          <button onClick={() => openSignIn()} style={{
+            background: "rgba(255,255,255,0.15)",
+            color: "#fff",
+            border: "1px solid rgba(255,255,255,0.25)",
+            borderRadius: "9999px",
+            padding: "0.55rem 1.1rem",
+            minHeight: "2.75rem",
+            fontSize: "0.8rem",
+            fontWeight: "700",
+            cursor: "pointer",
+            letterSpacing: "0.02em",
+          }}>
             Entrar
           </button>
         </div>
-      </div>
+      </header>
       <EscalaSobreaviso
         dark={dark}
         onToggleDark={() => setDark(d => !d)}

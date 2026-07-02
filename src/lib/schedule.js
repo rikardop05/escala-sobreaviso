@@ -9,8 +9,7 @@ export const PEOPLE = {
   Alice:          { color: "#AD1457", bg: "#FCE4EC" },
 };
 
-// Alice não participa do controle de horas financeiro
-export const CH_NAMES = ["Raul", "Emanoel", "Marcus Túlio", "Ricardo", "Carlos"];
+export const CH_NAMES = ["Raul", "Emanoel", "Marcus Túlio", "Ricardo", "Carlos", "Alice"];
 
 // ─── DADOS DA ESCALA ─────────────────────────────────────────────────────────
 

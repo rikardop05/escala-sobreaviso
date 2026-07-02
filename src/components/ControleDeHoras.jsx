@@ -1,9 +1,11 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useApi } from '../lib/api';
 import {
   PEOPLE, CH_NAMES, MONTHS, durationHours, fmtHM, brl,
   buildSchedule, dayKey, getActiveSub,
 } from '../lib/schedule';
+import { getTheme, DANGER, WARN } from '../lib/theme';
+import { Icon, SaveStatus, Snackbar, friendlyError } from './ui';
 
 const TYPES = ["Hora Extra", "Compensação"];
 const TYPE_META = {
@@ -29,6 +31,18 @@ export default function ControleDeHoras({ dark, profile }) {
   const [overrides,      setOverrides]      = useState({});
   const [dataLoading,    setDataLoading]    = useState(true);
 
+  // Status de persistência — o usuário sempre vê se o dado chegou ao servidor
+  const [entriesStatus, setEntriesStatus] = useState('idle'); // idle | saving | saved | error
+  const [paramsStatus,  setParamsStatus]  = useState('idle');
+  const pendingEntries = useRef(null); // { newEntries } aguardando retry após falha
+  const pendingParams  = useRef(null); // { newParams } aguardando retry após falha
+  const entriesTimer   = useRef(null);
+  const paramsTimer    = useRef(null);
+  const paramsDebounce = useRef(null);
+
+  const [undoEntry, setUndoEntry] = useState(null); // lançamento recém-excluído, restaurável
+  const undoTimer = useRef(null);
+
   // Admin can switch to view any CH_NAMES member; member is locked to their own
   const [viewPerson, setViewPerson] = useState(profile?.memberId ?? null);
   const person = isAdmin ? (viewPerson ?? profile?.memberId) : profile?.memberId;
@@ -36,6 +50,7 @@ export default function ControleDeHoras({ dark, profile }) {
   const [monthIdx, setMonthIdx] = useState(now.getMonth());
   const [year,     setYear]     = useState(now.getFullYear());
   const [editId,   setEditId]   = useState(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const blank = { tipo: "Hora Extra", data: "", inicio: "", fim: "", projeto: "", atividade: "" };
   const [form, setForm] = useState(blank);
@@ -58,58 +73,86 @@ export default function ControleDeHoras({ dark, profile }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [person]);
 
-  const saveEntries = useCallback(async (newEntries) => {
+  useEffect(() => () => {
+    clearTimeout(entriesTimer.current);
+    clearTimeout(paramsTimer.current);
+    clearTimeout(paramsDebounce.current);
+    clearTimeout(undoTimer.current);
+  }, []);
+
+  const flashSaved = (setStatus, timerRef) => {
+    setStatus('saved');
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setStatus('idle'), 2500);
+  };
+
+  // Persiste lançamentos com rollback: em falha, a UI volta ao estado anterior
+  // e o chip de erro oferece "Tentar de novo".
+  const persistEntries = useCallback(async (newEntries, prevEntries) => {
+    setEntriesStatus('saving');
     try {
       const body = { entries: newEntries };
       if (isAdmin && person !== profile?.memberId) body.person = person;
       await api('/api/ch', { method: 'POST', body });
-    } catch (e) { console.error('Erro ao salvar lançamentos:', e); }
+      pendingEntries.current = null;
+      flashSaved(setEntriesStatus, entriesTimer);
+      return true;
+    } catch (e) {
+      console.error('Erro ao salvar lançamentos:', e);
+      if (prevEntries) setEntries(prevEntries);
+      pendingEntries.current = { newEntries };
+      setEntriesStatus('error');
+      return false;
+    }
   }, [api, isAdmin, person, profile?.memberId]);
 
-  const saveParams = useCallback(async (newParams) => {
+  const retryEntries = () => {
+    const pending = pendingEntries.current;
+    if (!pending) return;
+    setEntries(pending.newEntries);
+    persistEntries(pending.newEntries, entries);
+  };
+
+  const persistParams = useCallback(async (newParams) => {
+    setParamsStatus('saving');
     try {
       const body = { params: newParams };
       if (isAdmin && person !== profile?.memberId) body.person = person;
       await api('/api/ch', { method: 'POST', body });
-    } catch (e) { console.error('Erro ao salvar parâmetros:', e); }
+      pendingParams.current = null;
+      flashSaved(setParamsStatus, paramsTimer);
+    } catch (e) {
+      console.error('Erro ao salvar parâmetros:', e);
+      pendingParams.current = { newParams };
+      setParamsStatus('error');
+    }
   }, [api, isAdmin, person, profile?.memberId]);
 
-  // ─── TEMA ──────────────────────────────────────────────────────────────────
-  const CT = dark ? {
-    pageBg:"#0F172A", cardBg:"#1E293B", cardBorder:"#334155",
-    text:"#F1F5F9", textLabel:"#64748B", textMuted:"#475569",
-    textStrong:"#CBD5E1", textMid:"#94A3B8",
-    inputBg:"#0F172A", inputBorder:"#334155",
-    divider:"#263347", rowEditBg:"#162032", rowSchedBg:"#0F1E36",
-    saveBg:"#F1F5F9", saveColor:"#0F172A",
-    cancelBg:"#1E293B", cancelColor:"#94A3B8", cancelBorder:"#334155",
-    footerText:"#334155", exportBg:"#166534",
-  } : {
-    pageBg:"#EEF1F6", cardBg:"#fff", cardBorder:"#E2E8F0",
-    text:"#1E293B", textLabel:"#64748B", textMuted:"#94A3B8",
-    textStrong:"#374151", textMid:"#4B5563",
-    inputBg:"#fff", inputBorder:"#CBD5E1",
-    divider:"#F1F5F9", rowEditBg:"#F8FAFC", rowSchedBg:"#EFF6FF",
-    saveBg:"#1E293B", saveColor:"#fff",
-    cancelBg:"#fff", cancelColor:"#475569", cancelBorder:"#CBD5E1",
-    footerText:"#94A3B8", exportBg:"#2E7D32",
+  const retryParams = () => {
+    const pending = pendingParams.current;
+    if (pending) persistParams(pending.newParams);
   };
 
+  const T = getTheme(dark);
+
   const inputStyle = {
-    background: CT.inputBg, color: CT.text,
-    border: `1px solid ${CT.inputBorder}`,
-    borderRadius: "0.5rem", padding: "0.35rem 0.6rem",
-    fontSize: "0.875rem", outline: "none", width: "100%",
+    background: T.inputBg, color: T.textPrimary,
+    border: `1px solid ${T.inputBorder}`,
+    borderRadius: "0.5rem", padding: "0.5rem 0.6rem", minHeight: "2.5rem",
+    fontSize: "0.875rem", width: "100%",
     transition: "border-color 0.15s",
   };
+  const labelStyle = { fontSize: "0.72rem", fontWeight: 600, color: T.labelColor, display: "block", marginBottom: "0.25rem" };
 
   const params = paramsByPerson[person] || { remuneracao: '', jornada: 168 };
   const valorHora = (Number(params.remuneracao) || 0) / params.jornada;
 
+  // Atualiza na hora, persiste com debounce — evita um POST por tecla digitada
   const setParam = (field, value) => {
     const newParams = { ...paramsByPerson, [person]: { ...params, [field]: value } };
     setParamsByPerson(newParams);
-    saveParams(newParams);
+    clearTimeout(paramsDebounce.current);
+    paramsDebounce.current = setTimeout(() => persistParams(newParams), 600);
   };
 
   // ─── ENTRADAS DA ESCALA (SA automático, com overrides) ─────────────────────
@@ -184,7 +227,11 @@ export default function ControleDeHoras({ dark, profile }) {
 
   // ─── AÇÕES ─────────────────────────────────────────────────────────────────
   const submit = async () => {
-    if (!form.data || !form.inicio || !form.fim) return;
+    if (!form.data || !form.inicio || !form.fim || submitting) return;
+    setSubmitting(true);
+    const prevEntries = entries;
+    const prevForm = form;
+    const prevEditId = editId;
     let newEntries;
     if (editId) {
       newEntries = entries.map(e => (e.id === editId ? { ...e, ...form, person } : e));
@@ -194,7 +241,13 @@ export default function ControleDeHoras({ dark, profile }) {
     }
     setEntries(newEntries);
     setForm(blank);
-    await saveEntries(newEntries);
+    const ok = await persistEntries(newEntries, prevEntries);
+    if (!ok) {
+      // Falhou: devolve o formulário preenchido para o usuário não perder o que digitou
+      setForm(prevForm);
+      setEditId(prevEditId);
+    }
+    setSubmitting(false);
   };
 
   const startEdit = (e) => {
@@ -202,11 +255,31 @@ export default function ControleDeHoras({ dark, profile }) {
     setEditId(e.id);
   };
 
-  const remove = async (id) => {
-    const newEntries = entries.filter(e => e.id !== id);
+  // Exclusão otimista com undo de 5s — mais seguro que um confirm para valores financeiros
+  const remove = async (entry) => {
+    const prevEntries = entries;
+    const newEntries = entries.filter(e => e.id !== entry.id);
     setEntries(newEntries);
-    if (editId === id) { setEditId(null); setForm(blank); }
-    await saveEntries(newEntries);
+    if (editId === entry.id) { setEditId(null); setForm(blank); }
+    clearTimeout(undoTimer.current);
+    setUndoEntry(entry);
+    undoTimer.current = setTimeout(() => setUndoEntry(null), 6000);
+    const ok = await persistEntries(newEntries, prevEntries);
+    if (!ok) {
+      clearTimeout(undoTimer.current);
+      setUndoEntry(null);
+    }
+  };
+
+  const undoRemove = async () => {
+    if (!undoEntry) return;
+    const entry = undoEntry;
+    clearTimeout(undoTimer.current);
+    setUndoEntry(null);
+    const prevEntries = entries;
+    const newEntries = [...entries, entry];
+    setEntries(newEntries);
+    await persistEntries(newEntries, prevEntries);
   };
 
   const exportCSV = () => {
@@ -250,229 +323,278 @@ export default function ControleDeHoras({ dark, profile }) {
   const p = PEOPLE[person] || { color: "#64748B", bg: "#F1F5F9" };
   const years = [year - 1, year, year + 1];
   const liveDuration = durationHours(form.inicio, form.fim);
-  const canSubmit = !!(form.data && form.inicio && form.fim);
+  const crossesMidnight = form.inicio && form.fim && form.fim <= form.inicio;
+  const canSubmit = !!(form.data && form.inicio && form.fim) && !submitting;
+
+  const thStyle = { textAlign: "left", fontSize: "0.68rem", fontWeight: 600, color: T.labelColor, padding: "0.5rem 0.5rem", whiteSpace: "nowrap" };
 
   return (
-    <div style={{ minHeight:"100vh", background:CT.pageBg, fontFamily:"'Segoe UI',system-ui,sans-serif", color:CT.text, transition:"background 0.2s,color 0.2s" }}>
+    <div style={{ minHeight:"100vh", background:T.pageBg, fontFamily:"'Segoe UI',system-ui,sans-serif", color:T.textPrimary, transition:"background 0.2s,color 0.2s" }}>
       <div className="max-w-3xl mx-auto px-4 py-6">
 
         {/* CABEÇALHO */}
-        <div className="rounded-2xl p-5 mb-5 text-white" style={{ background:"linear-gradient(135deg,#1E293B 0%,#334155 100%)" }}>
-          <div className="text-xs uppercase tracking-widest opacity-60 mb-1">Controle de Horas</div>
+        <header className="rounded-2xl p-5 mb-5 text-white" style={{ background:T.headerGrad }}>
+          <h1 className="text-sm font-semibold opacity-80 mb-1" style={{ letterSpacing:"0.01em" }}>Controle de Horas</h1>
           <div className="text-2xl font-bold">{MONTHS[monthIdx]} de {year}</div>
-          <div className="text-sm opacity-70 mt-1">Sobreaviso (escala automática) + horas extra e compensação</div>
-        </div>
+          <div className="text-sm opacity-80 mt-1">Sobreaviso (escala automática) + horas extra e compensação</div>
+        </header>
 
         {dataLoading && (
-          <div className="rounded-2xl p-4 mb-4 text-center text-sm" style={{ background:CT.cardBg, border:`1px solid ${CT.cardBorder}`, color:CT.textMuted }}>
-            Carregando dados...
+          <div role="status" className="rounded-2xl p-4 mb-4 text-center text-sm" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}`, color:T.textMuted }}>
+            Carregando lançamentos e parâmetros…
           </div>
         )}
 
         {/* SELETORES */}
         <div className="flex flex-wrap gap-3 mb-4 items-end">
           <div>
-            <div className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color:CT.textLabel }}>Responsável</div>
+            <label style={labelStyle} htmlFor="ch-person">Responsável</label>
             {isAdmin ? (
-              <select style={{ ...inputStyle, width:'auto' }} value={viewPerson || ''} onChange={e => { setViewPerson(e.target.value); setEditId(null); setForm(blank); }}>
+              <select id="ch-person" style={{ ...inputStyle, width:'auto' }} value={viewPerson || ''} onChange={e => { setViewPerson(e.target.value); setEditId(null); setForm(blank); }}>
                 {CH_NAMES.map(name => <option key={name} value={name}>{name}</option>)}
               </select>
             ) : (
               <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-bold"
-                style={{ background: p.color, color: "#fff" }}>
+                style={{ background: p.color, color: "#fff", minHeight:"2.5rem" }}>
                 <span className="w-2 h-2 rounded-full bg-white opacity-70" />
                 {person}
               </div>
             )}
           </div>
           <div>
-            <div className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color:CT.textLabel }}>Mês</div>
-            <select style={inputStyle} value={monthIdx} onChange={e => setMonthIdx(Number(e.target.value))}>
+            <label style={labelStyle} htmlFor="ch-month">Mês</label>
+            <select id="ch-month" style={inputStyle} value={monthIdx} onChange={e => setMonthIdx(Number(e.target.value))}>
               {MONTHS.map((m, i) => <option key={i} value={i}>{m}</option>)}
             </select>
           </div>
           <div>
-            <div className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color:CT.textLabel }}>Ano</div>
-            <select style={{ ...inputStyle, width:"auto" }} value={year} onChange={e => setYear(Number(e.target.value))}>
+            <label style={labelStyle} htmlFor="ch-year">Ano</label>
+            <select id="ch-year" style={{ ...inputStyle, width:"auto" }} value={year} onChange={e => setYear(Number(e.target.value))}>
               {years.map(y => <option key={y} value={y}>{y}</option>)}
             </select>
           </div>
         </div>
 
         {/* PARÂMETROS */}
-        <div className="rounded-2xl p-4 mb-4" style={{ background:CT.cardBg, border:`1px solid ${CT.cardBorder}` }}>
-          <div className="text-xs font-bold uppercase tracking-wider mb-3" style={{ color:CT.textLabel }}>Parâmetros de {person}</div>
+        <section className="rounded-2xl p-4 mb-4" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}` }}>
+          <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+            <h2 className="text-sm font-semibold" style={{ color:T.textSecondary }}>Parâmetros de {person}</h2>
+            <SaveStatus status={paramsStatus} onRetry={retryParams} T={T} />
+          </div>
           <div className="flex flex-wrap gap-4 items-end">
             <div>
-              <div className="text-xs mb-1" style={{ color:CT.textLabel }}>Remuneração mensal (R$)</div>
-              <input type="number" style={{ ...inputStyle, width:"9rem" }} value={params.remuneracao} placeholder="0,00"
+              <label style={labelStyle} htmlFor="ch-remun">Remuneração mensal (R$)</label>
+              <input id="ch-remun" type="number" style={{ ...inputStyle, width:"9rem" }} value={params.remuneracao} placeholder="0,00"
                 onChange={e => setParam("remuneracao", e.target.value === '' ? '' : Number(e.target.value))} />
             </div>
             <div>
-              <div className="text-xs mb-1" style={{ color:CT.textLabel }}>Jornada (h)</div>
-              <input type="number" style={{ ...inputStyle, width:"6rem" }} value={params.jornada}
+              <label style={labelStyle} htmlFor="ch-jornada">Jornada (h)</label>
+              <input id="ch-jornada" type="number" style={{ ...inputStyle, width:"6rem" }} value={params.jornada}
                 onChange={e => setParam("jornada", Number(e.target.value))} />
             </div>
             <div className="ml-auto text-right">
-              <div className="text-xs" style={{ color:CT.textLabel }}>Valor hora</div>
+              <div className="text-xs" style={{ color:T.labelColor }}>Valor hora <span style={{ color:T.textMuted }}>(remuneração ÷ jornada)</span></div>
               <div className="text-lg font-bold" style={{ color:p.color }}>{valorHora > 0 ? brl(valorHora) : "—"}</div>
             </div>
           </div>
-        </div>
+        </section>
 
         {/* FORMULÁRIO — só HE e Compensação */}
-        <div className="rounded-2xl p-4 mb-4" style={{ background:CT.cardBg, border:`1px solid ${CT.cardBorder}` }}>
-          <div className="text-xs font-bold uppercase tracking-wider mb-3" style={{ color:CT.textLabel }}>
-            {editId ? "Editar lançamento" : "Novo lançamento (HE ou Compensação)"}
-          </div>
+        <section className="rounded-2xl p-4 mb-4" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}` }}>
+          <h2 className="text-sm font-semibold mb-3" style={{ color:T.textSecondary }}>
+            {editId ? `Editar lançamento — ${person}` : `Novo lançamento (HE ou Compensação) — ${person}`}
+          </h2>
           <div className="grid grid-cols-2 gap-3 mb-3" style={{ gridTemplateColumns:"repeat(auto-fit, minmax(120px, 1fr))" }}>
             <div>
-              <div className="text-xs mb-1" style={{ color:CT.textLabel }}>Tipo</div>
-              <select style={inputStyle} value={form.tipo} onChange={e => setForm({ ...form, tipo:e.target.value })}>
+              <label style={labelStyle} htmlFor="ch-tipo">Tipo</label>
+              <select id="ch-tipo" style={inputStyle} value={form.tipo} onChange={e => setForm({ ...form, tipo:e.target.value })}>
                 {TYPES.map(t => <option key={t}>{t}</option>)}
               </select>
             </div>
             <div>
-              <div className="text-xs mb-1" style={{ color:CT.textLabel }}>Data</div>
-              <input type="date" style={inputStyle} value={form.data} onChange={e => setForm({ ...form, data:e.target.value })} />
+              <label style={labelStyle} htmlFor="ch-data">Data</label>
+              <input id="ch-data" type="date" style={inputStyle} value={form.data} onChange={e => setForm({ ...form, data:e.target.value })} />
             </div>
             <div>
-              <div className="text-xs mb-1" style={{ color:CT.textLabel }}>Início</div>
-              <input type="time" style={inputStyle} value={form.inicio} onChange={e => setForm({ ...form, inicio:e.target.value })} />
+              <label style={labelStyle} htmlFor="ch-inicio">Início</label>
+              <input id="ch-inicio" type="time" style={inputStyle} value={form.inicio} onChange={e => setForm({ ...form, inicio:e.target.value })} />
             </div>
             <div>
-              <div className="text-xs mb-1" style={{ color:CT.textLabel }}>Fim</div>
-              <input type="time" style={inputStyle} value={form.fim} onChange={e => setForm({ ...form, fim:e.target.value })} />
+              <label style={labelStyle} htmlFor="ch-fim">Fim</label>
+              <input id="ch-fim" type="time" style={inputStyle} value={form.fim} onChange={e => setForm({ ...form, fim:e.target.value })} />
             </div>
           </div>
           <div className="grid grid-cols-1 gap-3 mb-3" style={{ gridTemplateColumns:"repeat(auto-fit, minmax(200px, 1fr))" }}>
             <div>
-              <div className="text-xs mb-1" style={{ color:CT.textLabel }}>Projeto</div>
-              <input type="text" style={inputStyle} placeholder="Ex.: CorpX, AICE…" value={form.projeto} onChange={e => setForm({ ...form, projeto:e.target.value })} />
+              <label style={labelStyle} htmlFor="ch-projeto">Projeto</label>
+              <input id="ch-projeto" type="text" style={inputStyle} placeholder="Ex.: CorpX, AICE…" value={form.projeto} onChange={e => setForm({ ...form, projeto:e.target.value })} />
             </div>
             <div>
-              <div className="text-xs mb-1" style={{ color:CT.textLabel }}>Atividade / Descrição</div>
-              <input type="text" style={inputStyle} placeholder="O que foi feito" value={form.atividade} onChange={e => setForm({ ...form, atividade:e.target.value })} />
+              <label style={labelStyle} htmlFor="ch-atividade">Atividade / Descrição</label>
+              <input id="ch-atividade" type="text" style={inputStyle} placeholder="O que foi feito" value={form.atividade} onChange={e => setForm({ ...form, atividade:e.target.value })} />
             </div>
           </div>
+          {crossesMidnight && (
+            <p className="flex items-center gap-1.5 text-xs font-semibold mb-3" style={{ color:WARN }}>
+              <Icon name="alert" size={13} />
+              Fim antes do início: será registrado como turno que atravessa a meia-noite ({fmtHM(liveDuration)} de duração). Confira antes de salvar.
+            </p>
+          )}
           <div className="flex items-center gap-3 flex-wrap">
-            <button onClick={submit}
-              style={{ background:canSubmit?CT.saveBg:CT.cardBorder, color:canSubmit?CT.saveColor:CT.textMuted, border:"none", borderRadius:"0.5rem", padding:"0.45rem 1.1rem", fontWeight:"700", fontSize:"0.875rem", cursor:canSubmit?"pointer":"not-allowed", transition:"background 0.15s" }}>
-              {editId ? "Salvar alterações" : "Adicionar lançamento"}
+            <button onClick={submit} disabled={!canSubmit}
+              style={{ background:canSubmit?T.saveBg:T.cardBorder, color:canSubmit?T.saveColor:T.textMuted, border:"none", borderRadius:"0.5rem", padding:"0.5rem 1.1rem", minHeight:"2.75rem", fontWeight:"700", fontSize:"0.875rem", cursor:canSubmit?"pointer":"not-allowed", transition:"background 0.15s" }}>
+              {submitting ? "Salvando…" : editId ? "Salvar alterações" : "Adicionar lançamento"}
             </button>
             {editId && (
               <button onClick={() => { setEditId(null); setForm(blank); }}
-                style={{ background:CT.cancelBg, color:CT.cancelColor, border:`1px solid ${CT.cancelBorder}`, borderRadius:"0.5rem", padding:"0.45rem 1.1rem", fontWeight:"700", fontSize:"0.875rem", cursor:"pointer" }}>
+                style={{ background:T.cancelBg, color:T.cancelColor, border:`1px solid ${T.cancelBorder}`, borderRadius:"0.5rem", padding:"0.5rem 1.1rem", minHeight:"2.75rem", fontWeight:"700", fontSize:"0.875rem", cursor:"pointer" }}>
                 Cancelar
               </button>
             )}
             {form.inicio && form.fim && (
-              <span className="text-sm" style={{ color:CT.textLabel }}>
-                Duração: <b style={{ color:CT.text }}>{fmtHM(liveDuration)}</b>
+              <span className="text-sm" style={{ color:T.labelColor }}>
+                Duração: <b style={{ color:T.textPrimary }}>{fmtHM(liveDuration)}</b>
               </span>
             )}
+            <SaveStatus status={entriesStatus} onRetry={retryEntries} T={T} />
           </div>
-        </div>
+        </section>
 
         {/* RELATÓRIO */}
-        <div className="rounded-2xl p-4 mb-4" style={{ background:CT.cardBg, border:`1px solid ${CT.cardBorder}` }}>
+        <section className="rounded-2xl p-4 mb-4" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}` }}>
           <div className="flex items-center justify-between mb-3">
-            <div className="text-xs font-bold uppercase tracking-wider" style={{ color:CT.textLabel }}>Relatório do mês</div>
+            <h2 className="text-sm font-semibold" style={{ color:T.textSecondary }}>Relatório do mês</h2>
             <button onClick={exportCSV} disabled={allMonthEntries.length === 0}
-              style={{ background:allMonthEntries.length>0?CT.exportBg:CT.cardBorder, color:allMonthEntries.length>0?"#fff":CT.textMuted, border:"none", borderRadius:"0.5rem", padding:"0.35rem 0.9rem", fontWeight:"700", fontSize:"0.875rem", cursor:allMonthEntries.length>0?"pointer":"not-allowed" }}>
-              ↓ Exportar CSV
+              style={{ display:"inline-flex", alignItems:"center", gap:"0.4rem", background:allMonthEntries.length>0?T.exportBg:T.cardBorder, color:allMonthEntries.length>0?"#fff":T.textMuted, border:"none", borderRadius:"0.5rem", padding:"0.5rem 0.9rem", minHeight:"2.75rem", fontWeight:"700", fontSize:"0.875rem", cursor:allMonthEntries.length>0?"pointer":"not-allowed" }}>
+              <Icon name="download" size={14} /> Exportar CSV
             </button>
           </div>
           <div className="grid gap-3" style={{ gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))" }}>
             {[
-              { label:"Sobreaviso",  h:totals.sobreaviso, v:totals.valorSobreaviso, tm:TYPE_META.Sobreaviso },
-              { label:"Hora Extra",  h:totals.extra,      v:totals.valorExtra,      tm:TYPE_META["Hora Extra"] },
-              { label:"Compensação", h:totals.comp,       v:null,                   tm:TYPE_META.Compensação },
+              { label:"Sobreaviso",  h:totals.sobreaviso, v:totals.valorSobreaviso, formula:"⅓ do valor-hora",   tm:TYPE_META.Sobreaviso },
+              { label:"Hora Extra",  h:totals.extra,      v:totals.valorExtra,      formula:"valor-hora × 1,5",  tm:TYPE_META["Hora Extra"] },
+              { label:"Compensação", h:totals.comp,       v:null,                   formula:"sem valor — abate horas", tm:TYPE_META.Compensação },
             ].map(b => {
               const bg    = dark ? b.tm.bg    : b.tm.lightBg;
               const color = dark ? b.tm.color : b.tm.lightColor;
               return (
                 <div key={b.label} className="rounded-xl p-3" style={{ background:bg }}>
-                  <div className="text-xs font-bold uppercase tracking-wide" style={{ color }}>{b.label}</div>
+                  <div className="text-xs font-bold" style={{ color }}>{b.label}</div>
                   <div className="text-xl font-bold" style={{ color:dark?"#F1F5F9":"#1E293B" }}>{fmtHM(b.h)}</div>
                   {b.v !== null && valorHora > 0 && <div className="text-sm font-semibold" style={{ color }}>{brl(b.v)}</div>}
+                  <div className="text-[10px] mt-0.5" style={{ color, opacity:0.85 }}>{b.formula}</div>
                 </div>
               );
             })}
           </div>
-          <div className="mt-3 pt-3 flex items-center justify-between" style={{ borderTop:`1px solid ${CT.cardBorder}` }}>
-            <span className="text-sm" style={{ color:CT.textLabel }}>Total de horas: <b style={{ color:CT.text }}>{fmtHM(totals.totalHoras)}</b></span>
+          <div className="mt-3 pt-3 flex items-center justify-between" style={{ borderTop:`1px solid ${T.cardBorder}` }}>
+            <span className="text-sm" style={{ color:T.labelColor }}>Total de horas: <b style={{ color:T.textPrimary }}>{fmtHM(totals.totalHoras)}</b></span>
             <div className="text-right">
-              <div className="text-xs uppercase tracking-wide" style={{ color:CT.textLabel }}>Valor total a receber</div>
+              <div className="text-xs" style={{ color:T.labelColor }}>Valor total a receber</div>
               <div className="text-2xl font-bold" style={{ color:p.color }}>
                 {valorHora > 0 ? brl(totals.valorTotal) : "—"}
               </div>
             </div>
           </div>
-        </div>
+        </section>
 
         {/* TABELA */}
-        <div className="rounded-2xl overflow-hidden" style={{ border:`1px solid ${CT.cardBorder}` }}>
-          <div className="px-4 py-3 flex items-center justify-between" style={{ background:CT.cardBg, borderBottom:`1px solid ${CT.cardBorder}` }}>
-            <span className="text-xs font-bold uppercase tracking-wider" style={{ color:CT.textLabel }}>
+        <section className="rounded-2xl overflow-hidden" style={{ border:`1px solid ${T.cardBorder}` }}>
+          <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2" style={{ background:T.cardBg, borderBottom:`1px solid ${T.cardBorder}` }}>
+            <h2 className="text-sm font-semibold" style={{ color:T.textSecondary }}>
               Lançamentos ({allMonthEntries.length})
-            </span>
-            <div className="flex items-center gap-3 text-[10px]" style={{ color:CT.textMuted }}>
+            </h2>
+            <div className="flex items-center gap-3 text-[10px] font-semibold" style={{ color:T.textMuted }}>
               <span className="flex items-center gap-1">
-                <span className="inline-block w-2 h-2 rounded-sm" style={{ background: dark ? "#1E3A5F" : "#DBEAFE" }} />
+                <span className="inline-block w-2 h-2 rounded-sm" style={{ background: dark ? TYPE_META.Sobreaviso.bg : TYPE_META.Sobreaviso.lightBg, border:`1px solid ${dark ? TYPE_META.Sobreaviso.color : TYPE_META.Sobreaviso.lightColor}` }} />
                 SA · escala automática
               </span>
               <span className="flex items-center gap-1">
-                <span className="inline-block w-2 h-2 rounded-sm" style={{ background: dark ? "#4A1025" : "#FCE7F3" }} />
+                <span className="inline-block w-2 h-2 rounded-sm" style={{ background: dark ? TYPE_META["Hora Extra"].bg : TYPE_META["Hora Extra"].lightBg, border:`1px solid ${dark ? TYPE_META["Hora Extra"].color : TYPE_META["Hora Extra"].lightColor}` }} />
                 HE · manual
               </span>
             </div>
           </div>
 
           {allMonthEntries.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm" style={{ color:CT.textMuted, background:CT.cardBg }}>
-              {dataLoading ? "Carregando..." : "Nenhum lançamento neste mês."}
+            <div className="px-4 py-8 text-center text-sm" style={{ color:T.textMuted, background:T.cardBg }}>
+              {dataLoading ? "Carregando…" : "Nenhum lançamento neste mês. Os sobreavisos da escala aparecem aqui automaticamente."}
             </div>
           ) : (
-            <div style={{ background:CT.cardBg }}>
-              {allMonthEntries.map((e, i) => {
-                const h = durationHours(e.inicio, e.fim);
-                const tm = TYPE_META[e.tipo];
-                const tagBg    = dark ? tm.bg    : tm.lightBg;
-                const tagColor = dark ? tm.color : tm.lightColor;
-                const rowBg = e._fromSchedule
-                  ? CT.rowSchedBg
-                  : editId === e.id ? CT.rowEditBg : "transparent";
+            <div style={{ background:T.cardBg, overflowX:"auto" }}>
+              <table className="w-full text-sm" style={{ borderCollapse:"collapse", minWidth:"560px" }}>
+                <thead>
+                  <tr style={{ borderBottom:`1px solid ${T.divider}` }}>
+                    <th style={thStyle} scope="col">Data</th>
+                    <th style={thStyle} scope="col">Tipo</th>
+                    <th style={thStyle} scope="col">Horário</th>
+                    <th style={thStyle} scope="col">Duração</th>
+                    <th style={{ ...thStyle, width:"100%" }} scope="col">Projeto / Atividade</th>
+                    <th style={thStyle} scope="col"><span className="sr-only">Ações</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {allMonthEntries.map((e) => {
+                    const h = durationHours(e.inicio, e.fim);
+                    const tm = TYPE_META[e.tipo];
+                    const tagBg    = dark ? tm.bg    : tm.lightBg;
+                    const tagColor = dark ? tm.color : tm.lightColor;
+                    const rowBg = e._fromSchedule
+                      ? T.rowSchedBg
+                      : editId === e.id ? T.rowEditBg : "transparent";
 
-                return (
-                  <div key={e.id} className="px-4 py-2.5 flex items-center gap-3 text-sm"
-                    style={{ borderTop:i>0?`1px solid ${CT.divider}`:"none", background:rowBg }}>
-                    <div className="font-mono font-bold w-14 shrink-0" style={{ color:CT.textStrong }}>
-                      {e.data.slice(8,10)}/{e.data.slice(5,7)}
-                    </div>
-                    <span className="rounded-md px-2 py-0.5 text-xs font-bold shrink-0" style={{ background:tagBg, color:tagColor }}>
-                      {e._fromSchedule ? "SA" : e.tipo === "Hora Extra" ? "HE" : "Comp"}
-                    </span>
-                    <span className="font-mono text-xs shrink-0 w-24" style={{ color:CT.textLabel }}>{e.inicio}–{e.fim}</span>
-                    <span className="font-mono text-xs font-bold shrink-0 w-12" style={{ color:CT.textStrong }}>{fmtHM(h)}</span>
-                    <span className="flex-1 truncate" style={{ color:CT.textMid }}>
-                      {e.projeto && <b style={{ color:CT.textStrong }}>{e.projeto}: </b>}{e.atividade}
-                    </span>
-                    {!e._fromSchedule && <>
-                      <button onClick={() => startEdit(e)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:"0.75rem", color:CT.textLabel, flexShrink:0 }}>editar</button>
-                      <button onClick={() => remove(e.id)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:"0.75rem", color:"#F87171", flexShrink:0 }}>excluir</button>
-                    </>}
-                  </div>
-                );
-              })}
+                    return (
+                      <tr key={e.id} style={{ borderTop:`1px solid ${T.divider}`, background:rowBg }}>
+                        <td className="font-mono font-bold whitespace-nowrap" style={{ color:T.textSecondary, padding:"0.5rem" }}>
+                          {e.data.slice(8,10)}/{e.data.slice(5,7)}
+                        </td>
+                        <td style={{ padding:"0.5rem" }}>
+                          <span className="rounded-md px-2 py-0.5 text-xs font-bold whitespace-nowrap" style={{ background:tagBg, color:tagColor }}>
+                            {e._fromSchedule ? "SA" : e.tipo === "Hora Extra" ? "HE" : "Comp"}
+                          </span>
+                        </td>
+                        <td className="font-mono text-xs whitespace-nowrap" style={{ color:T.textMuted, padding:"0.5rem" }}>{e.inicio}–{e.fim}</td>
+                        <td className="font-mono text-xs font-bold whitespace-nowrap" style={{ color:T.textSecondary, padding:"0.5rem" }}>{fmtHM(h)}</td>
+                        <td className="truncate" style={{ color:T.textSecondary, padding:"0.5rem", maxWidth:"1px", width:"100%" }}>
+                          {e.projeto && <b style={{ color:T.textPrimary }}>{e.projeto}: </b>}{e.atividade}
+                        </td>
+                        <td style={{ padding:"0.15rem 0.35rem", whiteSpace:"nowrap" }}>
+                          {!e._fromSchedule && (
+                            <span className="inline-flex">
+                              <button onClick={() => startEdit(e)}
+                                aria-label={`Editar lançamento de ${e.data.slice(8,10)}/${e.data.slice(5,7)}`}
+                                style={{ background:"none", border:"none", cursor:"pointer", color:T.textMuted, display:"inline-flex", alignItems:"center", justifyContent:"center", width:"2.5rem", height:"2.5rem", borderRadius:"0.5rem" }}>
+                                <Icon name="pencil" size={14} />
+                              </button>
+                              <button onClick={() => remove(e)}
+                                aria-label={`Excluir lançamento de ${e.data.slice(8,10)}/${e.data.slice(5,7)}`}
+                                style={{ background:"none", border:"none", cursor:"pointer", color:"#F87171", display:"inline-flex", alignItems:"center", justifyContent:"center", width:"2.5rem", height:"2.5rem", borderRadius:"0.5rem" }}>
+                                <Icon name="x" size={14} />
+                              </button>
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
-        </div>
+        </section>
 
-        <div className="mt-6 text-center text-xs" style={{ color:CT.footerText }}>
+        <footer className="mt-6 text-center text-xs" style={{ color:T.footerText }}>
           SA preenchido automaticamente pela escala · HE e compensação lançados manualmente · Dados salvos na nuvem
-        </div>
+        </footer>
       </div>
+
+      <Snackbar
+        open={!!undoEntry}
+        message={undoEntry ? `Lançamento de ${undoEntry.data ? `${undoEntry.data.slice(8,10)}/${undoEntry.data.slice(5,7)}` : ''} excluído` : ''}
+        actionLabel="Desfazer"
+        onAction={undoRemove}
+        T={T}
+      />
     </div>
   );
 }
