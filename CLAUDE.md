@@ -44,6 +44,7 @@ api/
   profile.js                GET/POST preferências do usuário (dark, filter, monthKey); role/memberId vêm da allowlist
   substitutions.js          GET/POST/DELETE substituições; controle de acesso por role no backend
   ch.js                     GET/POST lançamentos e parâmetros CH; admin acessa qualquer membro
+  ch-close.js               Fechamento mensal do CH: GET fechamentos; POST fecha mês (admin); DELETE reabre (admin)
   schedule.js               GET/POST overrides de escala; POST bloqueado para não-admin
 
 db/
@@ -183,6 +184,16 @@ valorHoraExtra  = (valorHora × 1.5) × horasHE   ← adicional de 50%
 
 SA vem de `buildSchedule(overrides)` — reflete edições do admin no cálculo e no CSV exportado.
 
+### Fechamento mensal (folha de pagamento)
+
+Sem fechamento, os valores são recalculados a cada render — editar remuneração/escala muda meses passados retroativamente. O fechamento congela o mês:
+
+- **Fechar mês** (só admin, botão no Relatório): grava snapshot imutável `{ closedAt, closedBy, params, totals, entries[] }` em `member:{id}:ch_closed[YYYY-MM]`. Recusa fechar mês já fechado (409).
+- **Mês fechado**: relatório, ledger e CSV usam o snapshot (badge "Mês fechado" + "congelados"); novos lançamentos com data nesse mês são bloqueados no cliente; botões editar/excluir somem. Parâmetros continuam editáveis — só afetam meses abertos.
+- **Reabrir** (só admin): descarta o snapshot; valores voltam a ser recalculados.
+- Totais são calculados no cliente (lógica da escala vive em `src/lib/schedule.js`, fronteira Vite/Node impede import no `api/`); o snapshot é validado por schema e a ação é exclusiva de admin — congela o que o admin viu e aprovou na tela.
+- ⚠ O bloqueio de lançamento em mês fechado é client-side; `api/ch.js` não valida contra `ch_closed` (aceitável para ferramenta interna; endurecer na migração Postgres).
+
 ---
 
 ## Autenticação
@@ -231,6 +242,7 @@ Handler usa role para controle de acesso, memberId para isolar dados
 | `user:{clerkId}:profile` | `{ dark, filter, monthKey }` | Por usuário |
 | `member:{memberId}:ch_entries` | `[{ id, person, tipo, data, inicio, fim, projeto, atividade }]` | Por membro |
 | `member:{memberId}:ch_params` | `{ [memberId]: { remuneracao, jornada } }` | Por membro |
+| `member:{memberId}:ch_closed` | `{ 'YYYY-MM': { closedAt, closedBy, params, totals, entries[] } }` | Por membro |
 | `substitutions` | `[{ id, titular, substituto, from, until }]` | Compartilhado |
 | `schedule_overrides` | `{ [dayKey]: { [shiftIdx]: { person, period, time, dur } } }` | Compartilhado |
 
@@ -246,6 +258,8 @@ Handler usa role para controle de acesso, memberId para isolar dados
 | `substitutions` POST | `SubPostSchema` — campos obrigatórios tipados; `until >= from`; `titular ≠ substituto`. |
 | `substitutions` DELETE | `id` query string não-vazia (checagem inline). |
 | `ch` POST | `ChPostSchema` — `entries[]` (com `tipo` enum), `params` record, `person` string. Todos opcionais. |
+| `ch-close` POST | `ChClosePostSchema` — `person` (enum equipe, opcional), `month` YYYY-MM, `snapshot` { params, totals, entries[] ≤200 }. |
+| `ch-close` DELETE | `month` validado como YYYY-MM (`ChCloseMonthQuery`). |
 
 Ordem de execução: `requireUser` → checagem de role → `checkBodySize` (50 KB) → `validate(schema)` → Redis.
 Erros de validação: log server-side dos primeiros 5 issues; resposta sempre `400 { error: 'Bad request' }`.

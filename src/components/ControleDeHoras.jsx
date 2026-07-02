@@ -5,7 +5,7 @@ import {
   buildSchedule, dayKey, getActiveSub,
 } from '../lib/schedule';
 import { getTheme, DANGER, WARN } from '../lib/theme';
-import { Icon, SaveStatus, Snackbar, friendlyError } from './ui';
+import { Icon, SaveStatus, Snackbar, ConfirmDialog, friendlyError } from './ui';
 
 const TYPES = ["Hora Extra", "Compensação"];
 const TYPE_META = {
@@ -30,6 +30,12 @@ export default function ControleDeHoras({ dark, profile }) {
   const [subs,           setSubs]           = useState([]);
   const [overrides,      setOverrides]      = useState({});
   const [dataLoading,    setDataLoading]    = useState(true);
+
+  // Fechamento mensal — { 'YYYY-MM': { closedAt, closedBy, params, totals, entries } }
+  const [closedMonths, setClosedMonths] = useState({});
+  const [closeDialog,  setCloseDialog]  = useState(null); // 'close' | 'reopen' | null
+  const [closeBusy,    setCloseBusy]    = useState(false);
+  const [closeError,   setCloseError]   = useState(null);
 
   // Status de persistência — o usuário sempre vê se o dado chegou ao servidor
   const [entriesStatus, setEntriesStatus] = useState('idle'); // idle | saving | saved | error
@@ -63,11 +69,13 @@ export default function ControleDeHoras({ dark, profile }) {
       api(`/api/ch${query}`),
       api('/api/substitutions'),
       api('/api/schedule'),
-    ]).then(([chData, subData, overridesData]) => {
+      api(`/api/ch-close${query}`).catch(() => ({})), // fechamentos são opcionais — falha não bloqueia o painel
+    ]).then(([chData, subData, overridesData, closedData]) => {
       setEntries(chData.entries || []);
       setParamsByPerson(chData.params || {});
       setSubs(subData || []);
       setOverrides(overridesData || {});
+      setClosedMonths(closedData || {});
     }).catch(console.error)
       .finally(() => setDataLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -225,9 +233,66 @@ export default function ControleDeHoras({ dark, profile }) {
     return { sobreaviso, extra, comp, totalHoras: sobreaviso + extra + comp, valorSobreaviso, valorExtra, valorTotal: valorSobreaviso + valorExtra };
   }, [allMonthEntries, valorHora]);
 
+  // ─── FECHAMENTO MENSAL ─────────────────────────────────────────────────────
+  // Mês fechado = snapshot imutável (params + totais + line items) gravado pelo admin.
+  // A UI passa a exibir o snapshot e bloqueia novos lançamentos naquele mês.
+  const monthKeyStr = `${year}-${String(monthIdx + 1).padStart(2, '0')}`;
+  const closedSnap = closedMonths[monthKeyStr] || null;
+  const isClosed = !!closedSnap;
+
+  const displayEntries = useMemo(() => (
+    isClosed
+      ? closedSnap.entries.map(e => ({ ...e, person, _fromSchedule: e.origem === 'Escala' }))
+      : allMonthEntries
+  ), [isClosed, closedSnap, allMonthEntries, person]);
+
+  const displayTotals    = isClosed ? closedSnap.totals : totals;
+  const displayValorHora = isClosed ? closedSnap.totals.valorHora : valorHora;
+
+  const fmtClosedAt = (iso) => {
+    const d = new Date(iso);
+    return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+  };
+
+  const closeMonth = async () => {
+    setCloseBusy(true);
+    setCloseError(null);
+    try {
+      const snapshot = {
+        params: { remuneracao: params.remuneracao === '' ? 0 : params.remuneracao, jornada: params.jornada },
+        totals: { ...totals, valorHora },
+        entries: allMonthEntries.map(e => ({
+          id: e.id, tipo: e.tipo, data: e.data, inicio: e.inicio, fim: e.fim,
+          projeto: e.projeto || '', atividade: e.atividade || '',
+          origem: e._fromSchedule ? 'Escala' : 'Manual',
+        })),
+      };
+      const updated = await api('/api/ch-close', { method: 'POST', body: { person, month: monthKeyStr, snapshot } });
+      setClosedMonths(updated);
+    } catch (e) {
+      setCloseError(/already closed|409/i.test(String(e.message)) ? 'Este mês já está fechado.' : friendlyError(e));
+    } finally {
+      setCloseBusy(false);
+    }
+  };
+
+  const reopenMonth = async () => {
+    setCloseBusy(true);
+    setCloseError(null);
+    try {
+      const updated = await api(`/api/ch-close?person=${encodeURIComponent(person)}&month=${monthKeyStr}`, { method: 'DELETE' });
+      setClosedMonths(updated);
+    } catch (e) {
+      setCloseError(friendlyError(e));
+    } finally {
+      setCloseBusy(false);
+    }
+  };
+
   // ─── AÇÕES ─────────────────────────────────────────────────────────────────
   const submit = async () => {
     if (!form.data || !form.inicio || !form.fim || submitting) return;
+    if (closedMonths[form.data.slice(0, 7)]) return; // mês fechado — bloqueado (aviso no formulário)
     setSubmitting(true);
     const prevEntries = entries;
     const prevForm = form;
@@ -284,8 +349,10 @@ export default function ControleDeHoras({ dark, profile }) {
 
   const exportCSV = () => {
     const sep = ";";
+    // Mês fechado exporta o snapshot congelado — não o recálculo atual
+    const csvParams = isClosed ? closedSnap.params : params;
     const header = ["Data","Tipo","Origem","Início","Fim","Duração (h)","Duração (h:mm)","Projeto","Atividade / Descrição","Responsável"];
-    const rows = allMonthEntries.map(e => {
+    const rows = displayEntries.map(e => {
       const h = durationHours(e.inicio, e.fim);
       return [
         e.data, e.tipo,
@@ -300,15 +367,16 @@ export default function ControleDeHoras({ dark, profile }) {
     const summary = [
       [],
       ["RESUMO", `${MONTHS[monthIdx]} ${year}`, person],
-      ["Remuneração mensal", brl(Number(params.remuneracao) || 0)],
-      ["Jornada (h)", String(params.jornada)],
-      ["Valor hora", brl(valorHora)],
-      ["Horas sobreaviso (escala)", fmtHM(totals.sobreaviso)],
-      ["Horas extra", fmtHM(totals.extra)],
-      ["Horas compensação", fmtHM(totals.comp)],
-      ["Valor sobreaviso (÷3)", brl(totals.valorSobreaviso)],
-      ["Valor hora extra (×1,5)", brl(totals.valorExtra)],
-      ["VALOR TOTAL", brl(totals.valorTotal)],
+      ...(isClosed ? [["MÊS FECHADO", `em ${fmtClosedAt(closedSnap.closedAt)}`, `por ${closedSnap.closedBy}`]] : []),
+      ["Remuneração mensal", brl(Number(csvParams.remuneracao) || 0)],
+      ["Jornada (h)", String(csvParams.jornada)],
+      ["Valor hora", brl(displayValorHora)],
+      ["Horas sobreaviso (escala)", fmtHM(displayTotals.sobreaviso)],
+      ["Horas extra", fmtHM(displayTotals.extra)],
+      ["Horas compensação", fmtHM(displayTotals.comp)],
+      ["Valor sobreaviso (÷3)", brl(displayTotals.valorSobreaviso)],
+      ["Valor hora extra (×1,5)", brl(displayTotals.valorExtra)],
+      ["VALOR TOTAL", brl(displayTotals.valorTotal)],
     ];
     const csv = "﻿" + [[header], rows, summary].flat().map(r => r.map(c => `"${String(c)}"`).join(sep)).join("\r\n");
     const blob = new Blob([csv], { type:"text/csv;charset=utf-8;" });
@@ -324,7 +392,8 @@ export default function ControleDeHoras({ dark, profile }) {
   const years = [year - 1, year, year + 1];
   const liveDuration = durationHours(form.inicio, form.fim);
   const crossesMidnight = form.inicio && form.fim && form.fim <= form.inicio;
-  const canSubmit = !!(form.data && form.inicio && form.fim) && !submitting;
+  const formMonthClosed = !!(form.data && closedMonths[form.data.slice(0, 7)]);
+  const canSubmit = !!(form.data && form.inicio && form.fim) && !submitting && !formMonthClosed;
 
   const thStyle = { textAlign: "left", fontSize: "0.68rem", fontWeight: 600, color: T.labelColor, padding: "0.5rem 0.5rem", whiteSpace: "nowrap" };
 
@@ -335,7 +404,14 @@ export default function ControleDeHoras({ dark, profile }) {
         {/* CABEÇALHO */}
         <header className="rounded-2xl p-5 mb-5 text-white" style={{ background:T.headerGrad }}>
           <h1 className="text-sm font-semibold opacity-80 mb-1" style={{ letterSpacing:"0.01em" }}>Controle de Horas</h1>
-          <div className="text-2xl font-bold">{MONTHS[monthIdx]} de {year}</div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="text-2xl font-bold">{MONTHS[monthIdx]} de {year}</div>
+            {isClosed && (
+              <span className="inline-flex items-center gap-1 text-xs font-bold rounded-full px-2.5 py-1" style={{ background:"rgba(34,197,94,0.18)", color:"#4ADE80", border:"1px solid rgba(74,222,128,0.4)" }}>
+                <Icon name="check" size={12} /> Mês fechado
+              </span>
+            )}
+          </div>
           <div className="text-sm opacity-80 mt-1">Sobreaviso (escala automática) + horas extra e compensação</div>
         </header>
 
@@ -397,6 +473,12 @@ export default function ControleDeHoras({ dark, profile }) {
               <div className="text-lg font-bold" style={{ color:p.color }}>{valorHora > 0 ? brl(valorHora) : "—"}</div>
             </div>
           </div>
+          {isClosed && (
+            <p className="flex items-center gap-1.5 text-xs mt-2" style={{ color:T.textMuted }}>
+              <Icon name="check" size={12} />
+              O relatório de {MONTHS[monthIdx]} usa os valores congelados no fechamento (valor hora {brl(displayValorHora)}). Alterar os parâmetros acima só afeta meses abertos.
+            </p>
+          )}
         </section>
 
         {/* FORMULÁRIO — só HE e Compensação */}
@@ -434,6 +516,12 @@ export default function ControleDeHoras({ dark, profile }) {
               <input id="ch-atividade" type="text" style={inputStyle} placeholder="O que foi feito" value={form.atividade} onChange={e => setForm({ ...form, atividade:e.target.value })} />
             </div>
           </div>
+          {formMonthClosed && (
+            <p role="alert" className="flex items-center gap-1.5 text-xs font-semibold mb-3" style={{ color:WARN }}>
+              <Icon name="alert" size={13} />
+              {form.data.slice(0,7).split('-').reverse().join('/')} está fechado para lançamentos. Peça ao admin para reabrir o mês se precisar alterar.
+            </p>
+          )}
           {crossesMidnight && (
             <p className="flex items-center gap-1.5 text-xs font-semibold mb-3" style={{ color:WARN }}>
               <Icon name="alert" size={13} />
@@ -462,18 +550,44 @@ export default function ControleDeHoras({ dark, profile }) {
 
         {/* RELATÓRIO */}
         <section className="rounded-2xl p-4 mb-4" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}` }}>
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <h2 className="text-sm font-semibold" style={{ color:T.textSecondary }}>Relatório do mês</h2>
-            <button onClick={exportCSV} disabled={allMonthEntries.length === 0}
-              style={{ display:"inline-flex", alignItems:"center", gap:"0.4rem", background:allMonthEntries.length>0?T.exportBg:T.cardBorder, color:allMonthEntries.length>0?"#fff":T.textMuted, border:"none", borderRadius:"0.5rem", padding:"0.5rem 0.9rem", minHeight:"2.75rem", fontWeight:"700", fontSize:"0.875rem", cursor:allMonthEntries.length>0?"pointer":"not-allowed" }}>
-              <Icon name="download" size={14} /> Exportar CSV
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              {isAdmin && !dataLoading && (
+                isClosed ? (
+                  <button onClick={() => setCloseDialog('reopen')} disabled={closeBusy}
+                    style={{ display:"inline-flex", alignItems:"center", gap:"0.4rem", background:"transparent", color:WARN, border:`1px solid ${WARN}`, borderRadius:"0.5rem", padding:"0.5rem 0.9rem", minHeight:"2.75rem", fontWeight:"700", fontSize:"0.875rem", cursor:closeBusy?"not-allowed":"pointer" }}>
+                    {closeBusy ? "Reabrindo…" : "Reabrir mês"}
+                  </button>
+                ) : (
+                  <button onClick={() => setCloseDialog('close')} disabled={closeBusy || allMonthEntries.length === 0}
+                    style={{ display:"inline-flex", alignItems:"center", gap:"0.4rem", background:"transparent", color:closeBusy||allMonthEntries.length===0?T.textMuted:T.textSecondary, border:`1px solid ${T.cancelBorder}`, borderRadius:"0.5rem", padding:"0.5rem 0.9rem", minHeight:"2.75rem", fontWeight:"700", fontSize:"0.875rem", cursor:closeBusy||allMonthEntries.length===0?"not-allowed":"pointer" }}>
+                    <Icon name="check" size={14} /> {closeBusy ? "Fechando…" : "Fechar mês"}
+                  </button>
+                )
+              )}
+              <button onClick={exportCSV} disabled={displayEntries.length === 0}
+                style={{ display:"inline-flex", alignItems:"center", gap:"0.4rem", background:displayEntries.length>0?T.exportBg:T.cardBorder, color:displayEntries.length>0?"#fff":T.textMuted, border:"none", borderRadius:"0.5rem", padding:"0.5rem 0.9rem", minHeight:"2.75rem", fontWeight:"700", fontSize:"0.875rem", cursor:displayEntries.length>0?"pointer":"not-allowed" }}>
+                <Icon name="download" size={14} /> Exportar CSV
+              </button>
+            </div>
           </div>
+          {isClosed && (
+            <p className="flex items-center gap-1.5 text-xs font-semibold mb-3" style={{ color:"#22C55E" }}>
+              <Icon name="check" size={13} />
+              Fechado em {fmtClosedAt(closedSnap.closedAt)} por {closedSnap.closedBy} — valores congelados para a folha.
+            </p>
+          )}
+          {closeError && (
+            <p role="alert" className="flex items-center gap-1.5 text-xs font-semibold mb-3" style={{ color:DANGER }}>
+              <Icon name="alert" size={13} /> {closeError}
+            </p>
+          )}
           <div className="grid gap-3" style={{ gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))" }}>
             {[
-              { label:"Sobreaviso",  h:totals.sobreaviso, v:totals.valorSobreaviso, formula:"⅓ do valor-hora",   tm:TYPE_META.Sobreaviso },
-              { label:"Hora Extra",  h:totals.extra,      v:totals.valorExtra,      formula:"valor-hora × 1,5",  tm:TYPE_META["Hora Extra"] },
-              { label:"Compensação", h:totals.comp,       v:null,                   formula:"sem valor — abate horas", tm:TYPE_META.Compensação },
+              { label:"Sobreaviso",  h:displayTotals.sobreaviso, v:displayTotals.valorSobreaviso, formula:"⅓ do valor-hora",   tm:TYPE_META.Sobreaviso },
+              { label:"Hora Extra",  h:displayTotals.extra,      v:displayTotals.valorExtra,      formula:"valor-hora × 1,5",  tm:TYPE_META["Hora Extra"] },
+              { label:"Compensação", h:displayTotals.comp,       v:null,                          formula:"sem valor — abate horas", tm:TYPE_META.Compensação },
             ].map(b => {
               const bg    = dark ? b.tm.bg    : b.tm.lightBg;
               const color = dark ? b.tm.color : b.tm.lightColor;
@@ -481,18 +595,18 @@ export default function ControleDeHoras({ dark, profile }) {
                 <div key={b.label} className="rounded-xl p-3" style={{ background:bg }}>
                   <div className="text-xs font-bold" style={{ color }}>{b.label}</div>
                   <div className="text-xl font-bold" style={{ color:dark?"#F1F5F9":"#1E293B" }}>{fmtHM(b.h)}</div>
-                  {b.v !== null && valorHora > 0 && <div className="text-sm font-semibold" style={{ color }}>{brl(b.v)}</div>}
+                  {b.v !== null && displayValorHora > 0 && <div className="text-sm font-semibold" style={{ color }}>{brl(b.v)}</div>}
                   <div className="text-[10px] mt-0.5" style={{ color, opacity:0.85 }}>{b.formula}</div>
                 </div>
               );
             })}
           </div>
           <div className="mt-3 pt-3 flex items-center justify-between" style={{ borderTop:`1px solid ${T.cardBorder}` }}>
-            <span className="text-sm" style={{ color:T.labelColor }}>Total de horas: <b style={{ color:T.textPrimary }}>{fmtHM(totals.totalHoras)}</b></span>
+            <span className="text-sm" style={{ color:T.labelColor }}>Total de horas: <b style={{ color:T.textPrimary }}>{fmtHM(displayTotals.totalHoras)}</b></span>
             <div className="text-right">
               <div className="text-xs" style={{ color:T.labelColor }}>Valor total a receber</div>
               <div className="text-2xl font-bold" style={{ color:p.color }}>
-                {valorHora > 0 ? brl(totals.valorTotal) : "—"}
+                {displayValorHora > 0 ? brl(displayTotals.valorTotal) : "—"}
               </div>
             </div>
           </div>
@@ -501,8 +615,13 @@ export default function ControleDeHoras({ dark, profile }) {
         {/* TABELA */}
         <section className="rounded-2xl overflow-hidden" style={{ border:`1px solid ${T.cardBorder}` }}>
           <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2" style={{ background:T.cardBg, borderBottom:`1px solid ${T.cardBorder}` }}>
-            <h2 className="text-sm font-semibold" style={{ color:T.textSecondary }}>
-              Lançamentos ({allMonthEntries.length})
+            <h2 className="text-sm font-semibold inline-flex items-center gap-2" style={{ color:T.textSecondary }}>
+              Lançamentos ({displayEntries.length})
+              {isClosed && (
+                <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ background:"rgba(34,197,94,0.15)", color:"#22C55E" }}>
+                  congelados
+                </span>
+              )}
             </h2>
             <div className="flex items-center gap-3 text-[10px] font-semibold" style={{ color:T.textMuted }}>
               <span className="flex items-center gap-1">
@@ -516,7 +635,7 @@ export default function ControleDeHoras({ dark, profile }) {
             </div>
           </div>
 
-          {allMonthEntries.length === 0 ? (
+          {displayEntries.length === 0 ? (
             <div className="px-4 py-8 text-center text-sm" style={{ color:T.textMuted, background:T.cardBg }}>
               {dataLoading ? "Carregando…" : "Nenhum lançamento neste mês. Os sobreavisos da escala aparecem aqui automaticamente."}
             </div>
@@ -534,7 +653,7 @@ export default function ControleDeHoras({ dark, profile }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {allMonthEntries.map((e) => {
+                  {displayEntries.map((e) => {
                     const h = durationHours(e.inicio, e.fim);
                     const tm = TYPE_META[e.tipo];
                     const tagBg    = dark ? tm.bg    : tm.lightBg;
@@ -559,7 +678,7 @@ export default function ControleDeHoras({ dark, profile }) {
                           {e.projeto && <b style={{ color:T.textPrimary }}>{e.projeto}: </b>}{e.atividade}
                         </td>
                         <td style={{ padding:"0.15rem 0.35rem", whiteSpace:"nowrap" }}>
-                          {!e._fromSchedule && (
+                          {!e._fromSchedule && !isClosed && (
                             <span className="inline-flex">
                               <button onClick={() => startEdit(e)}
                                 aria-label={`Editar lançamento de ${e.data.slice(8,10)}/${e.data.slice(5,7)}`}
@@ -593,6 +712,21 @@ export default function ControleDeHoras({ dark, profile }) {
         message={undoEntry ? `Lançamento de ${undoEntry.data ? `${undoEntry.data.slice(8,10)}/${undoEntry.data.slice(5,7)}` : ''} excluído` : ''}
         actionLabel="Desfazer"
         onAction={undoRemove}
+        T={T}
+      />
+
+      <ConfirmDialog
+        open={!!closeDialog}
+        title={closeDialog === 'close'
+          ? `Fechar ${MONTHS[monthIdx]} de ${year} — ${person}?`
+          : `Reabrir ${MONTHS[monthIdx]} de ${year} — ${person}?`}
+        body={closeDialog === 'close'
+          ? `Totais (${brl(totals.valorTotal)}), parâmetros e ${allMonthEntries.length} lançamento${allMonthEntries.length !== 1 ? 's' : ''} ficam congelados para a folha. Novos lançamentos neste mês serão bloqueados. Você poderá reabrir depois, se necessário.`
+          : 'Os valores voltam a ser recalculados com a escala e os parâmetros atuais — o snapshot congelado é descartado. Lançamentos neste mês voltam a ser permitidos.'}
+        confirmLabel={closeDialog === 'close' ? 'Fechar mês' : 'Reabrir mês'}
+        cancelLabel="Cancelar"
+        onConfirm={() => { const action = closeDialog; setCloseDialog(null); action === 'close' ? closeMonth() : reopenMonth(); }}
+        onCancel={() => setCloseDialog(null)}
         T={T}
       />
     </div>

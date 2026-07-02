@@ -62,6 +62,49 @@ export const ChPostSchema = z.object({
   person:  z.string().max(60).optional(),
 });
 
+// ─── FECHAMENTO MENSAL (CH) ──────────────────────────────────────────────────
+
+const MonthStr = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Expected YYYY-MM');
+
+// Line items congelados no snapshot — inclui os SA gerados pela escala
+// (ids 'sched-*'), por isso é mais permissivo que EntrySchema.
+const ClosedEntrySchema = z.object({
+  id:        z.string().min(1).max(80),
+  tipo:      z.enum(['Sobreaviso', 'Hora Extra', 'Compensação']),
+  data:      DateStr,
+  inicio:    z.string().max(10),
+  fim:       z.string().max(10),
+  projeto:   z.string().max(200).optional(),
+  atividade: z.string().max(500).optional(),
+  origem:    z.enum(['Escala', 'Manual']),
+});
+
+const ClosedTotalsSchema = z.object({
+  sobreaviso:      z.number().nonnegative(),
+  extra:           z.number().nonnegative(),
+  comp:            z.number().nonnegative(),
+  totalHoras:      z.number().nonnegative(),
+  valorHora:       z.number().nonnegative(),
+  valorSobreaviso: z.number().nonnegative(),
+  valorExtra:      z.number().nonnegative(),
+  valorTotal:      z.number().nonnegative(),
+});
+
+export const ChClosePostSchema = z.object({
+  person: TeamMember.optional(),
+  month:  MonthStr,
+  snapshot: z.object({
+    params: z.object({
+      remuneracao: z.union([z.number().nonnegative(), z.string().max(20)]),
+      jornada:     z.number().positive(),
+    }),
+    totals:  ClosedTotalsSchema,
+    entries: z.array(ClosedEntrySchema).max(200),
+  }),
+});
+
+export const ChCloseMonthQuery = MonthStr; // reuso na validação do DELETE
+
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
 const MAX_BODY_BYTES = 50_000; // 50 KB — guards against absurdly large payloads
