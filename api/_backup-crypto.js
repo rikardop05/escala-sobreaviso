@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 
 // Criptografia simétrica dos dumps de backup.
-// O dump contém dados financeiros e o e-mail do admin (closedBy nos fechamentos),
-// e o Vercel Blob serve URLs públicas (com sufixo aleatório). Cifrar garante que,
-// mesmo se a URL vazar, o conteúdo é inútil sem a chave.
+// O dump contém dados financeiros e o e-mail do admin (closedBy nos fechamentos).
+// O store do Blob é privado (URL só acessível com token); a cifra é a 2ª camada:
+// mesmo que o token/URL vaze ou um blob seja exposto por engano, o conteúdo é inútil sem a chave.
 //
 // BACKUP_ENCRYPTION_KEY: 32 bytes em hex (64 chars) ou base64. Gere com:
 //   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"

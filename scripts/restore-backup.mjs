@@ -4,7 +4,9 @@
 // Uso:
 //   BACKUP_ENCRYPTION_KEY=... REDIS_URL=... node scripts/restore-backup.mjs <arquivo-ou-url> [--commit]
 //
-//   <arquivo-ou-url>  caminho local do .enc OU a URL pública do Blob
+//   <arquivo-ou-url>  caminho local do .enc (baixe do Blob Store no painel do Vercel)
+//                     OU uma URL de download assinada. O store é privado, então a
+//                     URL "crua" do blob NÃO abre por fetch sem token — prefira o arquivo local.
 //   --commit          sem esta flag é DRY-RUN: só lista as chaves, não escreve nada
 //   --only=prefixo    (opcional) restaura só chaves que começam com o prefixo (ex: --only=member:)
 //

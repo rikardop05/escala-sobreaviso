@@ -55,7 +55,7 @@ export default async function handler(req, res) {
     // 2. Cifra e sobe
     const encrypted = encrypt(payload);
     const { url, pathname } = await put(`${PREFIX}escala-${stamp}.enc`, encrypted, {
-      access: 'public',        // URL pública com sufixo aleatório; o conteúdo é cifrado
+      access: 'private',       // store privado: URL só acessível com token. Cifra = 2ª camada
       addRandomSuffix: true,
       contentType: 'application/octet-stream',
     });

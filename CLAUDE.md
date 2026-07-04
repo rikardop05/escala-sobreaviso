@@ -297,12 +297,12 @@ Cron diário (`crons` em `vercel.json`, `0 6 * * *` = 03:00 BRT) chama `GET /api
 
 1. `kvScanAll()` — dump de todas as chaves do Redis em JSON.
 2. Cifra com AES-256-GCM (`api/_backup-crypto.js`, chave `BACKUP_ENCRYPTION_KEY`).
-3. Sobe em `backups/escala-YYYY-MM-DD-<sufixo>.enc` no Vercel Blob.
+3. Sobe em `backups/escala-YYYY-MM-DD-<sufixo>.enc` no Vercel Blob (store **privado**, `access: 'private'`).
 4. Poda dumps com mais de **30 dias** (`RETENTION_DAYS` em `api/backup.js`).
 
-- **Por que cifrado**: o Blob serve URLs públicas (com sufixo aleatório) e o dump contém dados financeiros + e-mail do admin (`closedBy`). Sem a chave, o conteúdo é inútil.
+- **Duas camadas de proteção**: o store é privado (URL só acessível com token) **e** o dump é cifrado (AES-256-GCM). O dump contém dados financeiros + e-mail do admin (`closedBy`); mesmo que token/URL vaze, o conteúdo é inútil sem a chave.
 - **Trigger manual**: um admin autenticado pode chamar `GET /api/backup` para forçar um backup fora do horário.
-- **Restaurar**: `BACKUP_ENCRYPTION_KEY=… REDIS_URL=… node scripts/restore-backup.mjs <arquivo-ou-url>` — dry-run por padrão (só lista); `--commit` aplica; `--only=prefixo` restaura um subconjunto. Faz `SET` por cima do Redis atual, não apaga chaves ausentes no dump.
+- **Restaurar**: baixe o `.enc` do Blob Store no painel do Vercel, depois `BACKUP_ENCRYPTION_KEY=… REDIS_URL=… node scripts/restore-backup.mjs <arquivo-local>` — dry-run por padrão (só lista); `--commit` aplica; `--only=prefixo` restaura um subconjunto. Faz `SET` por cima do Redis atual, não apaga chaves ausentes no dump. (A URL crua do blob privado não abre por fetch sem token — use o arquivo local.)
 - **Setup no Vercel** (uma vez): criar Blob Store no painel (gera `BLOB_READ_WRITE_TOKEN`); definir `BACKUP_ENCRYPTION_KEY` e `CRON_SECRET`. Plano Hobby permite cron 1×/dia — suficiente.
 - ⚠ Guarde a `BACKUP_ENCRYPTION_KEY` **também fora do Vercel** (gerenciador de senhas): se o projeto Vercel for perdido junto com a chave, os dumps ficam irrecuperáveis.
 
