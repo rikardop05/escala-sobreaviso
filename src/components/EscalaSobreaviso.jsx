@@ -399,7 +399,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
           <button
             onClick={onToggleDark}
             aria-label={dark ? "Mudar para tema claro" : "Mudar para tema escuro"}
-            style={{ position:"absolute", top:"0.6rem", right:"0.6rem", display:"inline-flex", alignItems:"center", gap:"0.35rem", background:"rgba(255,255,255,0.12)", color:"#fff", border:"1px solid rgba(255,255,255,0.22)", borderRadius:"9999px", padding:"0.5rem 0.85rem", minHeight:"2.75rem", fontSize:"0.72rem", fontWeight:"600", cursor:"pointer", letterSpacing:"0.02em" }}
+            style={{ position:"absolute", top:"0.6rem", right:"0.6rem", zIndex:2, display:"inline-flex", alignItems:"center", gap:"0.35rem", background:"rgba(255,255,255,0.12)", color:"#fff", border:"1px solid rgba(255,255,255,0.22)", borderRadius:"9999px", padding:"0.5rem 0.85rem", minHeight:"2.75rem", fontSize:"0.72rem", fontWeight:"600", cursor:"pointer", letterSpacing:"0.02em" }}
           >
             <Icon name={dark ? "sun" : "moon"} size={14} />
             {dark ? "Claro" : "Escuro"}
