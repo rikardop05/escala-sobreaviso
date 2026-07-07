@@ -11,12 +11,16 @@ const TeamMember = z.enum(TEAM_MEMBERS);
 
 // ─── SCHEDULE ────────────────────────────────────────────────────────────────
 
+// Override parcial: o admin pode mudar só um subconjunto (ex.: só o horário,
+// mantendo a pessoa original). buildSchedule() mescla o override sobre a base,
+// então todos os campos são opcionais — exige-se apenas ≥1 campo (override vazio
+// deve ser enviado como null = reverter para o padrão).
 const OverrideObj = z.object({
-  person: TeamMember,
-  period: z.string().min(1).max(30),
-  time:   z.string().min(1).max(25),
-  dur:    z.string().min(1).max(10),
-});
+  person: TeamMember.optional(),
+  period: z.string().min(1).max(30).optional(),
+  time:   z.string().min(1).max(25).optional(),
+  dur:    z.string().min(1).max(10).optional(),
+}).refine(o => Object.keys(o).length > 0, 'override não pode ser vazio (use null para reverter)');
 
 // { 'YYYY-MM-DD': { '0'|'1'|'2': OverrideObj | null } }
 // Note: inner key uses z.string() — z.enum() as record key in Zod v4 requires ALL

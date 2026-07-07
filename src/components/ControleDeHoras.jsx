@@ -14,9 +14,11 @@ const TYPE_META = {
   Compensação:  { color: "#FCD34D", bg: "#431407", lightColor: "#854D0E", lightBg: "#FEF9C3" },
 };
 
-// Extrai HH:MM de uma string de turno ex: "23:00 – 04:00"
+// Extrai HH:MM de uma string de turno ex: "23:00 – 04:00".
+// Aceita en-dash (–), em-dash (—) e hífen (-) — o admin pode digitar qualquer um
+// ao editar a escala; sem isso o split falharia e a duração viraria 0h silenciosamente.
 function parseShiftTime(timeStr) {
-  const parts = timeStr.split('–').map(t => t.trim());
+  const parts = String(timeStr).split(/[–—-]/).map(t => t.trim());
   return { inicio: parts[0], fim: parts[1] };
 }
 
