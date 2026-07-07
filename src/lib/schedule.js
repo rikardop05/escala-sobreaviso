@@ -205,6 +205,69 @@ export function currentOnCall(now, schedule) {
   return { person: shift.person, label: `${DOW[targetDay.date.getDay()]} · ${shift.period}`, time: shift.time };
 }
 
+// Sequência ordenada de blocos de plantão com início/fim absolutos (ms).
+// As fronteiras batem exatamente com o que currentOnCall considera:
+//   FDS  → Dia 00:00–12:00, Noite 12:00–24:00
+//   Úteis→ Madrugada 04:00 (começa 23:00 do dia anterior; na segunda começa 00:00,
+//          porque domingo à noite vai até 00:00), Manhã 04:00–09:00,
+//          Noite 18:00–23:00 (sexta até 24:00). O vão 09:00–18:00 não gera bloco.
+// setHours aceita -1 (23:00 do dia anterior) e 24 (00:00 do dia seguinte) — o JS normaliza.
+export function buildOnCallSegments(schedule) {
+  const at = (date, h) => { const d = new Date(date); d.setHours(h, 0, 0, 0); return d.getTime(); };
+  const seg = (start, end, shift, dateStr, dow) => ({
+    start, end, person: shift.person, period: shift.period, time: shift.time, dur: shift.dur, dateStr, dow,
+  });
+  const segs = [];
+  for (const day of schedule) {
+    const D = day.date, dow = day.dow, ds = dayKey(D);
+    if (dow === 0 || dow === 6) {
+      if (day.shifts[0]) segs.push(seg(at(D, 0),  at(D, 12), day.shifts[0], ds, dow));
+      if (day.shifts[1]) segs.push(seg(at(D, 12), at(D, 24), day.shifts[1], ds, dow));
+    } else {
+      if (day.shifts[0]) segs.push(seg(dow === 1 ? at(D, 0) : at(D, -1), at(D, 4), day.shifts[0], ds, dow)); // Madrugada
+      if (day.shifts[1]) segs.push(seg(at(D, 4),  at(D, 9),  day.shifts[1], ds, dow));                        // Manhã
+      if (day.shifts[2]) segs.push(seg(at(D, 18), at(D, dow === 5 ? 24 : 23), day.shifts[2], ds, dow));       // Noite
+    }
+  }
+  return segs.sort((a, b) => a.start - b.start);
+}
+
+// Plantonista anterior e próximo em relação a `now`, com substituições aplicadas.
+// No plantão ativo, anterior/próximo são os vizinhos imediatos; no vão comercial,
+// anterior = último que terminou e próximo = primeiro que começa. Retorna null quando
+// não há vizinho (bordas da escala). `hora` já vem formatada (HH:MM, com dia curto se for outro dia).
+export function adjacentOnCall(now, schedule, subs = []) {
+  const segs = buildOnCallSegments(schedule);
+  const t = now.getTime();
+  const nowDay = dayKey(now);
+
+  const fmtHora = (ms) => {
+    const d = new Date(ms);
+    const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    return dayKey(d) === nowDay ? hm : `${DOW_SHORT[d.getDay()]} ${hm}`;
+  };
+  const shape = (s, ms) => {
+    if (!s) return null;
+    const sub = getActiveSub(s.person, s.dateStr, subs);
+    return { person: sub ? sub.substituto : s.person, coveringFor: sub ? s.person : null, hora: fmtHora(ms) };
+  };
+
+  const cur = segs.findIndex(s => t >= s.start && t < s.end);
+  let prevSeg = null, nextSeg = null;
+  if (cur !== -1) {
+    prevSeg = segs[cur - 1] || null;
+    nextSeg = segs[cur + 1] || null;
+  } else {
+    nextSeg = segs.find(s => s.start > t) || null;
+    for (let i = segs.length - 1; i >= 0; i--) { if (segs[i].end <= t) { prevSeg = segs[i]; break; } }
+  }
+  // anterior mostra quando terminou (end); próximo mostra quando começa (start)
+  return {
+    anterior: shape(prevSeg, prevSeg?.end),
+    proximo:  shape(nextSeg, nextSeg?.start),
+  };
+}
+
 export function getActiveSub(person, dateStr, subs) {
   return subs.find(s => s.titular === person && dateStr >= s.from && dateStr <= s.until) || null;
 }

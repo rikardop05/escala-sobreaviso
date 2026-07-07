@@ -3,7 +3,7 @@ import { useApi } from '../lib/api';
 import {
   PEOPLE, DOW, DOW_SHORT, MONTHS, MONTHS_SHORT,
   MS_DAY, dayKey, sameDay, fmtDS,
-  buildSchedule, currentOnCall, getActiveSub, getCoverSuggestions,
+  buildSchedule, currentOnCall, adjacentOnCall, getActiveSub, getCoverSuggestions,
 } from '../lib/schedule';
 import { getTheme, ACCENT, DANGER, WARN } from '../lib/theme';
 import { Icon, Snackbar, ConfirmDialog, Skeleton, friendlyError } from './ui';
@@ -140,6 +140,9 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     return sub ? { ...onCallBase, person: sub.substituto, coveringFor: onCallBase.person } : onCallBase;
   })() : null;
   const onCallColor = onCall ? (PEOPLE[onCall.person] || {}).color || "#94A3B8" : "#94A3B8";
+
+  // Handoff: plantonista anterior e próximo (com substituições) para o widget "Agora"
+  const handoff = useMemo(() => adjacentOnCall(now, schedule, subs), [now, schedule, subs]);
 
   const coverSuggestions = useMemo(() => {
     if (!subForm.titular || !subForm.from || !subForm.until || subForm.from > subForm.until) return [];
@@ -431,6 +434,30 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                 <>
                   <div className="text-lg font-bold opacity-90">Sem sobreaviso</div>
                   <div className="text-xs opacity-80">Horário comercial (09:00 – 18:00)</div>
+                </>
+              )}
+
+              {/* Handoff: plantonista anterior e próximo */}
+              {scheduleReady && (handoff.anterior || handoff.proximo) && (
+                <>
+                  <div style={{ height:1, background:"rgba(255,255,255,0.12)", margin:"0.7rem 0 0.15rem" }} />
+                  {[
+                    { label:"antes",  data:handoff.anterior, prefix:"até " },
+                    { label:"depois", data:handoff.proximo,  prefix:"" },
+                  ].map(({ label, data, prefix }) => (
+                    <div key={label} style={{ display:"flex", alignItems:"center", gap:"0.5rem", fontSize:"0.8rem", marginTop:"0.4rem" }}>
+                      <span style={{ width:"3rem", flex:"none", fontSize:"0.7rem", color:"rgba(255,255,255,0.5)" }}>{label}</span>
+                      {data ? (
+                        <>
+                          <span style={{ width:8, height:8, borderRadius:"50%", flex:"none", background:(PEOPLE[data.person]||{}).color||"#94A3B8", boxShadow:"0 0 0 1px rgba(255,255,255,0.15)" }} />
+                          <span style={{ fontWeight:600, color:"#E2E8F0" }}>{data.person}</span>
+                          <span style={{ color:"rgba(255,255,255,0.55)" }}>· {prefix}{data.hora}</span>
+                        </>
+                      ) : (
+                        <span style={{ color:"rgba(255,255,255,0.4)" }}>—</span>
+                      )}
+                    </div>
+                  ))}
                 </>
               )}
             </div>
