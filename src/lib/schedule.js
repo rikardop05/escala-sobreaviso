@@ -80,6 +80,41 @@ export function durationHours(inicio, fim) {
   return (end - start) / 60;
 }
 
+// Soma as horas de uma lista de lançamentos MESCLANDO intervalos que se sobrepõem
+// (união), em vez de somar cada um isolado — evita contar tempo em dobro quando o
+// usuário registra duas atividades no mesmo período. Trata turnos que cruzam a
+// meia-noite (fim <= início) e não funde lançamentos de dias diferentes.
+// Só deve ser usado por tipo (HE com HE, Comp com Comp): tipos diferentes têm
+// remuneração distinta e não devem se cancelar.
+export function mergedHours(entries) {
+  const dayIdx = (d) => {
+    const [y, m, dd] = String(d).split("-").map(Number);
+    return Date.UTC(y, m - 1, dd) / MS_DAY;
+  };
+  const intervals = entries
+    .map(e => {
+      const [hi, mi] = String(e.inicio || "").split(":").map(Number);
+      const [hf, mf] = String(e.fim    || "").split(":").map(Number);
+      if ([hi, mi, hf, mf].some(Number.isNaN)) return null;
+      const base = dayIdx(e.data) * 1440;
+      const s = base + hi * 60 + mi;
+      let en  = base + hf * 60 + mf;
+      if (en <= s) en += 1440; // cruza meia-noite
+      return [s, en];
+    })
+    .filter(Boolean)
+    .sort((a, b) => a[0] - b[0]);
+
+  let total = 0, curS = null, curE = null;
+  for (const [s, e] of intervals) {
+    if (curS === null)      { curS = s; curE = e; }
+    else if (s < curE)      { if (e > curE) curE = e; } // colide → estende a união
+    else                    { total += curE - curS; curS = s; curE = e; } // gap → fecha bloco
+  }
+  if (curS !== null) total += curE - curS;
+  return total / 60;
+}
+
 export function fmtHM(hoursDecimal) {
   const totalMin = Math.round(hoursDecimal * 60);
   const h = Math.floor(totalMin / 60);

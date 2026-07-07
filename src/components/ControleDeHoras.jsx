@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useApi } from '../lib/api';
 import {
-  PEOPLE, CH_NAMES, MONTHS, durationHours, fmtHM, brl,
+  PEOPLE, CH_NAMES, MONTHS, durationHours, mergedHours, fmtHM, brl,
   buildSchedule, dayKey, getActiveSub,
 } from '../lib/schedule';
 import { getTheme, DANGER, WARN } from '../lib/theme';
@@ -221,16 +221,21 @@ export default function ControleDeHoras({ dark, profile }) {
 
   // ─── TOTAIS (SA da escala + manuais) ───────────────────────────────────────
   const totals = useMemo(() => {
-    let sobreaviso = 0, extra = 0, comp = 0;
-    allMonthEntries.forEach(e => {
-      const h = durationHours(e.inicio, e.fim);
-      if (e.tipo === "Sobreaviso")       sobreaviso += h;
-      else if (e.tipo === "Hora Extra")  extra += h;
-      else if (e.tipo === "Compensação") comp += h;
-    });
+    const byType = { Sobreaviso: [], 'Hora Extra': [], 'Compensação': [] };
+    allMonthEntries.forEach(e => { if (byType[e.tipo]) byType[e.tipo].push(e); });
+    const sumRaw = (list) => list.reduce((a, e) => a + durationHours(e.inicio, e.fim), 0);
+
+    // SA vem da escala (turnos sequenciais, não se sobrepõem) → soma direta.
+    // HE e Comp são manuais e podem colidir → mescla a união pra não contar em dobro.
+    const sobreaviso = sumRaw(byType['Sobreaviso']);
+    const extra = mergedHours(byType['Hora Extra']);
+    const comp  = mergedHours(byType['Compensação']);
+    // Tempo "economizado" pela mescla — só para avisar o usuário (total ≠ soma das linhas).
+    const overlapMin = Math.round(((sumRaw(byType['Hora Extra']) - extra) + (sumRaw(byType['Compensação']) - comp)) * 60);
+
     const valorSobreaviso = (valorHora / 3) * sobreaviso;
     const valorExtra = valorHora * 1.5 * extra;
-    return { sobreaviso, extra, comp, totalHoras: sobreaviso + extra + comp, valorSobreaviso, valorExtra, valorTotal: valorSobreaviso + valorExtra };
+    return { sobreaviso, extra, comp, totalHoras: sobreaviso + extra + comp, valorSobreaviso, valorExtra, valorTotal: valorSobreaviso + valorExtra, overlapMin };
   }, [allMonthEntries, valorHora]);
 
   // ─── FECHAMENTO MENSAL ─────────────────────────────────────────────────────
@@ -374,6 +379,7 @@ export default function ControleDeHoras({ dark, profile }) {
       ["Horas sobreaviso (escala)", fmtHM(displayTotals.sobreaviso)],
       ["Horas extra", fmtHM(displayTotals.extra)],
       ["Horas compensação", fmtHM(displayTotals.comp)],
+      ...(displayTotals.overlapMin > 0 ? [["Sobreposição descontada", `${fmtHM(displayTotals.overlapMin / 60)} (períodos em comum contados uma vez)`]] : []),
       ["Valor sobreaviso (÷3)", brl(displayTotals.valorSobreaviso)],
       ["Valor hora extra (×1,5)", brl(displayTotals.valorExtra)],
       ["VALOR TOTAL", brl(displayTotals.valorTotal)],
@@ -601,6 +607,12 @@ export default function ControleDeHoras({ dark, profile }) {
               );
             })}
           </div>
+          {!isClosed && totals.overlapMin > 0 && (
+            <p className="flex items-start gap-1.5 text-xs mt-3" style={{ color:WARN }}>
+              <Icon name="alert" size={13} style={{ flexShrink:0, marginTop:'0.1rem' }} />
+              <span>Há lançamentos com horários sobrepostos — <b>{fmtHM(totals.overlapMin / 60)}</b> em comum foi contado uma vez só. O total usa a união dos períodos, não a soma das linhas.</span>
+            </p>
+          )}
           <div className="mt-3 pt-3 flex items-center justify-between" style={{ borderTop:`1px solid ${T.cardBorder}` }}>
             <span className="text-sm" style={{ color:T.labelColor }}>Total de horas: <b style={{ color:T.textPrimary }}>{fmtHM(displayTotals.totalHoras)}</b></span>
             <div className="text-right">
