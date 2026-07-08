@@ -153,7 +153,9 @@ Overrides são persistidos em Redis na chave global `schedule_overrides`.
 O admin edita via UI (modo edição no calendário) → POST `/api/schedule`.
 Todos os componentes que usam `buildSchedule()` recebem os overrides para consistência financeira.
 
-O widget "Agora" (`currentOnCall(now, schedule)`) recebe o array já construído por `buildSchedule(overrides)`, portanto reflete overrides do admin.
+**Carimbo de edição**: ao aplicar o patch, `api/schedule.js` adiciona `editedAt` (ISO) a cada override não-nulo (só data, sem autor por escolha). O cliente usa isso para um marcador **"alterado dd/mm" que expira após 14 dias** (`EDIT_RECENT_MS` em `EscalaSobreaviso.jsx`) — em vez de um selo "editado" permanente que, com o acúmulo de overrides, marcaria a grade inteira. No modo de edição do admin, todos os overrides continuam destacados (gerenciamento), independente da recência.
+
+O widget "Agora" (`currentOnCall(now, schedule)`) recebe o array já construído por `buildSchedule(overrides)`, portanto reflete overrides do admin. `adjacentOnCall(now, schedule, subs)` fornece o plantonista anterior/próximo (handoff) exibido no mesmo widget.
 
 ### Substituições
 
@@ -252,7 +254,7 @@ Handler usa role para controle de acesso, memberId para isolar dados
 | `member:{memberId}:ch_params` | `{ [memberId]: { remuneracao, jornada } }` | Por membro |
 | `member:{memberId}:ch_closed` | `{ 'YYYY-MM': { closedAt, closedBy, params, totals, entries[] } }` | Por membro |
 | `substitutions` | `[{ id, titular, substituto, from, until }]` | Compartilhado |
-| `schedule_overrides` | `{ [dayKey]: { [shiftIdx]: { person, period, time, dur } } }` | Compartilhado |
+| `schedule_overrides` | `{ [dayKey]: { [shiftIdx]: { person, period, time, dur, editedAt } } }` | Compartilhado |
 
 O backup faz `SCAN` de **todas** as chaves (não depende desta lista) — chaves novas entram no dump automaticamente.
 

@@ -37,6 +37,15 @@ function freshMonthKey(saved) {
   return saved;
 }
 
+// O marcador "alterado" expira após ~14 dias — evita que a grade fique
+// permanentemente marcada conforme os overrides se acumulam. Guardamos só a
+// data (editedAt) que o servidor carimba em cada override.
+const EDIT_RECENT_MS = 14 * 86400000;
+const fmtEdited = (iso) => {
+  const d = new Date(iso);
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+};
+
 export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProfile }) {
   const api = useApi();
   const isAdmin = profile?.role === 'admin';
@@ -614,7 +623,12 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                         const dim = !!(filter && effectivePerson !== filter && s.person !== filter);
                         const shiftKey = `${dk}-${i}`;
                         const isSelected = selectedShifts.has(shiftKey);
-                        const hasOverride = !!(overrides[dk]?.[String(i)]);
+                        const ov = overrides[dk]?.[String(i)];
+                        const hasOverride = !!ov;
+                        const recent = ov?.editedAt ? (now.getTime() - Date.parse(ov.editedAt)) < EDIT_RECENT_MS : false;
+                        // Fora do modo edição: só destaca o que mudou recentemente.
+                        // No modo edição: destaca todos os overrides (o admin gerencia customizações).
+                        const highlight = editMode ? hasOverride : recent;
                         const shiftProps = editMode ? {
                           role: 'checkbox',
                           'aria-checked': isSelected,
@@ -643,13 +657,17 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                                 {isSelected && <Icon name="check" size={11} style={{ color:'#fff' }} />}
                               </span>
                             )}
-                            <span className="w-24 font-semibold" style={{ color: hasOverride ? '#818CF8' : T.textSecondary }}>{s.period}</span>
-                            <span className="font-mono text-xs w-28" style={{ color: hasOverride ? '#818CF8' : T.textMuted }}>{s.time}</span>
+                            <span className="w-24 font-semibold" style={{ color: highlight ? '#818CF8' : T.textSecondary }}>{s.period}</span>
+                            <span className="font-mono text-xs w-28" style={{ color: highlight ? '#818CF8' : T.textMuted }}>{s.time}</span>
                             <span className="font-mono text-xs w-7" style={{ color:T.textMuted }}>{s.dur}</span>
                             <PersonTag name={effectivePerson} subOf={sub ? s.person : null} />
-                            {hasOverride && (
-                              <span style={{ fontSize:'0.6rem', color:'#818CF8', fontWeight:'700', background:'rgba(99,102,241,0.1)', borderRadius:'3px', padding:'0 3px' }}>editado</span>
-                            )}
+                            {recent ? (
+                              <span title={`Alterado em ${fmtEdited(ov.editedAt)}`} style={{ fontSize:'0.6rem', color:'#818CF8', fontWeight:'700', background:'rgba(99,102,241,0.1)', borderRadius:'3px', padding:'0 4px' }}>
+                                alterado {fmtEdited(ov.editedAt)}
+                              </span>
+                            ) : (editMode && hasOverride) ? (
+                              <span style={{ fontSize:'0.6rem', color:T.textMuted, fontWeight:'700', background:'rgba(148,163,184,0.12)', borderRadius:'3px', padding:'0 4px' }}>editado</span>
+                            ) : null}
                           </div>
                         );
                       })}

@@ -35,13 +35,16 @@ export default async function handler(req, res) {
 
       const current = await kvGet('schedule_overrides') ?? {};
 
+      const editedAt = new Date().toISOString();
       for (const [day, shifts] of Object.entries(patch)) {
         if (!current[day]) current[day] = {};
         for (const [idx, override] of Object.entries(shifts)) {
           if (override === null) {
             delete current[day][idx];
           } else {
-            current[day][idx] = override;
+            // Carimba a data da edição (só a data importa — usada para o marcador
+            // "alterado" que expira após ~14 dias no cliente). Sem autor por escolha.
+            current[day][idx] = { ...override, editedAt };
           }
         }
         if (Object.keys(current[day]).length === 0) delete current[day];
