@@ -3,7 +3,7 @@ import { useApi } from '../lib/api';
 import {
   PEOPLE, DOW, DOW_SHORT, MONTHS, MONTHS_SHORT,
   MS_DAY, dayKey, sameDay, fmtDS,
-  buildSchedule, currentOnCall, adjacentOnCall, getActiveSub, getCoverSuggestions,
+  buildSchedule, currentOnCall, adjacentOnCall, getActiveSub, getCoverSuggestions, shiftPeople,
 } from '../lib/schedule';
 import { getTheme, ACCENT, DANGER, WARN } from '../lib/theme';
 import { Icon, Snackbar, ConfirmDialog, Skeleton, friendlyError } from './ui';
@@ -23,6 +23,24 @@ function PersonTag({ name, dim, subOf }) {
         </span>
       )}
     </span>
+  );
+}
+
+// Multi-seleção de pessoas (chips) — usado ao editar e ao adicionar turnos.
+function PersonPicker({ selected, onToggle }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {Object.entries(PEOPLE).map(([name, p]) => {
+        const on = selected.includes(name);
+        return (
+          <button key={name} type="button" onClick={() => onToggle(name)} aria-pressed={on}
+            style={{ display:'inline-flex', alignItems:'center', gap:'0.3rem', fontSize:'0.72rem', fontWeight:700, padding:'0.35rem 0.6rem', minHeight:'2.25rem', borderRadius:'9999px', cursor:'pointer', background: on ? p.color : 'transparent', color: on ? '#fff' : p.color, border:`1.5px solid ${on ? p.color : 'rgba(148,163,184,0.45)'}` }}>
+            <span style={{ width:7, height:7, borderRadius:'50%', flexShrink:0, background: on ? '#fff' : p.color }} />
+            {name}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -64,22 +82,25 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
 
   // ─── OVERRIDES DE ESCALA ─────────────────────────────────────────────────────
   const [overrides,         setOverrides]         = useState({});
+  const [labels,            setLabels]            = useState({}); // { dayKey: "Feriado" }
   const [overridesLoading,  setOverridesLoading]  = useState(true);
   const [overridesError,    setOverridesError]    = useState(false);
   const [editMode,       setEditMode]       = useState(false);
   const [selectedShifts, setSelectedShifts] = useState(new Set());
-  const [editForm,       setEditForm]       = useState({ person: '', period: '', time: '', dur: '' });
+  const [editForm,       setEditForm]       = useState({ persons: [], period: '', time: '', dur: '' });
   const [editSaving,     setEditSaving]     = useState(false);
   const [editError,      setEditError]      = useState(null);
   const [applyToFuture,  setApplyToFuture]  = useState(false);
   const [confirmAction,  setConfirmAction]  = useState(null); // 'apply' | 'reset' | null
+  const [addDay,   setAddDay]   = useState(null); // dayKey ao qual estamos adicionando um turno
+  const [addForm,  setAddForm]  = useState({ persons: [], period: '', time: '', dur: '' });
 
   // Carrega substituições e overrides do servidor
   const loadOverrides = useCallback(() => {
     setOverridesLoading(true);
     setOverridesError(false);
     api('/api/schedule')
-      .then(data => setOverrides(data || {}))
+      .then(data => { setOverrides(data?.overrides || {}); setLabels(data?.labels || {}); })
       .catch(err => { console.error(err); setOverridesError(true); })
       .finally(() => setOverridesLoading(false));
   }, [api]);
@@ -109,8 +130,8 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     saveProfile({ monthKey: key });
   };
 
-  // Schedule recomputes when overrides change (admin edits reflect immediately)
-  const schedule = useMemo(() => buildSchedule(overrides), [overrides]);
+  // Schedule recomputes when overrides/labels change (admin edits reflect immediately)
+  const schedule = useMemo(() => buildSchedule(overrides, labels), [overrides, labels]);
   const todayStr = dayKey(now);
 
   const months = useMemo(() => {
@@ -143,12 +164,11 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     [schedule, activeMonth]
   );
 
-  const onCallBase = currentOnCall(now, schedule);
-  const onCall = onCallBase ? (() => {
-    const sub = getActiveSub(onCallBase.person, todayStr, subs);
-    return sub ? { ...onCallBase, person: sub.substituto, coveringFor: onCallBase.person } : onCallBase;
-  })() : null;
-  const onCallColor = onCall ? (PEOPLE[onCall.person] || {}).color || "#94A3B8" : "#94A3B8";
+  // { people: [{ person, coveringFor }], label, time } | null — pode ter +1 pessoa (feriado)
+  const onCall = currentOnCall(now, schedule, subs);
+  const onCallColor = onCall && onCall.people.length === 1
+    ? (PEOPLE[onCall.people[0].person] || {}).color || "#94A3B8"
+    : "#94A3B8";
 
   // Handoff: plantonista anterior e próximo (com substituições) para o widget "Agora"
   const handoff = useMemo(() => adjacentOnCall(now, schedule, subs), [now, schedule, subs]);
@@ -166,12 +186,14 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
       if (d.date < today) continue;
       const dk = dayKey(d.date);
       d.shifts.forEach(s => {
-        const sub = getActiveSub(s.person, dk, subs);
-        const effective = sub ? sub.substituto : s.person;
-        if (s.person === filter) {
+        const people = shiftPeople(s);
+        if (people.includes(filter)) {
+          const sub = getActiveSub(filter, dk, subs);
           rows.push({ date:d.date, dow:d.dow, ...s, kind:"turno", coveredBy: sub ? sub.substituto : null });
-        } else if (effective === filter) {
-          rows.push({ date:d.date, dow:d.dow, ...s, person:filter, kind:"turno", coveringFor: s.person });
+        } else {
+          // filter pode estar cobrindo alguém deste turno (substituto)
+          const titular = people.find(p => { const sub = getActiveSub(p, dk, subs); return sub && sub.substituto === filter; });
+          if (titular) rows.push({ date:d.date, dow:d.dow, ...s, kind:"turno", coveringFor: titular });
         }
       });
       if (d.folga === filter && d.dow === 6) {
@@ -253,9 +275,13 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     setEditMode(e => !e);
     setSelectedShifts(new Set());
     setEditError(null);
-    setEditForm({ person: '', period: '', time: '', dur: '' });
+    setEditForm({ persons: [], period: '', time: '', dur: '' });
     setApplyToFuture(false);
+    setAddDay(null);
   }
+
+  const togglePerson = (list, name) =>
+    list.includes(name) ? list.filter(p => p !== name) : [...list, name];
 
   // Expands a base patch (selected shifts only) to all future occurrences of the
   // same shift pattern: same weekday for weekday shifts, same cycle-week + dow for weekend shifts.
@@ -303,10 +329,10 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
       if (!basePatch[dk]) basePatch[dk] = {};
       if (useForm) {
         const override = {};
-        if (editForm.person)  override.person  = editForm.person;
-        if (editForm.period)  override.period  = editForm.period;
-        if (editForm.time)    override.time    = editForm.time;
-        if (editForm.dur)     override.dur     = editForm.dur;
+        if (editForm.persons.length) override.persons = editForm.persons;
+        if (editForm.period)         override.period  = editForm.period;
+        if (editForm.time)           override.time    = editForm.time;
+        if (editForm.dur)            override.dur     = editForm.dur;
         basePatch[dk][idx] = Object.keys(override).length ? override : null;
       } else {
         basePatch[dk][idx] = null;
@@ -319,15 +345,57 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     setEditSaving(true);
     setEditError(null);
     try {
-      const updated = await api('/api/schedule', { method: 'POST', body: patch });
-      setOverrides(updated);
+      const updated = await api('/api/schedule', { method: 'POST', body: { overrides: patch } });
+      setOverrides(updated.overrides || {});
+      setLabels(updated.labels || {});
       setSelectedShifts(new Set());
-      if (clearForm) setEditForm({ person: '', period: '', time: '', dur: '' });
+      if (clearForm) setEditForm({ persons: [], period: '', time: '', dur: '' });
       setApplyToFuture(false);
     } catch (e) {
       setEditError(friendlyError(e));
     } finally {
       setEditSaving(false);
+    }
+  }
+
+  // Adiciona um turno NOVO ao dia (índice = próximo livre). Requer pessoas + horário.
+  async function addShift() {
+    if (!addDay || editSaving) return;
+    if (!addForm.persons.length || !addForm.time || !addForm.period) {
+      setEditError('Preencha período, horário e ao menos uma pessoa.');
+      return;
+    }
+    const day = schedule.find(d => dayKey(d.date) === addDay);
+    const nextIdx = day ? day.shifts.reduce((mx, s) => Math.max(mx, s.idx), -1) + 1 : 0;
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      const body = { overrides: { [addDay]: { [nextIdx]: {
+        persons: addForm.persons, period: addForm.period, time: addForm.time, dur: addForm.dur || '',
+      } } } };
+      const updated = await api('/api/schedule', { method: 'POST', body });
+      setOverrides(updated.overrides || {});
+      setLabels(updated.labels || {});
+      setAddDay(null);
+      setAddForm({ persons: [], period: '', time: '', dur: '' });
+    } catch (e) {
+      setEditError(friendlyError(e));
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  // Salva/remove o rótulo do dia (ex.: "Feriado"). value vazio remove.
+  async function saveDayLabel(dk, value) {
+    const v = value.trim();
+    if ((labels[dk] || '') === v) return; // sem mudança
+    setLabels(prev => { const n = { ...prev }; if (v) n[dk] = v; else delete n[dk]; return n; });
+    try {
+      const updated = await api('/api/schedule', { method: 'POST', body: { labels: { [dk]: v || null } } });
+      setOverrides(updated.overrides || {});
+      setLabels(updated.labels || {});
+    } catch (e) {
+      setEditError(friendlyError(e));
     }
   }
 
@@ -433,10 +501,14 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                 </div>
               ) : onCall ? (
                 <>
-                  <div className="text-lg font-bold" style={{ color: onCallColor === "#37474F" ? "#CBD5E1" : onCallColor }}>{onCall.person}</div>
+                  <div className="text-lg font-bold leading-tight" style={{ color: onCallColor === "#37474F" ? "#CBD5E1" : onCallColor }}>
+                    {onCall.people.map(p => p.person).join(" · ")}
+                  </div>
                   <div className="text-xs opacity-80">
                     {onCall.label} · {onCall.time}
-                    {onCall.coveringFor && <span className="ml-1">· cobre {onCall.coveringFor}</span>}
+                    {onCall.people.some(p => p.coveringFor) && (
+                      <span className="ml-1">· cobre {onCall.people.filter(p => p.coveringFor).map(p => p.coveringFor).join(", ")}</span>
+                    )}
                   </div>
                 </>
               ) : (
@@ -458,8 +530,8 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                       <span style={{ width:"3rem", flex:"none", fontSize:"0.7rem", color:"rgba(255,255,255,0.5)" }}>{label}</span>
                       {data ? (
                         <>
-                          <span style={{ width:8, height:8, borderRadius:"50%", flex:"none", background:(PEOPLE[data.person]||{}).color||"#94A3B8", boxShadow:"0 0 0 1px rgba(255,255,255,0.15)" }} />
-                          <span style={{ fontWeight:600, color:"#E2E8F0" }}>{data.person}</span>
+                          <span style={{ width:8, height:8, borderRadius:"50%", flex:"none", background: data.people.length === 1 ? ((PEOPLE[data.people[0]]||{}).color||"#94A3B8") : "#94A3B8", boxShadow:"0 0 0 1px rgba(255,255,255,0.15)" }} />
+                          <span style={{ fontWeight:600, color:"#E2E8F0" }}>{data.people.join(" / ")}</span>
                           <span style={{ color:"rgba(255,255,255,0.55)" }}>· {prefix}{data.hora}</span>
                         </>
                       ) : (
@@ -590,10 +662,10 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
             const isWeekend = d.dow === 0 || d.dow === 6;
             const isPast    = !isToday && d.date < now;
             const dk        = dayKey(d.date);
-            const hasFiltered = !filter || d.shifts.some(s => {
-              const sub = getActiveSub(s.person, dk, subs);
-              return (sub ? sub.substituto : s.person) === filter || s.person === filter;
-            }) || d.folga === filter;
+            const hasFiltered = !filter || d.shifts.some(s => shiftPeople(s).some(p => {
+              const sub = getActiveSub(p, dk, subs);
+              return (sub ? sub.substituto : p) === filter || p === filter;
+            })) || d.folga === filter;
             return (
               <div key={dayKey(d.date)} ref={isToday ? todayRef : null} className="rounded-xl overflow-hidden"
                 style={{ scrollMarginTop:'64px', border:`${isToday?2:1}px solid ${isToday?T.cardBorderToday:T.cardBorder}`, opacity: isPast?0.45:filter&&!hasFiltered?0.35:1, background:isWeekend?T.cardBgWeekend:T.cardBg }}>
@@ -606,6 +678,25 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                     {isToday && <div className="mt-1 text-[9px] font-bold text-white bg-slate-800 rounded px-1.5 py-0.5">HOJE</div>}
                   </div>
                   <div className="flex-1 px-3 py-2">
+                    {(d.label || (editMode && isAdmin)) && (
+                      <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                        {d.label && !editMode && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:"rgba(99,102,241,0.15)", color:"#A5B4FC" }}>
+                            <Icon name="umbrella" size={10} /> {d.label}
+                          </span>
+                        )}
+                        {editMode && isAdmin && (
+                          <input
+                            key={`${dk}-${d.label || ''}`}
+                            defaultValue={d.label || ''}
+                            placeholder="rótulo do dia (ex.: Feriado)"
+                            onBlur={e => saveDayLabel(dk, e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                            style={{ fontSize:'0.72rem', background:T.inputBg, color:T.textPrimary, border:`1px solid ${T.inputBorder}`, borderRadius:'0.4rem', padding:'0.3rem 0.5rem', minHeight:'2.25rem', maxWidth:'13rem' }}
+                          />
+                        )}
+                      </div>
+                    )}
                     {isWeekend && d.dow === 6 && (
                       <div className="flex flex-wrap items-center gap-2 mb-1.5">
                         <span className="text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:T.cycleBg, color:T.cycleColor }}>
@@ -617,10 +708,13 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                       </div>
                     )}
                     <div className="space-y-0.5">
-                      {d.shifts.map((s, i) => {
-                        const sub = getActiveSub(s.person, dk, subs);
-                        const effectivePerson = sub ? sub.substituto : s.person;
-                        const dim = !!(filter && effectivePerson !== filter && s.person !== filter);
+                      {d.shifts.map((s) => {
+                        const i = s.idx; // índice estável do override (não a posição no array)
+                        const people = shiftPeople(s).map(titular => {
+                          const sub = getActiveSub(titular, dk, subs);
+                          return { person: sub ? sub.substituto : titular, subOf: sub ? titular : null, titular };
+                        });
+                        const dim = !!(filter && !people.some(p => p.person === filter || p.titular === filter));
                         const shiftKey = `${dk}-${i}`;
                         const isSelected = selectedShifts.has(shiftKey);
                         const ov = overrides[dk]?.[String(i)];
@@ -632,7 +726,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                         const shiftProps = editMode ? {
                           role: 'checkbox',
                           'aria-checked': isSelected,
-                          'aria-label': `${DOW_SHORT[d.dow]} ${fmtDate(d.date)} · ${s.period} ${s.time} · ${effectivePerson}`,
+                          'aria-label': `${DOW_SHORT[d.dow]} ${fmtDate(d.date)} · ${s.period} ${s.time} · ${people.map(p => p.person).join(', ')}`,
                           tabIndex: 0,
                           onClick: () => toggleShift(dk, i),
                           onKeyDown: (e) => {
@@ -660,7 +754,9 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                             <span className="w-24 font-semibold" style={{ color: highlight ? '#818CF8' : T.textSecondary }}>{s.period}</span>
                             <span className="font-mono text-xs w-28" style={{ color: highlight ? '#818CF8' : T.textMuted }}>{s.time}</span>
                             <span className="font-mono text-xs w-7" style={{ color:T.textMuted }}>{s.dur}</span>
-                            <PersonTag name={effectivePerson} subOf={sub ? s.person : null} />
+                            <span className="inline-flex flex-wrap items-center gap-1">
+                              {people.map((p, pi) => <PersonTag key={pi} name={p.person} subOf={p.subOf} />)}
+                            </span>
                             {recent ? (
                               <span title={`Alterado em ${fmtEdited(ov.editedAt)}`} style={{ fontSize:'0.6rem', color:'#818CF8', fontWeight:'700', background:'rgba(99,102,241,0.1)', borderRadius:'3px', padding:'0 4px' }}>
                                 alterado {fmtEdited(ov.editedAt)}
@@ -672,6 +768,34 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                         );
                       })}
                     </div>
+
+                    {/* Adicionar turno ao dia (admin, modo edição) */}
+                    {editMode && isAdmin && (addDay === dk ? (
+                      <div className="mt-2 pt-2" style={{ borderTop:`1px dashed ${T.cardBorder}` }}>
+                        <div className="grid gap-2 mb-2" style={{ gridTemplateColumns:'repeat(auto-fit, minmax(120px, 1fr))' }}>
+                          <input value={addForm.period} onChange={e => setAddForm(f => ({ ...f, period:e.target.value }))} placeholder="Período (ex: Tarde)" style={{ ...selStyle, marginTop:0 }} />
+                          <input value={addForm.time} onChange={e => setAddForm(f => ({ ...f, time:e.target.value }))} placeholder="Horário (ex: 17:00 – 23:00)" style={{ ...selStyle, marginTop:0 }} />
+                          <input value={addForm.dur} onChange={e => setAddForm(f => ({ ...f, dur:e.target.value }))} placeholder="Duração (ex: 6h)" style={{ ...selStyle, marginTop:0 }} />
+                        </div>
+                        <div className="mb-2"><PersonPicker selected={addForm.persons} onToggle={n => setAddForm(f => ({ ...f, persons: togglePerson(f.persons, n) }))} /></div>
+                        <div className="flex gap-2">
+                          <button onClick={addShift} disabled={editSaving}
+                            style={{ background:ACCENT, color:'#fff', border:'none', borderRadius:'0.5rem', padding:'0.4rem 0.9rem', minHeight:'2.5rem', fontWeight:700, fontSize:'0.78rem', cursor:editSaving?'not-allowed':'pointer' }}>
+                            {editSaving ? 'Salvando…' : 'Adicionar turno'}
+                          </button>
+                          <button onClick={() => { setAddDay(null); setEditError(null); }}
+                            style={{ background:'transparent', color:T.textMuted, border:`1px solid ${T.cardBorder}`, borderRadius:'0.5rem', padding:'0.4rem 0.9rem', minHeight:'2.5rem', fontWeight:700, fontSize:'0.78rem', cursor:'pointer' }}>
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button onClick={() => { setAddDay(dk); setAddForm({ persons: [], period: '', time: '', dur: '' }); setEditError(null); }}
+                        className="mt-1.5 inline-flex items-center gap-1"
+                        style={{ background:'transparent', color:T.textMuted, border:`1px dashed ${T.cardBorder}`, borderRadius:'0.5rem', padding:'0.35rem 0.7rem', minHeight:'2.25rem', fontSize:'0.72rem', fontWeight:700, cursor:'pointer' }}>
+                        <Icon name="plus" size={12} /> Adicionar turno
+                      </button>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -824,15 +948,13 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
 
             {selectedShifts.size > 0 && (
               <>
-                <div className="grid gap-3 mb-3" style={{ gridTemplateColumns:'repeat(auto-fit, minmax(130px, 1fr))' }}>
-                  <div>
-                    <label style={labelStyle}>Pessoa
-                    <select value={editForm.person} onChange={e => setEditForm(f => ({ ...f, person:e.target.value }))} style={selStyle}>
-                      <option value="">Manter original</option>
-                      {Object.keys(PEOPLE).map(p => <option key={p} value={p}>{p}</option>)}
-                    </select>
-                    </label>
+                <div className="mb-3">
+                  <div style={labelStyle}>Pessoas <span style={{ fontWeight:400, color:T.textMuted }}>(vazio = manter as atuais)</span></div>
+                  <div className="mt-1">
+                    <PersonPicker selected={editForm.persons} onToggle={n => setEditForm(f => ({ ...f, persons: togglePerson(f.persons, n) }))} />
                   </div>
+                </div>
+                <div className="grid gap-3 mb-3" style={{ gridTemplateColumns:'repeat(auto-fit, minmax(130px, 1fr))' }}>
                   <div>
                     <label style={labelStyle}>Período
                     <input value={editForm.period} onChange={e => setEditForm(f => ({ ...f, period:e.target.value }))}

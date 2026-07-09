@@ -16,19 +16,31 @@ const TeamMember = z.enum(TEAM_MEMBERS);
 // então todos os campos são opcionais — exige-se apenas ≥1 campo (override vazio
 // deve ser enviado como null = reverter para o padrão).
 const OverrideObj = z.object({
-  person: TeamMember.optional(),
-  period: z.string().min(1).max(30).optional(),
-  time:   z.string().min(1).max(25).optional(),
-  dur:    z.string().min(1).max(10).optional(),
+  person:  TeamMember.optional(),               // legado (1 pessoa)
+  persons: z.array(TeamMember).min(1).max(6).optional(), // multi-pessoa (feriados)
+  period:  z.string().min(1).max(30).optional(),
+  time:    z.string().min(1).max(25).optional(),
+  dur:     z.string().min(1).max(10).optional(),
 }).refine(o => Object.keys(o).length > 0, 'override não pode ser vazio (use null para reverter)');
 
-// { 'YYYY-MM-DD': { '0'|'1'|'2': OverrideObj | null } }
-// Note: inner key uses z.string() — z.enum() as record key in Zod v4 requires ALL
-// enum values to be present, which would reject partial patches.
+// { 'YYYY-MM-DD': { idx: OverrideObj | null } } — idx é '0','1','2',... (string).
+// Índices além dos turnos base viram turnos NOVOS (dias custom/feriado). null reverte.
 export const SchedulePatchSchema = z.record(
   z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   z.record(z.string(), z.union([OverrideObj, z.null()]))
 ).refine(obj => Object.keys(obj).length <= 366, 'Patch exceeds maximum day count');
+
+// { 'YYYY-MM-DD': string | null } — rótulo do dia (ex.: "Feriado"); null/'' remove.
+export const LabelPatchSchema = z.record(
+  z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  z.union([z.string().max(60), z.null()])
+).refine(obj => Object.keys(obj).length <= 366, 'Label patch exceeds maximum day count');
+
+// Corpo do POST /api/schedule: overrides e/ou labels (ambos opcionais).
+export const SchedulePostSchema = z.object({
+  overrides: SchedulePatchSchema.optional(),
+  labels:    LabelPatchSchema.optional(),
+}).refine(o => o.overrides || o.labels, 'nada para atualizar');
 
 // ─── SUBSTITUTIONS ───────────────────────────────────────────────────────────
 

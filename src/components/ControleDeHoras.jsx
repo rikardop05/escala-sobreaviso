@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useApi } from '../lib/api';
 import {
   PEOPLE, CH_NAMES, MONTHS, durationHours, mergedHours, fmtHM, brl,
-  buildSchedule, dayKey, getActiveSub,
+  buildSchedule, dayKey, getActiveSub, shiftPeople,
 } from '../lib/schedule';
 import { getTheme, DANGER, WARN } from '../lib/theme';
 import { Icon, SaveStatus, Snackbar, ConfirmDialog, friendlyError } from './ui';
@@ -76,7 +76,7 @@ export default function ControleDeHoras({ dark, profile }) {
       setEntries(chData.entries || []);
       setParamsByPerson(chData.params || {});
       setSubs(subData || []);
-      setOverrides(overridesData || {});
+      setOverrides(overridesData?.overrides || {});
       setClosedMonths(closedData || {});
     }).catch(console.error)
       .finally(() => setDataLoading(false));
@@ -174,17 +174,16 @@ export default function ControleDeHoras({ dark, profile }) {
       .filter(day => day.date.getMonth() === monthIdx && day.date.getFullYear() === year)
       .flatMap(day => {
         const dk = dayKey(day.date);
-        return day.shifts
-          .filter(shift => {
-            const sub = getActiveSub(shift.person, dk, subs);
-            const effective = sub ? sub.substituto : shift.person;
-            return effective === person;
-          })
-          .map(shift => {
-            const { inicio, fim } = parseShiftTime(shift.time);
-            const coveringFor = shift.person !== person ? shift.person : null;
-            return {
-              id: `sched-${dk}-${shift.period}`,
+        return day.shifts.flatMap(shift => {
+          const { inicio, fim } = parseShiftTime(shift.time);
+          // Cada pessoa do turno (multi-pessoa em feriados) gera seu próprio SA.
+          return shiftPeople(shift).flatMap(titular => {
+            const sub = getActiveSub(titular, dk, subs);
+            const effective = sub ? sub.substituto : titular;
+            if (effective !== person) return [];
+            const coveringFor = titular !== person ? titular : null;
+            return [{
+              id: `sched-${dk}-${shift.period}-${titular}`,
               person,
               tipo: 'Sobreaviso',
               data: dk,
@@ -193,8 +192,9 @@ export default function ControleDeHoras({ dark, profile }) {
               projeto: '',
               atividade: coveringFor ? `${shift.period} · cobre ${coveringFor}` : shift.period,
               _fromSchedule: true,
-            };
+            }];
           });
+        });
       });
   }, [schedule, person, monthIdx, year, subs]);
 
