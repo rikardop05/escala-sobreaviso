@@ -46,7 +46,7 @@ api/
   substitutions.js          GET/POST/DELETE substituições; controle de acesso por role no backend
   ch.js                     GET/POST lançamentos e parâmetros CH; admin acessa qualquer membro
   ch-close.js               Fechamento mensal do CH: GET fechamentos; POST fecha mês (admin); DELETE reabre (admin)
-  schedule.js               GET/POST overrides de escala; POST bloqueado para não-admin
+  schedule.js               GET {overrides,labels} (público); POST overrides+labels (admin), carimba editedAt
   backup.js                 Cron diário: dump do Redis → cifra → Vercel Blob; poda >30 dias (ver Backup abaixo)
 
 scripts/
@@ -143,19 +143,22 @@ Para estender: atualizar apenas `RANGE_END`.
 
 ### Overrides de escala (admin)
 
-`buildSchedule(overrides = {})` aceita um objeto de overrides:
+`buildSchedule(overrides = {}, labels = {})` aceita overrides por dia/índice e rótulos por dia:
 ```js
-// { 'YYYY-MM-DD': { '0': { person, period, time, dur }, '1': null } }
-// null = revert para base
+// overrides: { 'YYYY-MM-DD': { '0': { persons:['Ricardo'], period, time, dur }, '1': null } }
+//   null = revert para base (num índice extra, remove o turno)
+//   índice além dos turnos base (ex.: '3') vira um turno NOVO — dias custom/feriado
+//   persons: string[] (multi-pessoa). person (string) ainda é aceito como legado.
+// labels: { 'YYYY-MM-DD': 'Feriado' } — rótulo opcional do dia
 ```
 
-Overrides são persistidos em Redis na chave global `schedule_overrides`.
-O admin edita via UI (modo edição no calendário) → POST `/api/schedule`.
-Todos os componentes que usam `buildSchedule()` recebem os overrides para consistência financeira.
+Cada turno retornado carrega um `idx` **estável** (a chave do override), usado pela UI para seleção/edição/remoção — não confie na posição no array. Use `shiftPeople(shift)` (não `shift.person`) para ler as pessoas de um turno em qualquer lugar.
 
-**Carimbo de edição**: ao aplicar o patch, `api/schedule.js` adiciona `editedAt` (ISO) a cada override não-nulo (só data, sem autor por escolha). O cliente usa isso para um marcador **"alterado dd/mm" que expira após 14 dias** (`EDIT_RECENT_MS` em `EscalaSobreaviso.jsx`) — em vez de um selo "editado" permanente que, com o acúmulo de overrides, marcaria a grade inteira. No modo de edição do admin, todos os overrides continuam destacados (gerenciamento), independente da recência.
+Overrides e labels ficam em chaves globais no Redis (`schedule_overrides`, `schedule_labels`). O admin edita no modo de edição do calendário: seleciona turnos + form (multi-seleção de pessoas), **"+ Adicionar turno"** por dia (feriados), reset (remove turno extra) e um input de **rótulo do dia**. POST `/api/schedule` com `{ overrides?, labels? }`.
 
-O widget "Agora" (`currentOnCall(now, schedule)`) recebe o array já construído por `buildSchedule(overrides)`, portanto reflete overrides do admin. `adjacentOnCall(now, schedule, subs)` fornece o plantonista anterior/próximo (handoff) exibido no mesmo widget.
+**Carimbo de edição**: ao aplicar o patch, `api/schedule.js` adiciona `editedAt` (ISO) a cada override não-nulo (só data, sem autor). O cliente usa isso para um marcador **"alterado dd/mm" que expira após 14 dias** (`EDIT_RECENT_MS` em `EscalaSobreaviso.jsx`). No modo de edição, todos os overrides ficam destacados (gerenciamento).
+
+O widget "Agora" usa `currentOnCall(now, schedule, subs)` e `adjacentOnCall(now, schedule, subs)` — ambos derivam de `buildOnCallSegments(schedule)`, que calcula os blocos de plantão a partir do **`shift.time` real** (não de janelas fixas), preservando a convenção de atribuição de dia (Madrugada pernoita na véspera; segunda começa 00:00; sexta até 24:00). Assim, edições de horário e turnos de feriado são refletidos, e o "Agora" mostra **todas** as pessoas quando o turno é multi-pessoa.
 
 ### Substituições
 
@@ -189,7 +192,7 @@ valorSobreaviso = (valorHora / 3)   × horasSA   ← adicional de 1/3
 valorHoraExtra  = (valorHora × 1.5) × horasHE   ← adicional de 50%
 ```
 
-SA vem de `buildSchedule(overrides)` — reflete edições do admin no cálculo e no CSV exportado.
+SA vem de `buildSchedule(overrides, labels)` — reflete edições do admin no cálculo e no CSV. O `scheduleEntries` casa a pessoa via `shiftPeople(shift)`, então em turno multi-pessoa (feriado) **cada** pessoa ganha seu próprio SA pelas horas do turno.
 
 ### Fechamento mensal (folha de pagamento)
 
@@ -254,7 +257,8 @@ Handler usa role para controle de acesso, memberId para isolar dados
 | `member:{memberId}:ch_params` | `{ [memberId]: { remuneracao, jornada } }` | Por membro |
 | `member:{memberId}:ch_closed` | `{ 'YYYY-MM': { closedAt, closedBy, params, totals, entries[] } }` | Por membro |
 | `substitutions` | `[{ id, titular, substituto, from, until }]` | Compartilhado |
-| `schedule_overrides` | `{ [dayKey]: { [shiftIdx]: { person, period, time, dur, editedAt } } }` | Compartilhado |
+| `schedule_overrides` | `{ [dayKey]: { [idx]: { persons[]?|person?, period, time, dur, editedAt } } }` (idx extra = turno novo) | Compartilhado |
+| `schedule_labels` | `{ [dayKey]: string }` — rótulo do dia (ex.: "Feriado") | Compartilhado |
 
 O backup faz `SCAN` de **todas** as chaves (não depende desta lista) — chaves novas entram no dump automaticamente.
 
@@ -266,7 +270,8 @@ O backup faz `SCAN` de **todas** as chaves (não depende desta lista) — chaves
 
 | Endpoint | Schema |
 |----------|--------|
-| `schedule` POST | `SchedulePatchSchema` — record `dayKey → shiftIdx ('0'|'1'|'2') → OverrideObj | null`. `person` validado contra nomes da equipe. |
+| `schedule` GET | Público — retorna `{ overrides, labels }`. |
+| `schedule` POST | `SchedulePostSchema` — `{ overrides?, labels? }`. `overrides` = `SchedulePatchSchema` (record `dayKey → idx → OverrideObj | null`; `OverrideObj` tem `person?`/`persons[]?` validados contra a equipe, índices extras permitidos). `labels` = `LabelPatchSchema` (`dayKey → string | null`). Aceita também um patch cru (compat.). |
 | `substitutions` POST | `SubPostSchema` — campos obrigatórios tipados; `until >= from`; `titular ≠ substituto`. |
 | `substitutions` DELETE | `id` query string não-vazia (checagem inline). |
 | `ch` POST | `ChPostSchema` — `entries[]` (com `tipo` enum), `params` record, `person` string. Todos opcionais. |

@@ -133,109 +133,123 @@ export function cycleIndex(saturday) {
   return ((diff % 5) + 5) % 5;
 }
 
-// overrides: { [dayKey]: { [shiftIndex]: { person, period, time, dur } } }
-// Admin-defined overrides are merged on top of the base schedule per shift.
-export function buildSchedule(overrides = {}) {
+// Pessoas de um turno — normaliza `person` (string legada) e `persons[]` (multi).
+// Todo leitor da escala deve usar isto em vez de acessar shift.person direto.
+export function shiftPeople(shift) {
+  if (shift?.persons?.length) return shift.persons;
+  if (shift?.person) return [shift.person];
+  return [];
+}
+
+// Parseia "HH:MM – HH:MM" (aceita –, — ou -) → { sh, sm, eh, em } ou null.
+export function parseTimeRange(timeStr) {
+  const parts = String(timeStr).split(/[–—-]/).map(s => s.trim());
+  if (parts.length < 2) return null;
+  const [sh, sm] = (parts[0] || "").split(":").map(Number);
+  const [eh, em] = (parts[1] || "").split(":").map(Number);
+  if ([sh, sm, eh, em].some(Number.isNaN)) return null;
+  return { sh, sm, eh, em };
+}
+
+// overrides: { [dayKey]: { [idx]: { person?|persons?, period, time, dur, editedAt } | null } }
+//   - idx além dos turnos base vira um turno NOVO (feriados/dias custom).
+//   - null reverte o slot base ao padrão (e remove um turno extra).
+// labels: { [dayKey]: string } — rótulo opcional do dia (ex.: "Feriado").
+// Cada turno retornado carrega um `idx` estável (a chave do override), usado pela UI
+// para seleção/edição/remoção — não confie na posição no array.
+export function buildSchedule(overrides = {}, labels = {}) {
   const days = [];
   for (let t = RANGE_START.getTime(); t <= RANGE_END.getTime(); t += MS_DAY) {
     const d = new Date(t);
     d.setHours(12, 0, 0, 0);
     const dow = d.getDay();
-    let shifts = [], folga = null, cycleWeek = null;
+    let base = [], folga = null, cycleWeek = null;
     if (dow >= 1 && dow <= 5) {
-      shifts = WEEKDAY_SHIFTS[dow].map(s => ({ ...s }));
+      base = WEEKDAY_SHIFTS[dow].map(s => ({ ...s }));
     } else {
       const sat = dow === 6 ? d : new Date(d.getTime() - MS_DAY);
       const idx = cycleIndex(sat);
       const rot = WEEKEND_CYCLE[idx];
       cycleWeek = idx + 1;
       folga = rot.folga;
-      shifts = dow === 6
+      base = dow === 6
         ? [{ period:"Dia",  time:"00:00 – 12:00", dur:"12h", person: rot.sabDia   },
            { period:"Noite",time:"12:00 – 00:00", dur:"12h", person: rot.sabNoite }]
         : [{ period:"Dia",  time:"00:00 – 12:00", dur:"12h", person: rot.domDia   },
            { period:"Noite",time:"12:00 – 00:00", dur:"12h", person: rot.domNoite }];
     }
     const dk = dayKey(d);
-    if (overrides[dk]) {
-      shifts = shifts.map((s, i) => {
-        const ov = overrides[dk][String(i)];
-        return ov ? { ...s, ...ov } : s;
-      });
+    const ovDay = overrides[dk] || {};
+    const ovIdxs = Object.keys(ovDay).map(Number).filter(Number.isInteger);
+    const maxIdx = Math.max(base.length - 1, ...ovIdxs, -1);
+    const shifts = [];
+    for (let i = 0; i <= maxIdx; i++) {
+      const b = base[i];
+      const ov = ovDay[String(i)];
+      if (ov === null) { if (b) shifts.push({ ...b, idx: i }); continue; } // reverte base; extra some
+      if (ov)          { shifts.push({ ...(b || {}), ...ov, idx: i }); continue; }
+      if (b)           { shifts.push({ ...b, idx: i }); }
     }
-    days.push({ date: new Date(d), dow, shifts, folga, cycleWeek });
+    days.push({ date: new Date(d), dow, shifts, folga, cycleWeek, label: labels[dk] || null });
   }
   return days;
 }
 
-// schedule: the array returned by buildSchedule(overrides) — shifts already have overrides merged.
-// Time-window boundaries are identical to the base implementation; only the data source changes.
-export function currentOnCall(now, schedule) {
-  const dow = now.getDay();
-  const h   = now.getHours() + now.getMinutes() / 60;
-
-  const findDay = (d) => schedule.find(e => sameDay(e.date, d));
-
-  if (dow === 6 || dow === 0) {
-    const today = findDay(now);
-    if (!today) return null;
-    const shift = today.shifts[h < 12 ? 0 : 1];
-    if (!shift) return null;
-    return { person: shift.person, label: `${DOW[dow]} · ${shift.period}`, time: shift.time };
-  }
-
-  // Weekday (Mon–Fri)
-  let targetDay, shiftIdx;
-  if (h < 4) {
-    targetDay = findDay(now);   shiftIdx = 0; // Madrugada
-  } else if (h < 9) {
-    targetDay = findDay(now);   shiftIdx = 1; // Manhã
-  } else if (h >= 18 && (dow === 5 || h < 23)) {
-    targetDay = findDay(now);   shiftIdx = 2; // Noite (Sexta runs to 24:00 — no 23:00 hand-off)
-  } else if (h >= 23) {
-    // 23:00+: next day's Madrugada has already started (Mon–Thu; Fri caught above).
-    targetDay = findDay(new Date(now.getTime() + MS_DAY)); shiftIdx = 0;
-  } else {
-    return null; // 09:00–18:00: no active shift
-  }
-
-  if (!targetDay) return null;
-  const shift = targetDay.shifts[shiftIdx];
-  if (!shift) return null;
-  return { person: shift.person, label: `${DOW[targetDay.date.getDay()]} · ${shift.period}`, time: shift.time };
-}
-
-// Sequência ordenada de blocos de plantão com início/fim absolutos (ms).
-// As fronteiras batem exatamente com o que currentOnCall considera:
-//   FDS  → Dia 00:00–12:00, Noite 12:00–24:00
-//   Úteis→ Madrugada 04:00 (começa 23:00 do dia anterior; na segunda começa 00:00,
-//          porque domingo à noite vai até 00:00), Manhã 04:00–09:00,
-//          Noite 18:00–23:00 (sexta até 24:00). O vão 09:00–18:00 não gera bloco.
-// setHours aceita -1 (23:00 do dia anterior) e 24 (00:00 do dia seguinte) — o JS normaliza.
+// Sequência ordenada de blocos de plantão com início/fim absolutos (ms), derivada
+// do shift.time REAL (não de janelas fixas) — então edições de horário e turnos
+// custom de feriado são refletidos. Convenção de atribuição de dia preservada:
+//   • Dias úteis, idx 0 ("Madrugada"): pernoite que termina em D → começa 23:00 da
+//     véspera; exceto segunda, que começa 00:00 (domingo à noite cobre até 00:00).
+//   • Demais turnos: começam em D no horário parseado; terminam em D (ou D+1 se cruzam
+//     a meia-noite). Turnos extras (idx ≥ base) seguem a mesma regra.
+// Cada segmento carrega `people` (array) — turno multi-pessoa é um único bloco.
 export function buildOnCallSegments(schedule) {
-  const at = (date, h) => { const d = new Date(date); d.setHours(h, 0, 0, 0); return d.getTime(); };
-  const seg = (start, end, shift, dateStr, dow) => ({
-    start, end, person: shift.person, period: shift.period, time: shift.time, dur: shift.dur, dateStr, dow,
-  });
+  const dayMs = (D, off, h, m) => {
+    const d = new Date(D); d.setHours(0, 0, 0, 0);
+    return d.getTime() + off * MS_DAY + (h * 60 + m) * 60000;
+  };
   const segs = [];
   for (const day of schedule) {
     const D = day.date, dow = day.dow, ds = dayKey(D);
-    if (dow === 0 || dow === 6) {
-      if (day.shifts[0]) segs.push(seg(at(D, 0),  at(D, 12), day.shifts[0], ds, dow));
-      if (day.shifts[1]) segs.push(seg(at(D, 12), at(D, 24), day.shifts[1], ds, dow));
-    } else {
-      if (day.shifts[0]) segs.push(seg(dow === 1 ? at(D, 0) : at(D, -1), at(D, 4), day.shifts[0], ds, dow)); // Madrugada
-      if (day.shifts[1]) segs.push(seg(at(D, 4),  at(D, 9),  day.shifts[1], ds, dow));                        // Manhã
-      if (day.shifts[2]) segs.push(seg(at(D, 18), at(D, dow === 5 ? 24 : 23), day.shifts[2], ds, dow));       // Noite
+    const weekday = dow >= 1 && dow <= 5;
+    for (const shift of day.shifts) {
+      const tr = parseTimeRange(shift.time);
+      if (!tr) continue;
+      const startMin = tr.sh * 60 + tr.sm, endMin = tr.eh * 60 + tr.em;
+      let start, end;
+      if (weekday && shift.idx === 0) {
+        start = dow === 1 ? dayMs(D, 0, 0, 0) : dayMs(D, -1, tr.sh, tr.sm); // segunda começa 00:00
+        end   = dayMs(D, 0, tr.eh, tr.em);
+      } else {
+        start = dayMs(D, 0, tr.sh, tr.sm);
+        end   = dayMs(D, endMin <= startMin ? 1 : 0, tr.eh, tr.em);        // cruza meia-noite
+      }
+      segs.push({ start, end, people: shiftPeople(shift), period: shift.period, time: shift.time, dateStr: ds, dow });
     }
   }
   return segs.sort((a, b) => a.start - b.start);
 }
 
+// schedule: array de buildSchedule(overrides, labels). `subs` aplica substituições.
+// Retorna quem está de plantão AGORA (pode ser mais de uma pessoa em feriado/turno
+// multi-pessoa) ou null no vão sem plantão. `people` = [{ person, coveringFor }].
+export function currentOnCall(now, schedule, subs = []) {
+  const segs = buildOnCallSegments(schedule);
+  const t = now.getTime();
+  const hits = segs.filter(s => t >= s.start && t < s.end);
+  if (!hits.length) return null;
+  const people = [];
+  for (const s of hits) for (const titular of s.people) {
+    const sub = getActiveSub(titular, s.dateStr, subs);
+    people.push({ person: sub ? sub.substituto : titular, coveringFor: sub ? titular : null });
+  }
+  const primary = hits[0];
+  return { people, label: `${DOW[primary.dow]} · ${primary.period}`, time: primary.time };
+}
+
 // Plantonista anterior e próximo em relação a `now`, com substituições aplicadas.
-// No plantão ativo, anterior/próximo são os vizinhos imediatos; no vão comercial,
-// anterior = último que terminou e próximo = primeiro que começa. Retorna null quando
-// não há vizinho (bordas da escala). `hora` já vem formatada (HH:MM, com dia curto se for outro dia).
+// Cada lado vem como { people: [nomes], hora }. `hora` formatada (HH:MM, com dia curto
+// se for outro dia). Retorna null quando não há vizinho (bordas da escala).
 export function adjacentOnCall(now, schedule, subs = []) {
   const segs = buildOnCallSegments(schedule);
   const t = now.getTime();
@@ -248,8 +262,11 @@ export function adjacentOnCall(now, schedule, subs = []) {
   };
   const shape = (s, ms) => {
     if (!s) return null;
-    const sub = getActiveSub(s.person, s.dateStr, subs);
-    return { person: sub ? sub.substituto : s.person, coveringFor: sub ? s.person : null, hora: fmtHora(ms) };
+    const people = s.people.map(titular => {
+      const sub = getActiveSub(titular, s.dateStr, subs);
+      return sub ? sub.substituto : titular;
+    });
+    return { people, hora: fmtHora(ms) };
   };
 
   const cur = segs.findIndex(s => t >= s.start && t < s.end);
@@ -261,10 +278,9 @@ export function adjacentOnCall(now, schedule, subs = []) {
     nextSeg = segs.find(s => s.start > t) || null;
     for (let i = segs.length - 1; i >= 0; i--) { if (segs[i].end <= t) { prevSeg = segs[i]; break; } }
   }
-  // anterior mostra quando terminou (end); próximo mostra quando começa (start)
   return {
-    anterior: shape(prevSeg, prevSeg?.end),
-    proximo:  shape(nextSeg, nextSeg?.start),
+    anterior: shape(prevSeg, prevSeg?.end),   // quando terminou
+    proximo:  shape(nextSeg, nextSeg?.start), // quando começa
   };
 }
 
@@ -276,11 +292,11 @@ export function getCoverSuggestions(titular, fromStr, untilStr, schedule) {
   return schedule
     .filter(d => {
       const k = dayKey(d.date);
-      return k >= fromStr && k <= untilStr && d.shifts.some(s => s.person === titular);
+      return k >= fromStr && k <= untilStr && d.shifts.some(s => shiftPeople(s).includes(titular));
     })
     .map(d => {
-      const busy = new Set(d.shifts.map(s => s.person));
+      const busy = new Set(d.shifts.flatMap(s => shiftPeople(s)));
       const available = Object.keys(PEOPLE).filter(p => p !== titular && !busy.has(p));
-      return { date: d.date, dow: d.dow, shifts: d.shifts.filter(s => s.person === titular), available };
+      return { date: d.date, dow: d.dow, shifts: d.shifts.filter(s => shiftPeople(s).includes(titular)), available };
     });
 }
