@@ -196,7 +196,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
           if (titular) rows.push({ date:d.date, dow:d.dow, ...s, kind:"turno", coveringFor: titular });
         }
       });
-      if (d.folga === filter && d.dow === 6) {
+      if (d.folga.includes(filter) && d.dow === 6) {
         const sub = getActiveSub(filter, dayKey(d.date), subs);
         if (!sub) rows.push({ date:d.date, dow:d.dow, period:"Folga FDS", time:"Sáb + Dom", dur:"", person:filter, kind:"folga" });
       }
@@ -665,7 +665,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
             const hasFiltered = !filter || d.shifts.some(s => shiftPeople(s).some(p => {
               const sub = getActiveSub(p, dk, subs);
               return (sub ? sub.substituto : p) === filter || p === filter;
-            })) || d.folga === filter;
+            })) || d.folga.includes(filter);
             return (
               <div key={dayKey(d.date)} ref={isToday ? todayRef : null} className="rounded-xl overflow-hidden"
                 style={{ scrollMarginTop:'64px', border:`${isToday?2:1}px solid ${isToday?T.cardBorderToday:T.cardBorder}`, opacity: isPast?0.45:filter&&!hasFiltered?0.35:1, background:isWeekend?T.cardBgWeekend:T.cardBg }}>
@@ -702,8 +702,8 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                         <span className="text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:T.cycleBg, color:T.cycleColor }}>
                           Semana {d.cycleWeek} do ciclo
                         </span>
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:"#FEF9C3", color:"#854D0E", opacity: filter&&d.folga!==filter?0.4:1 }}>
-                          <Icon name="umbrella" size={11} /> Folga FDS: {d.folga}
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:"#FEF9C3", color:"#854D0E", opacity: filter && !d.folga.includes(filter) ? 0.4 : 1 }}>
+                          <Icon name="umbrella" size={11} /> Folga FDS: {d.folga.join(", ")}
                         </span>
                       </div>
                     )}
@@ -1019,7 +1019,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
         )}
 
         <footer className="mt-4 text-center text-xs" style={{ color:T.footerText }}>
-          Ciclo de fim de semana ancorado em 13/06/2026 (Semana 1) · Escala seg–sex fixa · 5 semanas de rotação
+          Escala seg–sex fixa · rodízio de fim de semana em escada de 6 semanas (a partir de 18/07/2026) · 4 de plantão + 2 de folga
         </footer>
       </div>
 
