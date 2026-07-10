@@ -41,6 +41,8 @@ export const WEEKDAY_SHIFTS = {
   ],
 };
 
+// Rotação de FDS ANTIGA (5 semanas, 5 pessoas, 1 folga) — vale para os fins de
+// semana ANTES de WEEKEND_CHANGE. Mantida para preservar o histórico/folha.
 export const WEEKEND_CYCLE = [
   { sabDia: "Carlos",       sabNoite: "Emanoel",      domDia: "Ricardo",      domNoite: "Raul",         folga: "Marcus Túlio" },
   { sabDia: "Marcus Túlio", sabNoite: "Carlos",       domDia: "Emanoel",      domNoite: "Ricardo",      folga: "Raul" },
@@ -48,6 +50,15 @@ export const WEEKEND_CYCLE = [
   { sabDia: "Ricardo",      sabNoite: "Raul",         domDia: "Marcus Túlio", domNoite: "Carlos",       folga: "Emanoel" },
   { sabDia: "Emanoel",      sabNoite: "Ricardo",      domDia: "Raul",         domNoite: "Marcus Túlio", folga: "Carlos" },
 ];
+
+// Rotação de FDS NOVA — escada de 6 semanas com as 6 pessoas (4 trabalham + 2 folgam).
+// A tabela inteira é GERADA a partir desta ordem de rodízio: cada pessoa avança uma
+// estação por semana. Estações (em ordem): Sáb Dia, Sáb Noite, Dom Dia, Dom Noite,
+// Folga, Folga. Vale para os fins de semana a partir de WEEKEND_CHANGE.
+export const WEEKEND_ROSTER = ["Carlos", "Marcus Túlio", "Raul", "Ricardo", "Emanoel", "Alice"];
+// Sábado da Semana 1 da escada nova (18/07/2026). Fins de semana >= esta data usam a
+// escada nova; anteriores mantêm WEEKEND_CYCLE. ⚠ Mover isto recalcula a escala.
+export const WEEKEND_CHANGE = new Date(2026, 6, 18);
 
 // The Saturday corresponding to Week 1 of the 5-week weekend rotation.
 // Changing ANCHOR shifts the entire schedule history — requires full rotation recalibration.
@@ -133,6 +144,32 @@ export function cycleIndex(saturday) {
   return ((diff % 5) + 5) % 5;
 }
 
+// Atribuição de FDS para um dado sábado. Escolhe a rotação pela data:
+//   • sábado < WEEKEND_CHANGE → ciclo antigo (5 semanas, 1 folga) — preserva histórico.
+//   • sábado >= WEEKEND_CHANGE → escada nova (6 semanas), GERADA do WEEKEND_ROSTER:
+//     estação s na semana w = roster[(s - w) mod N]; cada pessoa avança 1 estação/semana.
+// Retorna sempre { cycleWeek, sabDia, sabNoite, domDia, domNoite, folga: string[] }.
+export function weekendAssignment(saturday) {
+  if (saturday.getTime() >= WEEKEND_CHANGE.getTime()) {
+    const N = WEEKEND_ROSTER.length; // 6
+    const diff = Math.round((saturday.getTime() - WEEKEND_CHANGE.getTime()) / (7 * MS_DAY));
+    const w = ((diff % N) + N) % N;
+    const cell = (s) => WEEKEND_ROSTER[(((s - w) % N) + N) % N];
+    return {
+      cycleWeek: w + 1,
+      sabDia: cell(0), sabNoite: cell(1), domDia: cell(2), domNoite: cell(3),
+      folga: [cell(4), cell(5)],
+    };
+  }
+  const idx = cycleIndex(saturday);
+  const rot = WEEKEND_CYCLE[idx];
+  return {
+    cycleWeek: idx + 1,
+    sabDia: rot.sabDia, sabNoite: rot.sabNoite, domDia: rot.domDia, domNoite: rot.domNoite,
+    folga: [rot.folga],
+  };
+}
+
 // Pessoas de um turno — normaliza `person` (string legada) e `persons[]` (multi).
 // Todo leitor da escala deve usar isto em vez de acessar shift.person direto.
 export function shiftPeople(shift) {
@@ -163,15 +200,14 @@ export function buildSchedule(overrides = {}, labels = {}) {
     const d = new Date(t);
     d.setHours(12, 0, 0, 0);
     const dow = d.getDay();
-    let base = [], folga = null, cycleWeek = null;
+    let base = [], folga = [], cycleWeek = null; // folga sempre array (vazio em dia útil)
     if (dow >= 1 && dow <= 5) {
       base = WEEKDAY_SHIFTS[dow].map(s => ({ ...s }));
     } else {
       const sat = dow === 6 ? d : new Date(d.getTime() - MS_DAY);
-      const idx = cycleIndex(sat);
-      const rot = WEEKEND_CYCLE[idx];
-      cycleWeek = idx + 1;
-      folga = rot.folga;
+      const rot = weekendAssignment(sat);
+      cycleWeek = rot.cycleWeek;
+      folga = rot.folga; // array (1 pessoa no ciclo antigo, 2 na escada nova)
       base = dow === 6
         ? [{ period:"Dia",  time:"00:00 – 12:00", dur:"12h", person: rot.sabDia   },
            { period:"Noite",time:"12:00 – 00:00", dur:"12h", person: rot.sabNoite }]

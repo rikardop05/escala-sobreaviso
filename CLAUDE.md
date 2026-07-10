@@ -125,21 +125,23 @@ Cada dia da semana tem 3 turnos fixos:
 | Manhã | 04:00 – 09:00 | 5h |
 | Noite | 18:00 – 23:00 (sexta: 24:00) | 5h / 6h |
 
-### Fins de semana — `WEEKEND_CYCLE` (5 semanas de rotação)
+### Fins de semana — rotação com vigência por data
 
 ```
 Dia  (sáb/dom): 00:00 – 12:00  (12h)
 Noite (sáb/dom): 12:00 – 00:00 (12h)
-Folga FDS: um membro diferente por semana
 ```
 
-**`ANCHOR = 2026-06-13`** — o sábado que corresponde à Semana 1 do ciclo.
-⚠️ Alterar ANCHOR invalida toda a escala histórica e futura.
+`weekendAssignment(saturday)` escolhe a rotação pela data do sábado e sempre retorna `folga` como **array**:
 
-**`RANGE_START = 2026-06-08`** / **`RANGE_END = 2027-06-30`** — período gerado por `buildSchedule()`.
-Para estender: atualizar apenas `RANGE_END`.
+- **FDS antes de `WEEKEND_CHANGE` (2026-07-18)** → `WEEKEND_CYCLE` antigo: 5 semanas, 5 pessoas, **1 folga** (Alice não faz FDS). `ANCHOR = 2026-06-13`, `cycleIndex` via `((diff % 5)+5)%5`. Mantido para preservar histórico/folha.
+- **FDS a partir de `WEEKEND_CHANGE`** → **escada de 6 semanas** GERADA de `WEEKEND_ROSTER = [Carlos, Marcus Túlio, Raul, Ricardo, Emanoel, Alice]`: cada pessoa avança uma estação por semana nas estações `[Sáb Dia, Sáb Noite, Dom Dia, Dom Noite, Folga, Folga]` → 4 trabalham + **2 folgam**. Fórmula: `estação s na semana w = roster[(s-w) mod 6]`.
 
-**`cycleIndex(saturday)`** → index 0–4 via `((diff % 5) + 5) % 5`. O `+5` garante resultado positivo para datas anteriores ao ANCHOR.
+⚠️ Mover `WEEKEND_CHANGE`, `ANCHOR` ou `WEEKEND_ROSTER` recalcula a escala (histórico e futuro). Meses de CH fechados ficam protegidos pelos snapshots; meses abertos recalculam.
+
+**`RANGE_START = 2026-06-08`** / **`RANGE_END = 2027-06-30`** — período gerado por `buildSchedule()`. Para estender: atualizar apenas `RANGE_END`.
+
+`day.folga` é **sempre array** (vazio em dia útil; 1 nome no ciclo antigo; 2 na escada nova) — a UI usa `d.folga.includes(...)` / `d.folga.join(', ')`.
 
 ### Overrides de escala (admin)
 
