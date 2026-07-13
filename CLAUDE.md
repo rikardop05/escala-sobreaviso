@@ -136,7 +136,7 @@ Noite (sáb/dom): 12:00 – 00:00 (12h)
 `weekendAssignment(saturday)` escolhe a rotação pela data do sábado e sempre retorna `folga` como **array**:
 
 - **FDS antes de `WEEKEND_CHANGE` (2026-07-18)** → `WEEKEND_CYCLE` antigo: 5 semanas, 5 pessoas, **1 folga** (Alice não faz FDS). `ANCHOR = 2026-06-13`, `cycleIndex` via `((diff % 5)+5)%5`. Mantido para preservar histórico/folha.
-- **FDS a partir de `WEEKEND_CHANGE`** → **escada de 6 semanas** GERADA de `WEEKEND_ROSTER = [Carlos, Marcus Túlio, Raul, Ricardo, Emanoel, Alice]`: cada pessoa avança uma estação por semana nas estações `[Sáb Dia, Sáb Noite, Dom Dia, Dom Noite, Folga, Folga]` → 4 trabalham + **2 folgam**. Fórmula: `estação s na semana w = roster[(s-w) mod 6]`.
+- **FDS a partir de `WEEKEND_CHANGE`** → **escada de 6 semanas** GERADA de `WEEKEND_ROSTER = [Alice, Emanoel, Ricardo, Raul, Marcus Túlio, Carlos]`: cada pessoa avança uma estação por semana nas estações `[Sáb Dia, Sáb Noite, Dom Dia, Dom Noite, Folga, Folga]` → 4 trabalham + **2 folgam**. Fórmula: `estação s na semana w = roster[(s-w) mod 6]`. A ordem foi derivada por **continuidade** com o ciclo antigo (último FDS 11–12/07): quem folgou continua folgando na virada, Alice entra no Sáb Dia, os demais só avançam.
 
 ⚠️ Mover `WEEKEND_CHANGE`, `ANCHOR` ou `WEEKEND_ROSTER` recalcula a escala (histórico e futuro). Meses de CH fechados ficam protegidos pelos snapshots; meses abertos recalculam.
 

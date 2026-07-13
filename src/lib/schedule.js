@@ -55,7 +55,10 @@ export const WEEKEND_CYCLE = [
 // A tabela inteira é GERADA a partir desta ordem de rodízio: cada pessoa avança uma
 // estação por semana. Estações (em ordem): Sáb Dia, Sáb Noite, Dom Dia, Dom Noite,
 // Folga, Folga. Vale para os fins de semana a partir de WEEKEND_CHANGE.
-export const WEEKEND_ROSTER = ["Carlos", "Marcus Túlio", "Raul", "Ricardo", "Emanoel", "Alice"];
+// Ordem derivada por CONTINUIDADE com o ciclo antigo: no último FDS antigo (11–12/07)
+// a folga foi do Carlos; na virada ele folga de novo (2ª folga), Alice entra no Sáb Dia
+// e os demais só avançam uma estação. Assim ninguém "salta" de posição.
+export const WEEKEND_ROSTER = ["Alice", "Emanoel", "Ricardo", "Raul", "Marcus Túlio", "Carlos"];
 // Sábado da Semana 1 da escada nova (18/07/2026). Fins de semana >= esta data usam a
 // escada nova; anteriores mantêm WEEKEND_CYCLE. ⚠ Mover isto recalcula a escala.
 export const WEEKEND_CHANGE = new Date(2026, 6, 18);
