@@ -4,6 +4,7 @@ import { useApi } from './lib/api';
 import { Icon } from './components/ui';
 import EscalaSobreaviso from './components/EscalaSobreaviso';
 import ControleDeHoras from './components/ControleDeHoras';
+import EstruturaEscala from './components/EstruturaEscala';
 
 // ─── APP PRINCIPAL (só renderiza se autenticado) ──────────────────────────────
 
@@ -11,22 +12,26 @@ function MainApp() {
   const api = useApi();
   const { user } = useUser();
   // A aba vive no hash da URL — refresh e links compartilhados preservam a view
-  const [view, setViewState] = useState(() => window.location.hash === '#controle' ? 'controle' : 'escala');
+  const hashToView = (h) => (h === '#controle' ? 'controle' : h === '#estrutura' ? 'estrutura' : 'escala');
+  const [view, setViewState] = useState(() => hashToView(window.location.hash));
   const [dark, setDark]       = useState(true);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const storageKey = user?.id ? `escala_profile_${user.id}` : null;
-  const canAccessCH = profile?.role === 'admin' || profile?.role === 'member';
+  const isAdmin = profile?.role === 'admin';
+  const canAccessCH = isAdmin || profile?.role === 'member';
 
   const setView = (v) => {
     setViewState(v);
-    window.history.replaceState(null, '', v === 'controle' ? '#controle' : '#escala');
+    window.history.replaceState(null, '', `#${v}`);
   };
 
   useEffect(() => {
     document.title = view === 'controle'
       ? 'Controle de Horas — Escala de Sobreaviso'
+      : view === 'estrutura'
+      ? 'Estrutura da Escala — Escala de Sobreaviso'
       : 'Escala de Sobreaviso';
   }, [view]);
 
@@ -137,6 +142,11 @@ function MainApp() {
             <Icon name="clock" size={15} /> Controle de Horas
           </button>
         )}
+        {isAdmin && (
+          <button onClick={() => setView('estrutura')} style={tabStyle(view === 'estrutura')} aria-current={view === 'estrutura' ? 'page' : undefined}>
+            <Icon name="calendar" size={15} /> Estrutura
+          </button>
+        )}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "0.75rem" }}>
           {profile?.memberId && (
             <span style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.7)", fontWeight: "600" }}>
@@ -152,9 +162,13 @@ function MainApp() {
         </div>
       </nav>
 
-      {view === 'escala' || !canAccessCH
-        ? <EscalaSobreaviso dark={dark} onToggleDark={toggleDark} profile={profile} saveProfile={saveProfile} />
-        : <ControleDeHoras dark={dark} profile={profile} />}
+      {view === 'estrutura' && isAdmin ? (
+        <EstruturaEscala dark={dark} />
+      ) : view === 'controle' && canAccessCH ? (
+        <ControleDeHoras dark={dark} profile={profile} />
+      ) : (
+        <EscalaSobreaviso dark={dark} onToggleDark={toggleDark} profile={profile} saveProfile={saveProfile} />
+      )}
     </div>
   );
 }
