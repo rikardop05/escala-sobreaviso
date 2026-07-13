@@ -36,6 +36,7 @@ src/
     ui.jsx                  Kit compartilhado: Icon (SVGs), SaveStatus, Snackbar (undo), ConfirmDialog, Skeleton, friendlyError()
     EscalaSobreaviso.jsx    Calendário mensal, filtro, substituições, edição de escala (admin)
     ControleDeHoras.jsx     CH: parâmetros, lançamentos HE/Comp, relatório, exportação CSV; admin pode ver qualquer membro
+    EstruturaEscala.jsx     Aba "Estrutura" (só admin, #estrutura): tabelas read-only da estrutura base — semana (WEEKDAY_SHIFTS) e escada de FDS (gerada de WEEKEND_ROSTER). Fase 1: só visualização; edição versionada é fase futura
 
 api/
   _allowlist.js             EDITAR AQUI: mapeamento email→{memberId, role}; resolveAccess()
