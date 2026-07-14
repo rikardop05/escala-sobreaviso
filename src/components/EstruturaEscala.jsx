@@ -22,6 +22,15 @@ const WEEKDAY_COLS = [
   { dow: 4, label: 'Qui' }, { dow: 5, label: 'Sex' },
 ];
 
+// Proposta de estrutura em avaliação — inclui a Alice na semana, sem mexer em
+// Ricardo/Emanoel/Carlos: Seg Madrugada (era Raul) e Qui Manhã (era Marcus Túlio).
+// Só afeta esta tela; WEEKDAY_SHIFTS (calendário real e cálculo financeiro do CH)
+// continua intocado até a mudança ser aprovada e aplicada de fato.
+const WEEKDAY_DISPLAY_OVERRIDES = {
+  1: { 0: 'Alice' }, // Segunda · Madrugada
+  4: { 1: 'Alice' }, // Quinta · Manhã
+};
+
 export default function EstruturaEscala({ dark }) {
   const T = getTheme(dark);
 
@@ -33,7 +42,11 @@ export default function EstruturaEscala({ dark }) {
       period: ref.period,
       time: ref.time,
       dur: ref.dur,
-      cells: WEEKDAY_COLS.map(c => WEEKDAY_SHIFTS[c.dow][i]),
+      cells: WEEKDAY_COLS.map(c => {
+        const shift = WEEKDAY_SHIFTS[c.dow][i];
+        const override = WEEKDAY_DISPLAY_OVERRIDES[c.dow]?.[i];
+        return override ? { ...shift, person: override } : shift;
+      }),
     }));
   }, []);
 
