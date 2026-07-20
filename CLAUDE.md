@@ -296,6 +296,7 @@ Ao adicionar membros à equipe em `_allowlist.js`, atualizar também `TEAM_MEMBE
 - **Tema**: sempre via `getTheme(dark)` em `src/lib/theme.js`. Tokens cumprem WCAG AA; não criar dicionários de tema locais nos componentes.
 - **Ícones**: SVGs do componente `Icon` em `src/components/ui.jsx` — nunca emoji como ícone.
 - **Persistência com feedback**: toda escrita mostra estado (`SaveStatus`: Salvando…/Salvo/Erro com "Tentar de novo") e faz rollback do estado otimista em falha. Parâmetros do CH têm debounce de 600ms.
+- **Remuneração mensal oculta** (ControleDeHoras): estilo app de banco — mascarada por padrão ("R$ ••••••"), olho revela, lápis abre edição (input real + confirmar). Estado puramente visual (`remuneracaoVisible`/`remuneracaoEditing`), reseta ao trocar de pessoa e ao concluir a edição; não toca em `setParam`/persistência.
 - **Exclusões**: otimistas com `Snackbar` de undo (~6s); nada de window.confirm. Ações em massa ("aplicar/resetar a todos os meses seguintes") pedem `ConfirmDialog`.
 - **Erros ao usuário**: sempre via `friendlyError()` — mensagens em PT-BR com ação sugerida; detalhes só no console.
 - **View por hash**: `#escala` / `#controle` — refresh preserva a aba; `document.title` acompanha.
