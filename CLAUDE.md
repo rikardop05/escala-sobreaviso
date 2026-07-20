@@ -57,6 +57,9 @@ _arquivo/planejamento/db/
   schema.sql                Schema PostgreSQL — planejamento; desatualizado vs. estado atual (ver Migração futura)
 
 vercel.json                 SPA rewrite (rota não-/api/* → /index.html) + cron de backup (crons)
+
+public/
+  logo.png                  Ícone/marca do app (favicon + apple-touch-icon em index.html; mark na nav em App.jsx)
 ```
 
 ---
