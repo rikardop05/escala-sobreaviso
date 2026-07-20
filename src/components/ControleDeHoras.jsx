@@ -51,6 +51,12 @@ export default function ControleDeHoras({ dark, profile }) {
   const [undoEntry, setUndoEntry] = useState(null); // lançamento recém-excluído, restaurável
   const undoTimer = useRef(null);
 
+  // Remuneração fica oculta por padrão (estilo app de banco) — olho revela, lápis edita.
+  // Puramente visual: não afeta params/persistência. Reseta ao trocar de pessoa (admin)
+  // para nunca deixar o salário de um colega exposto sem querer.
+  const [remuneracaoVisible, setRemuneracaoVisible] = useState(false);
+  const [remuneracaoEditing, setRemuneracaoEditing] = useState(false);
+
   // Admin can switch to view any CH_NAMES member; member is locked to their own
   const [viewPerson, setViewPerson] = useState(profile?.memberId ?? null);
   const person = isAdmin ? (viewPerson ?? profile?.memberId) : profile?.memberId;
@@ -89,6 +95,20 @@ export default function ControleDeHoras({ dark, profile }) {
     clearTimeout(paramsDebounce.current);
     clearTimeout(undoTimer.current);
   }, []);
+
+  useEffect(() => {
+    setRemuneracaoVisible(false);
+    setRemuneracaoEditing(false);
+  }, [person]);
+
+  const startEditingRemuneracao = () => {
+    setRemuneracaoVisible(true);
+    setRemuneracaoEditing(true);
+  };
+  const finishEditingRemuneracao = () => {
+    setRemuneracaoEditing(false);
+    setRemuneracaoVisible(false);
+  };
 
   const flashSaved = (setStatus, timerRef) => {
     setStatus('saved');
@@ -468,8 +488,31 @@ export default function ControleDeHoras({ dark, profile }) {
           <div className="flex flex-wrap gap-4 items-end">
             <div>
               <label style={labelStyle} htmlFor="ch-remun">Remuneração mensal (R$)</label>
-              <input id="ch-remun" type="number" style={{ ...inputStyle, width:"9rem" }} value={params.remuneracao} placeholder="0,00"
-                onChange={e => setParam("remuneracao", e.target.value === '' ? '' : Number(e.target.value))} />
+              {remuneracaoEditing ? (
+                <div className="flex items-center gap-1.5">
+                  <input id="ch-remun" type="number" autoFocus style={{ ...inputStyle, width:"9rem" }} value={params.remuneracao} placeholder="0,00"
+                    onChange={e => setParam("remuneracao", e.target.value === '' ? '' : Number(e.target.value))}
+                    onKeyDown={e => { if (e.key === 'Enter') finishEditingRemuneracao(); }} />
+                  <button type="button" onClick={finishEditingRemuneracao} aria-label="Concluir edição da remuneração"
+                    style={{ background:T.saveBg, color:T.saveColor, border:"none", borderRadius:"0.5rem", width:"2.5rem", height:"2.5rem", flexShrink:0, display:"inline-flex", alignItems:"center", justifyContent:"center", cursor:"pointer" }}>
+                    <Icon name="check" size={15} />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <span style={{ ...inputStyle, width:"9rem", display:"inline-flex", alignItems:"center", color: remuneracaoVisible ? T.textPrimary : T.textMuted }}>
+                    {remuneracaoVisible ? (Number(params.remuneracao) > 0 ? brl(Number(params.remuneracao)) : "—") : "R$ ••••••"}
+                  </span>
+                  <button type="button" onClick={() => setRemuneracaoVisible(v => !v)} aria-label={remuneracaoVisible ? "Ocultar remuneração" : "Mostrar remuneração"}
+                    style={{ background:"transparent", color:T.textMuted, border:`1px solid ${T.cardBorder}`, borderRadius:"0.5rem", width:"2.5rem", height:"2.5rem", flexShrink:0, display:"inline-flex", alignItems:"center", justifyContent:"center", cursor:"pointer" }}>
+                    <Icon name={remuneracaoVisible ? "eyeOff" : "eye"} size={15} />
+                  </button>
+                  <button type="button" onClick={startEditingRemuneracao} aria-label="Editar remuneração"
+                    style={{ background:"transparent", color:T.textMuted, border:`1px solid ${T.cardBorder}`, borderRadius:"0.5rem", width:"2.5rem", height:"2.5rem", flexShrink:0, display:"inline-flex", alignItems:"center", justifyContent:"center", cursor:"pointer" }}>
+                    <Icon name="pencil" size={14} />
+                  </button>
+                </div>
+              )}
             </div>
             <div>
               <label style={labelStyle} htmlFor="ch-jornada">Jornada (h)</label>
