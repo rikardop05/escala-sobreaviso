@@ -134,6 +134,7 @@ function MainApp() {
         borderBottom: "1px solid rgba(255,255,255,0.06)",
         transition: "background 0.2s",
       }}>
+        <img src="/logo.png" alt="Escala de Sobreaviso" width={32} height={32} style={{ borderRadius: "8px", flexShrink: 0 }} />
         <button onClick={() => setView('escala')} style={tabStyle(view === 'escala')} aria-current={view === 'escala' ? 'page' : undefined}>
           <Icon name="calendar" size={15} /> Escala
         </button>
@@ -198,8 +199,8 @@ function PublicApp() {
         transition: "background 0.2s",
         minHeight: "3.25rem",
       }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem", fontSize: "0.85rem", fontWeight: "700", color: "#fff" }}>
-          <Icon name="calendar" size={15} /> Escala de Sobreaviso
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem", fontWeight: "700", color: "#fff" }}>
+          <img src="/logo.png" alt="" width={22} height={22} style={{ borderRadius: "5px", flexShrink: 0 }} /> Escala de Sobreaviso
         </span>
         <div style={{ marginLeft: "auto" }}>
           <button onClick={() => openSignIn()} style={{
