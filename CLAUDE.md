@@ -201,9 +201,13 @@ Chaves usam `memberId` (não `userId`) para permitir acesso cross-user do admin:
 valorHora       = remuneracao / jornada
 valorSobreaviso = (valorHora / 3)   × horasSA   ← adicional de 1/3
 valorHoraExtra  = (valorHora × 1.5) × horasHE   ← adicional de 50%
+valorComp       = (valorHora / 3)   × horasComp ← mesmo fator do SA; abate da NF (Compensação não tem valor próprio)
+valorNF         = remuneracao + valorSobreaviso + valorHoraExtra − valorComp
 ```
 
 SA vem de `buildSchedule(overrides, labels)` — reflete edições do admin no cálculo e no CSV. O `scheduleEntries` casa a pessoa via `shiftPeople(shift)`, então em turno multi-pessoa (feriado) **cada** pessoa ganha seu próprio SA pelas horas do turno.
+
+**Valor da NF**: card no Relatório do mês com remuneração + SA + HE − Compensação. Protegido igual à remuneração mensal (oculto por padrão, "R$ ••••••", olho revela — sem edição, é derivado). Estado (`nfVisible`) reseta ao trocar de pessoa. Entra também no CSV (`Valor compensação` e `VALOR DA NF`). Em meses fechados, usa `closedSnap.params.remuneracao` e `closedSnap.totals` (snapshots anteriores a esta feature não têm `valorComp` — tratado como 0).
 
 ### Fechamento mensal (folha de pagamento)
 

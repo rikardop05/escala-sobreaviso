@@ -56,6 +56,9 @@ export default function ControleDeHoras({ dark, profile }) {
   // para nunca deixar o salário de um colega exposto sem querer.
   const [remuneracaoVisible, setRemuneracaoVisible] = useState(false);
   const [remuneracaoEditing, setRemuneracaoEditing] = useState(false);
+  // Valor da NF (remuneração + SA + HE − Compensação) — mesma proteção da remuneração,
+  // mas só olho (sem edição, é um valor derivado). Reseta ao trocar de pessoa.
+  const [nfVisible, setNfVisible] = useState(false);
 
   // Admin can switch to view any CH_NAMES member; member is locked to their own
   const [viewPerson, setViewPerson] = useState(profile?.memberId ?? null);
@@ -99,6 +102,7 @@ export default function ControleDeHoras({ dark, profile }) {
   useEffect(() => {
     setRemuneracaoVisible(false);
     setRemuneracaoEditing(false);
+    setNfVisible(false);
   }, [person]);
 
   const startEditingRemuneracao = () => {
@@ -257,7 +261,9 @@ export default function ControleDeHoras({ dark, profile }) {
 
     const valorSobreaviso = (valorHora / 3) * sobreaviso;
     const valorExtra = valorHora * 1.5 * extra;
-    return { sobreaviso, extra, comp, totalHoras: sobreaviso + extra + comp, valorSobreaviso, valorExtra, valorTotal: valorSobreaviso + valorExtra, overlapMin };
+    // Compensação abate da NF pelo mesmo valor do sobreaviso (÷3) — não tem multiplicador próprio.
+    const valorComp = (valorHora / 3) * comp;
+    return { sobreaviso, extra, comp, totalHoras: sobreaviso + extra + comp, valorSobreaviso, valorExtra, valorComp, valorTotal: valorSobreaviso + valorExtra, overlapMin };
   }, [allMonthEntries, valorHora]);
 
   // ─── FECHAMENTO MENSAL ─────────────────────────────────────────────────────
@@ -275,6 +281,10 @@ export default function ControleDeHoras({ dark, profile }) {
 
   const displayTotals    = isClosed ? closedSnap.totals : totals;
   const displayValorHora = isClosed ? closedSnap.totals.valorHora : valorHora;
+  const displayRemuneracao = isClosed ? (Number(closedSnap.params.remuneracao) || 0) : (Number(params.remuneracao) || 0);
+  // Valor da NF = remuneração mensal + SA + HE − Compensação. Snapshots antigos (antes
+  // desta feature) não têm valorComp no totals — trata como 0 pra não gerar NaN.
+  const valorNF = displayRemuneracao + displayTotals.valorSobreaviso + displayTotals.valorExtra - (displayTotals.valorComp || 0);
 
   const fmtClosedAt = (iso) => {
     const d = new Date(iso);
@@ -405,6 +415,8 @@ export default function ControleDeHoras({ dark, profile }) {
       ["Valor sobreaviso (÷3)", brl(displayTotals.valorSobreaviso)],
       ["Valor hora extra (×1,5)", brl(displayTotals.valorExtra)],
       ["VALOR TOTAL", brl(displayTotals.valorTotal)],
+      ["Valor compensação (÷3, abate da NF)", brl(displayTotals.valorComp || 0)],
+      ["VALOR DA NF", brl((Number(csvParams.remuneracao) || 0) + displayTotals.valorSobreaviso + displayTotals.valorExtra - (displayTotals.valorComp || 0))],
     ];
     const csv = "﻿" + [[header], rows, summary].flat().map(r => r.map(c => `"${String(c)}"`).join(sep)).join("\r\n");
     const blob = new Blob([csv], { type:"text/csv;charset=utf-8;" });
@@ -636,9 +648,9 @@ export default function ControleDeHoras({ dark, profile }) {
           )}
           <div className="grid gap-3" style={{ gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))" }}>
             {[
-              { label:"Sobreaviso",  h:displayTotals.sobreaviso, v:displayTotals.valorSobreaviso, formula:"⅓ do valor-hora",   tm:TYPE_META.Sobreaviso },
-              { label:"Hora Extra",  h:displayTotals.extra,      v:displayTotals.valorExtra,      formula:"valor-hora × 1,5",  tm:TYPE_META["Hora Extra"] },
-              { label:"Compensação", h:displayTotals.comp,       v:null,                          formula:"sem valor — abate horas", tm:TYPE_META.Compensação },
+              { label:"Sobreaviso",  h:displayTotals.sobreaviso, v:displayTotals.valorSobreaviso,      neg:false, formula:"⅓ do valor-hora",           tm:TYPE_META.Sobreaviso },
+              { label:"Hora Extra",  h:displayTotals.extra,      v:displayTotals.valorExtra,           neg:false, formula:"valor-hora × 1,5",          tm:TYPE_META["Hora Extra"] },
+              { label:"Compensação", h:displayTotals.comp,       v:displayTotals.valorComp ?? null,     neg:true,  formula:"⅓ do valor-hora · abate da NF", tm:TYPE_META.Compensação },
             ].map(b => {
               const bg    = dark ? b.tm.bg    : b.tm.lightBg;
               const color = dark ? b.tm.color : b.tm.lightColor;
@@ -646,7 +658,7 @@ export default function ControleDeHoras({ dark, profile }) {
                 <div key={b.label} className="rounded-xl p-3" style={{ background:bg }}>
                   <div className="text-xs font-bold" style={{ color }}>{b.label}</div>
                   <div className="text-xl font-bold" style={{ color:dark?"#F1F5F9":"#1E293B" }}>{fmtHM(b.h)}</div>
-                  {b.v !== null && displayValorHora > 0 && <div className="text-sm font-semibold" style={{ color }}>{brl(b.v)}</div>}
+                  {b.v !== null && displayValorHora > 0 && <div className="text-sm font-semibold" style={{ color }}>{b.neg && b.v > 0 ? "− " : ""}{brl(b.v)}</div>}
                   <div className="text-[10px] mt-0.5" style={{ color, opacity:0.85 }}>{b.formula}</div>
                 </div>
               );
@@ -666,6 +678,20 @@ export default function ControleDeHoras({ dark, profile }) {
                 {displayValorHora > 0 ? brl(displayTotals.valorTotal) : "—"}
               </div>
             </div>
+          </div>
+
+          {/* VALOR DA NF — remuneração + SA + HE − Compensação; oculto por padrão, igual à remuneração */}
+          <div className="mt-3 pt-3 flex items-center justify-between gap-3 flex-wrap" style={{ borderTop:`1px solid ${T.cardBorder}` }}>
+            <div>
+              <div className="text-xs" style={{ color:T.labelColor }}>Valor da NF <span style={{ color:T.textMuted }}>(remuneração + SA + HE − Compensação)</span></div>
+              <div className="text-2xl font-bold" style={{ color:p.color }}>
+                {nfVisible ? (displayValorHora > 0 || displayRemuneracao > 0 ? brl(valorNF) : "—") : "R$ ••••••"}
+              </div>
+            </div>
+            <button type="button" onClick={() => setNfVisible(v => !v)} aria-label={nfVisible ? "Ocultar valor da NF" : "Mostrar valor da NF"}
+              style={{ background:"transparent", color:T.textMuted, border:`1px solid ${T.cardBorder}`, borderRadius:"0.5rem", width:"2.75rem", height:"2.75rem", flexShrink:0, display:"inline-flex", alignItems:"center", justifyContent:"center", cursor:"pointer" }}>
+              <Icon name={nfVisible ? "eyeOff" : "eye"} size={16} />
+            </button>
           </div>
         </section>
 
