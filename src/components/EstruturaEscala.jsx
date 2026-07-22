@@ -122,10 +122,10 @@ export default function EstruturaEscala({ dark }) {
                 <thead>
                   <tr>
                     <th style={th} scope="col">Semana</th>
-                    <th style={th} scope="col">Sáb Dia<br /><span className="font-mono" style={{ fontWeight: 400 }}>00:00–12:00</span></th>
-                    <th style={th} scope="col">Sáb Noite<br /><span className="font-mono" style={{ fontWeight: 400 }}>12:00–00:00</span></th>
-                    <th style={th} scope="col">Dom Dia<br /><span className="font-mono" style={{ fontWeight: 400 }}>00:00–12:00</span></th>
-                    <th style={th} scope="col">Dom Noite<br /><span className="font-mono" style={{ fontWeight: 400 }}>12:00–00:00</span></th>
+                    <th style={th} scope="col">Sáb Dia<br /><span className="font-mono" style={{ fontWeight: 400 }}>23:00–11:00</span></th>
+                    <th style={th} scope="col">Sáb Noite<br /><span className="font-mono" style={{ fontWeight: 400 }}>11:00–23:00</span></th>
+                    <th style={th} scope="col">Dom Dia<br /><span className="font-mono" style={{ fontWeight: 400 }}>23:00–11:00</span></th>
+                    <th style={th} scope="col">Dom Noite<br /><span className="font-mono" style={{ fontWeight: 400 }}>11:00–23:00</span></th>
                     <th style={th} scope="col">Folga</th>
                   </tr>
                 </thead>

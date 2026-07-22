@@ -132,9 +132,14 @@ Cada dia da semana tem 3 turnos fixos:
 ### Fins de semana — rotação com vigência por data
 
 ```
-Dia  (sáb/dom): 00:00 – 12:00  (12h)
-Noite (sáb/dom): 12:00 – 00:00 (12h)
+Dia  (sáb/dom): 23:00 (véspera) – 11:00  (12h)  ← handoff às 23:00, igual aos dias úteis
+Noite (sáb/dom): 11:00 – 23:00 (12h)
 ```
+Handoff fixo às 23:00/11:00: Sex→Sáb→Dom→Seg conectam sem exceção (a Madrugada de
+segunda começa 23:00 do domingo). Durações seguem 12h → **sem impacto financeiro**,
+por isso a mudança de horário vale para toda a faixa. `buildOnCallSegments` trata
+`idx 0` que começa à noite e cruza a meia-noite (Madrugada útil E Dia do FDS) como
+pernoite que pertence à véspera.
 
 `weekendAssignment(saturday)` escolhe a rotação pela data do sábado e sempre retorna `folga` como **array**:
 

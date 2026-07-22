@@ -211,11 +211,14 @@ export function buildSchedule(overrides = {}, labels = {}) {
       const rot = weekendAssignment(sat);
       cycleWeek = rot.cycleWeek;
       folga = rot.folga; // array (1 pessoa no ciclo antigo, 2 na escada nova)
+      // Handoff fixo às 23:00/11:00 — alinha o FDS ao mesmo horário de virada
+      // dos dias úteis (23:00), então Sex→Sáb→Dom→Seg conectam sem exceção.
+      // "Dia" começa 23:00 da véspera e vai até 11:00; "Noite" 11:00–23:00. Ambos 12h.
       base = dow === 6
-        ? [{ period:"Dia",  time:"00:00 – 12:00", dur:"12h", person: rot.sabDia   },
-           { period:"Noite",time:"12:00 – 00:00", dur:"12h", person: rot.sabNoite }]
-        : [{ period:"Dia",  time:"00:00 – 12:00", dur:"12h", person: rot.domDia   },
-           { period:"Noite",time:"12:00 – 00:00", dur:"12h", person: rot.domNoite }];
+        ? [{ period:"Dia",  time:"23:00 – 11:00", dur:"12h", person: rot.sabDia   },
+           { period:"Noite",time:"11:00 – 23:00", dur:"12h", person: rot.sabNoite }]
+        : [{ period:"Dia",  time:"23:00 – 11:00", dur:"12h", person: rot.domDia   },
+           { period:"Noite",time:"11:00 – 23:00", dur:"12h", person: rot.domNoite }];
     }
     const dk = dayKey(d);
     const ovDay = overrides[dk] || {};
@@ -236,11 +239,13 @@ export function buildSchedule(overrides = {}, labels = {}) {
 
 // Sequência ordenada de blocos de plantão com início/fim absolutos (ms), derivada
 // do shift.time REAL (não de janelas fixas) — então edições de horário e turnos
-// custom de feriado são refletidos. Convenção de atribuição de dia preservada:
-//   • Dias úteis, idx 0 ("Madrugada"): pernoite que termina em D → começa 23:00 da
-//     véspera; exceto segunda, que começa 00:00 (domingo à noite cobre até 00:00).
+// custom de feriado são refletidos. Convenção de atribuição de dia:
+//   • idx 0 que começa à noite e cruza a meia-noite (Madrugada dos dias úteis 23:00→,
+//     Dia do FDS 23:00→) é PERNOITE que termina em D → começa 23:00 da véspera.
 //   • Demais turnos: começam em D no horário parseado; terminam em D (ou D+1 se cruzam
 //     a meia-noite). Turnos extras (idx ≥ base) seguem a mesma regra.
+// Com o handoff do FDS às 23:00, domingo à noite termina 23:00 e a Madrugada de
+// segunda começa 23:00 do domingo — sem o antigo caso especial de segunda.
 // Cada segmento carrega `people` (array) — turno multi-pessoa é um único bloco.
 export function buildOnCallSegments(schedule) {
   const dayMs = (D, off, h, m) => {
@@ -249,21 +254,22 @@ export function buildOnCallSegments(schedule) {
   };
   const segs = [];
   for (const day of schedule) {
-    const D = day.date, dow = day.dow, ds = dayKey(D);
-    const weekday = dow >= 1 && dow <= 5;
+    const D = day.date, ds = dayKey(D);
     for (const shift of day.shifts) {
       const tr = parseTimeRange(shift.time);
       if (!tr) continue;
       const startMin = tr.sh * 60 + tr.sm, endMin = tr.eh * 60 + tr.em;
+      const crosses = endMin <= startMin; // termina no dia seguinte
       let start, end;
-      if (weekday && shift.idx === 0) {
-        start = dow === 1 ? dayMs(D, 0, 0, 0) : dayMs(D, -1, tr.sh, tr.sm); // segunda começa 00:00
+      if (shift.idx === 0 && crosses && startMin >= 12 * 60) {
+        // pernoite (começa à noite, termina de manhã) → pertence à véspera
+        start = dayMs(D, -1, tr.sh, tr.sm);
         end   = dayMs(D, 0, tr.eh, tr.em);
       } else {
         start = dayMs(D, 0, tr.sh, tr.sm);
-        end   = dayMs(D, endMin <= startMin ? 1 : 0, tr.eh, tr.em);        // cruza meia-noite
+        end   = dayMs(D, crosses ? 1 : 0, tr.eh, tr.em);
       }
-      segs.push({ start, end, people: shiftPeople(shift), period: shift.period, time: shift.time, dateStr: ds, dow });
+      segs.push({ start, end, people: shiftPeople(shift), period: shift.period, time: shift.time, dateStr: ds, dow: day.dow });
     }
   }
   return segs.sort((a, b) => a.start - b.start);
