@@ -3,7 +3,7 @@ import { useApi } from '../lib/api';
 import {
   PEOPLE, DOW, DOW_SHORT, MONTHS, MONTHS_SHORT,
   MS_DAY, dayKey, sameDay, fmtDS,
-  buildSchedule, currentOnCall, adjacentOnCall, getActiveSub, getCoverSuggestions, shiftPeople,
+  buildSchedule, currentOnCall, adjacentOnCall, getActiveSub, getCoverSuggestions, shiftPeople, resolveShiftPeople,
 } from '../lib/schedule';
 import { getTheme, ACCENT, DANGER, WARN } from '../lib/theme';
 import { Icon, Snackbar, ConfirmDialog, Skeleton, friendlyError } from './ui';
@@ -187,10 +187,11 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
       const dk = dayKey(d.date);
       d.shifts.forEach(s => {
         const people = shiftPeople(s);
+        const locked = !!s.personsOverridden; // turno travado por override não aplica sub
         if (people.includes(filter)) {
-          const sub = getActiveSub(filter, dk, subs);
+          const sub = locked ? null : getActiveSub(filter, dk, subs);
           rows.push({ date:d.date, dow:d.dow, ...s, kind:"turno", coveredBy: sub ? sub.substituto : null });
-        } else {
+        } else if (!locked) {
           // filter pode estar cobrindo alguém deste turno (substituto)
           const titular = people.find(p => { const sub = getActiveSub(p, dk, subs); return sub && sub.substituto === filter; });
           if (titular) rows.push({ date:d.date, dow:d.dow, ...s, kind:"turno", coveringFor: titular });
@@ -446,6 +447,25 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     return count;
   }, [applyToFuture, selectedShifts, schedule]);
 
+  // Conflitos entre a edição e substituições existentes: se o admin coloca no turno
+  // alguém que TEM substituição ativa (é titular) na data selecionada, avisamos —
+  // com a regra "edição vence", essa pessoa fica no turno e a substituição não vale ali.
+  const editSubConflicts = useMemo(() => {
+    if (!editForm.persons.length || !selectedShifts.size) return [];
+    const seen = new Set(); const out = [];
+    for (const key of selectedShifts) {
+      const dk = key.slice(0, key.lastIndexOf('-'));
+      for (const person of editForm.persons) {
+        const sub = getActiveSub(person, dk, subs);
+        if (sub) {
+          const k = `${dk}|${person}`;
+          if (!seen.has(k)) { seen.add(k); out.push({ dk, person, substituto: sub.substituto }); }
+        }
+      }
+    }
+    return out;
+  }, [editForm.persons, selectedShifts, subs]);
+
   // Substitutions that overlap the currently displayed month
   const monthSubs = useMemo(() => {
     if (!am) return subs;
@@ -662,10 +682,13 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
             const isWeekend = d.dow === 0 || d.dow === 6;
             const isPast    = !isToday && d.date < now;
             const dk        = dayKey(d.date);
-            const hasFiltered = !filter || d.shifts.some(s => shiftPeople(s).some(p => {
-              const sub = getActiveSub(p, dk, subs);
-              return (sub ? sub.substituto : p) === filter || p === filter;
-            })) || d.folga.includes(filter);
+            const hasFiltered = !filter || d.shifts.some(s => {
+              const locked = !!s.personsOverridden;
+              return shiftPeople(s).some(p => {
+                const sub = locked ? null : getActiveSub(p, dk, subs);
+                return (sub ? sub.substituto : p) === filter || p === filter;
+              });
+            }) || d.folga.includes(filter);
             return (
               <div key={dayKey(d.date)} ref={isToday ? todayRef : null} className="rounded-xl overflow-hidden"
                 style={{ scrollMarginTop:'64px', border:`${isToday?2:1}px solid ${isToday?T.cardBorderToday:T.cardBorder}`, opacity: isPast?0.45:filter&&!hasFiltered?0.35:1, background:isWeekend?T.cardBgWeekend:T.cardBg }}>
@@ -710,10 +733,8 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                     <div className="space-y-0.5">
                       {d.shifts.map((s) => {
                         const i = s.idx; // índice estável do override (não a posição no array)
-                        const people = shiftPeople(s).map(titular => {
-                          const sub = getActiveSub(titular, dk, subs);
-                          return { person: sub ? sub.substituto : titular, subOf: sub ? titular : null, titular };
-                        });
+                        const people = resolveShiftPeople(s, dk, subs)
+                          .map(r => ({ person: r.person, subOf: r.coveringFor, titular: r.titular }));
                         const dim = !!(filter && !people.some(p => p.person === filter || p.titular === filter));
                         const shiftKey = `${dk}-${i}`;
                         const isSelected = selectedShifts.has(shiftKey);
@@ -996,6 +1017,22 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                   <p className="flex items-center gap-1.5" style={{ fontSize:'0.72rem', color:WARN, fontWeight:'600', margin:'0 0 0.75rem 0' }}>
                     <Icon name="alert" size={13} /> Mudança permanente — afeta todos os meses até o fim da escala
                   </p>
+                )}
+
+                {editSubConflicts.length > 0 && (
+                  <div role="alert" style={{ display:'flex', gap:'0.5rem', alignItems:'flex-start', background:'rgba(245,158,11,0.1)', border:`1px solid ${WARN}`, borderRadius:'0.6rem', padding:'0.6rem 0.75rem', margin:'0 0 0.75rem 0' }}>
+                    <Icon name="alert" size={14} style={{ color:WARN, flexShrink:0, marginTop:'0.1rem' }} />
+                    <div style={{ fontSize:'0.72rem', color:T.textSecondary, lineHeight:1.5 }}>
+                      <b style={{ color:WARN }}>Conflito com substituição.</b>{' '}
+                      {editSubConflicts.map((c, i) => (
+                        <span key={i}>
+                          <b style={{ color:T.textPrimary }}>{c.person}</b> tem substituição ativa ({c.person} → {c.substituto}) em {fmtDS(c.dk)}
+                          {i < editSubConflicts.length - 1 ? '; ' : '. '}
+                        </span>
+                      ))}
+                      Com esta edição a pessoa é <b>mantida no turno</b> — a substituição não se aplica aqui. Se quer que o substituto assuma, use o formulário de Substituições.
+                    </div>
+                  </div>
                 )}
 
                 <div className="flex flex-wrap gap-2 items-center">

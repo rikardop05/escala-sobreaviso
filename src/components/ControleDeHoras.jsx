@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useApi } from '../lib/api';
 import {
   PEOPLE, CH_NAMES, MONTHS, durationHours, mergedHours, fmtHM, brl,
-  buildSchedule, dayKey, getActiveSub, shiftPeople,
+  buildSchedule, dayKey, resolveShiftPeople,
 } from '../lib/schedule';
 import { getTheme, DANGER, WARN } from '../lib/theme';
 import { Icon, SaveStatus, Snackbar, ConfirmDialog, friendlyError } from './ui';
@@ -201,11 +201,11 @@ export default function ControleDeHoras({ dark, profile }) {
         return day.shifts.flatMap(shift => {
           const { inicio, fim } = parseShiftTime(shift.time);
           // Cada pessoa do turno (multi-pessoa em feriados) gera seu próprio SA.
-          return shiftPeople(shift).flatMap(titular => {
-            const sub = getActiveSub(titular, dk, subs);
-            const effective = sub ? sub.substituto : titular;
+          // resolveShiftPeople aplica a mesma regra do calendário: turno com pessoas
+          // travadas por override não é redirecionado por substituição (edição vence).
+          return resolveShiftPeople(shift, dk, subs).flatMap(({ person: effective, coveringFor: coveredTitular, titular }) => {
             if (effective !== person) return [];
-            const coveringFor = titular !== person ? titular : null;
+            const coveringFor = coveredTitular;
             return [{
               id: `sched-${dk}-${shift.period}-${titular}`,
               person,
