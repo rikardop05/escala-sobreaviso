@@ -176,6 +176,12 @@ O widget "Agora" usa `currentOnCall(now, schedule, subs)` e `adjacentOnCall(now,
 `getActiveSub(person, dateStr, subs)` → busca substituição ativa onde `titular === person` e `dateStr` está no período.
 Lista `subs` é compartilhada (todos veem as mesmas substituições via chave global Redis).
 
+**Resolução de quem aparece no turno — fonte única `resolveShiftPeople(shift, dateStr, subs)`** → retorna `[{ person, coveringFor, titular }]` aplicando as substituições. Usada pelo calendário, filtro, widget "Agora" (via `buildOnCallSegments`/`currentOnCall`/`adjacentOnCall`, que carregam `personsOverridden` no segmento) **e** pelo cálculo do CH (`scheduleEntries`) — todos compartilham a mesma regra, então calendário e folha nunca divergem.
+
+**Regra "edição vence substituição"**: quando o admin define explicitamente as pessoas de um turno por override, `buildSchedule` marca `shift.personsOverridden = true` (só quando o override mexe em `persons`/`person` — override só de horário/rótulo **não** trava). Um turno travado **não** é redirecionado por uma substituição em que a pessoa colocada seja titular. Isso torna simétricos os dois caminhos de escalar alguém: via formulário de Substituição (`Carlos → Alice`, mostra Alice sem encadear) e via edição da escala (`persons: [Alice]`, também mostra Alice mesmo que Alice tenha substituição própria ativa). Substituições seguem agindo normalmente sobre a rotação base (turnos sem override de pessoa).
+
+**Aviso de conflito** (painel de edição, `editSubConflicts` em `EscalaSobreaviso.jsx`): ao selecionar turnos e escolher pessoas que **têm substituição ativa como titular** na data selecionada, um aviso WARN é exibido explicando que a pessoa será mantida no turno (a substituição não vale ali) e sugerindo o formulário de Substituições caso o substituto deva assumir.
+
 ---
 
 ## Controle de Horas (CH)
@@ -205,7 +211,7 @@ valorComp       = (valorHora / 3)   × horasComp ← mesmo fator do SA; abate da
 valorNF         = remuneracao + valorSobreaviso + valorHoraExtra − valorComp
 ```
 
-SA vem de `buildSchedule(overrides, labels)` — reflete edições do admin no cálculo e no CSV. O `scheduleEntries` casa a pessoa via `shiftPeople(shift)`, então em turno multi-pessoa (feriado) **cada** pessoa ganha seu próprio SA pelas horas do turno.
+SA vem de `buildSchedule(overrides, labels)` — reflete edições do admin no cálculo e no CSV. O `scheduleEntries` resolve a pessoa via `resolveShiftPeople(shift, dk, subs)` (mesma regra do calendário, incluindo "edição vence substituição"), então em turno multi-pessoa (feriado) **cada** pessoa ganha seu próprio SA pelas horas do turno, e substituições redirecionam o SA exatamente como no calendário.
 
 **Valor da NF**: card no Relatório do mês com remuneração + SA + HE − Compensação. Protegido igual à remuneração mensal (oculto por padrão, "R$ ••••••", olho revela — sem edição, é derivado). Estado (`nfVisible`) reseta ao trocar de pessoa. Entra também no CSV (`Valor compensação` e `VALOR DA NF`). Em meses fechados, usa `closedSnap.params.remuneracao` e `closedSnap.totals` (snapshots anteriores a esta feature não têm `valorComp` — tratado como 0).
 
