@@ -24,7 +24,8 @@ export default async function handler(req, res) {
     return res.status(e.status || 401).json({ error: 'Unauthorized' });
   }
 
-  if (!memberId) return res.status(403).json({ error: 'Forbidden' });
+  // Admin fora da escala (memberId null) passa — sempre opera sobre um membro-alvo.
+  if (!memberId && role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
 
   try {
     if (req.method === 'GET') {
@@ -40,6 +41,7 @@ export default async function handler(req, res) {
       if (!ok) return res.status(400).json({ error: 'Bad request' });
 
       const target = body.person || memberId;
+      if (!target) return res.status(400).json({ error: 'Bad request' });
       const key = `member:${target}:ch_closed`;
       const closed = (await kvGet(key)) ?? {};
       if (closed[body.month]) return res.status(409).json({ error: 'Month already closed' });
@@ -60,6 +62,7 @@ export default async function handler(req, res) {
       if (!ok) return res.status(400).json({ error: 'Bad request' });
 
       const target = person || memberId;
+      if (!target) return res.status(400).json({ error: 'Bad request' });
       const key = `member:${target}:ch_closed`;
       const closed = (await kvGet(key)) ?? {};
       if (!closed[month]) return res.status(404).json({ error: 'Not found' });

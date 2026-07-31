@@ -14,8 +14,9 @@ export default async function handler(req, res) {
     return res.status(e.status || 401).json({ error: 'Unauthorized' });
   }
 
-  // CH requires a valid team member identity
-  if (!memberId) return res.status(403).json({ error: 'Forbidden' });
+  // CH exige identidade de membro — EXCETO admin fora da escala (memberId null),
+  // que sempre opera sobre um membro-alvo via ?person (GET) ou body.person (POST).
+  if (!memberId && role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
 
   try {
     if (req.method === 'GET') {
@@ -36,6 +37,8 @@ export default async function handler(req, res) {
       const { entries, params, person: bodyPerson } = body;
       // Admin can write to any member's data via body.person
       const target = (role === 'admin' && bodyPerson) ? bodyPerson : memberId;
+      // Admin fora da escala precisa indicar o membro-alvo — nunca grava em member:null:*
+      if (!target) return res.status(400).json({ error: 'Bad request' });
       await Promise.all([
         entries !== undefined ? kvSet(`member:${target}:ch_entries`, entries) : Promise.resolve(),
         params  !== undefined ? kvSet(`member:${target}:ch_params`,  params)  : Promise.resolve(),
