@@ -4,6 +4,8 @@
 //
 // Regras:
 //   - memberId DEVE bater exatamente com uma chave de PEOPLE em src/lib/schedule.js
+//     (exceção: admin que NÃO faz parte da escala usa memberId: null — não tem painel
+//      de CH próprio, mas pode ver/editar o de qualquer membro pelo dropdown)
 //   - role: 'admin' | 'member'
 //   - E-mails não listados aqui recebem role: 'viewer' e sem acesso ao CH
 //   - Comparação de e-mail é case-insensitive
@@ -18,6 +20,7 @@ export const ALLOWLIST = {
   'ricardo.correa@mtpagamentos.com.br': { memberId: 'Ricardo',       role: 'admin'  },
   'carlos.beda@mtpagamentos.com.br':    { memberId: 'Carlos',        role: 'admin'  },
   'cbeda.de@gmail.com':                 { memberId: 'Carlos',        role: 'member' },
+  'alessandra.lisboa@mtpagamentos.com.br': { memberId: null,         role: 'admin'  }, // admin, fora da escala
 };
 
 /**
