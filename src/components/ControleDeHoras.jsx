@@ -60,8 +60,10 @@ export default function ControleDeHoras({ dark, profile }) {
   // mas só olho (sem edição, é um valor derivado). Reseta ao trocar de pessoa.
   const [nfVisible, setNfVisible] = useState(false);
 
-  // Admin can switch to view any CH_NAMES member; member is locked to their own
-  const [viewPerson, setViewPerson] = useState(profile?.memberId ?? null);
+  // Admin can switch to view any CH_NAMES member; member is locked to their own.
+  // Admin fora da escala (sem memberId) cai no primeiro membro por padrão — assim o
+  // painel já abre com dados em vez de um dropdown "fantasma" sem seleção real.
+  const [viewPerson, setViewPerson] = useState(profile?.memberId ?? (isAdmin ? CH_NAMES[0] : null));
   const person = isAdmin ? (viewPerson ?? profile?.memberId) : profile?.memberId;
 
   const [monthIdx, setMonthIdx] = useState(now.getMonth());
