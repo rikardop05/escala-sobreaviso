@@ -60,6 +60,11 @@ vercel.json                 SPA rewrite (rota não-/api/* → /index.html) + cro
 
 public/
   logo.png                  Ícone/marca do app (favicon + apple-touch-icon em index.html; mark na nav em App.jsx)
+
+CONTEXT.md                  Glossário do domínio — linguagem canônica (Equipe, Turno, Atribuição, Slot vago…)
+docs/adr/                   Decisões estruturais e por que foram tomadas
+docs/specs/
+  multi-equipe.md           Spec aprovada e NÃO implementada: suporte a três equipes
 ```
 
 ---
