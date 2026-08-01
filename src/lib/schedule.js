@@ -8,42 +8,44 @@ export const PEOPLE = {
   Raul:           { color: "#E65100", bg: "#FFF3E0" },
   Alice:          { color: "#AD1457", bg: "#FCE4EC" },
 };
-
-export const CH_NAMES = ["Raul", "Emanoel", "Marcus Túlio", "Ricardo", "Carlos", "Alice"];
+// Leitores atuais: teams.js (deriva SUSTENTACAO_MEMBERS e o roster da sustentação),
+// EstruturaEscala.jsx (cores da tabela da sustentação) e getCoverSuggestions() abaixo
+// (default do parâmetro roster). CH_NAMES foi removido nesta fase — ControleDeHoras.jsx
+// passou a montar a lista de responsáveis a partir de MEMBERS (src/lib/teams.js).
 
 // ─── DADOS DA ESCALA ─────────────────────────────────────────────────────────
 
 export const WEEKDAY_SHIFTS = {
   1: [
-    { period: "Madrugada", time: "23:00 – 04:00", dur: "5h", person: "Raul" },
-    { period: "Manhã",     time: "04:00 – 09:00", dur: "5h", person: "Emanoel" },
-    { period: "Noite",     time: "18:00 – 23:00", dur: "5h", person: "Marcus Túlio" },
+    { period: "Madrugada", time: "23:00 – 04:00", person: "Raul" },
+    { period: "Manhã",     time: "04:00 – 09:00", person: "Emanoel" },
+    { period: "Noite",     time: "18:00 – 23:00", person: "Marcus Túlio" },
   ],
   2: [
-    { period: "Madrugada", time: "23:00 – 04:00", dur: "5h", person: "Ricardo" },
-    { period: "Manhã",     time: "04:00 – 09:00", dur: "5h", person: "Carlos" },
-    { period: "Noite",     time: "18:00 – 23:00", dur: "5h", person: "Raul" },
+    { period: "Madrugada", time: "23:00 – 04:00", person: "Ricardo" },
+    { period: "Manhã",     time: "04:00 – 09:00", person: "Carlos" },
+    { period: "Noite",     time: "18:00 – 23:00", person: "Raul" },
   ],
   3: [
-    { period: "Madrugada", time: "23:00 – 04:00", dur: "5h", person: "Marcus Túlio" },
-    { period: "Manhã",     time: "04:00 – 09:00", dur: "5h", person: "Emanoel" },
-    { period: "Noite",     time: "18:00 – 23:00", dur: "5h", person: "Raul" },
+    { period: "Madrugada", time: "23:00 – 04:00", person: "Marcus Túlio" },
+    { period: "Manhã",     time: "04:00 – 09:00", person: "Emanoel" },
+    { period: "Noite",     time: "18:00 – 23:00", person: "Raul" },
   ],
   4: [
-    { period: "Madrugada", time: "23:00 – 04:00", dur: "5h", person: "Ricardo" },
-    { period: "Manhã",     time: "04:00 – 09:00", dur: "5h", person: "Marcus Túlio" },
-    { period: "Noite",     time: "18:00 – 23:00", dur: "5h", person: "Carlos" },
+    { period: "Madrugada", time: "23:00 – 04:00", person: "Ricardo" },
+    { period: "Manhã",     time: "04:00 – 09:00", person: "Marcus Túlio" },
+    { period: "Noite",     time: "18:00 – 23:00", person: "Carlos" },
   ],
   5: [
-    { period: "Madrugada", time: "23:00 – 04:00", dur: "5h", person: "Emanoel" },
-    { period: "Manhã",     time: "04:00 – 09:00", dur: "5h", person: "Raul" },
+    { period: "Madrugada", time: "23:00 – 04:00", person: "Emanoel" },
+    { period: "Manhã",     time: "04:00 – 09:00", person: "Raul" },
     // A Noite de sexta ia até 24:00, sobrepondo 1h ao "Dia" de sábado, que começa às
     // 23:00 de sexta — as duas pessoas ficavam de sobreaviso na mesma hora e ambas
     // recebiam por ela. Corrigida para 23:00 a partir de FRIDAY_NIGHT_CHANGE; a entrada
     // antiga permanece com vigência fechada para preservar o histórico e a folha já
     // paga de junho/julho de 2026. ⚠ Mover essas datas recalcula a escala.
-    { period: "Noite",     time: "18:00 – 24:00", dur: "6h", person: "Ricardo", until: "2026-07-31" },
-    { period: "Noite",     time: "18:00 – 23:00", dur: "5h", person: "Ricardo", from:  "2026-08-01" },
+    { period: "Noite",     time: "18:00 – 24:00", person: "Ricardo", until: "2026-07-31" },
+    { period: "Noite",     time: "18:00 – 23:00", person: "Ricardo", from:  "2026-08-01" },
   ],
 };
 
@@ -196,8 +198,8 @@ const SUSTENTACAO_ROTACAO = {
   roster: WEEKEND_ROSTER,
   change: WEEKEND_CHANGE,
   turnos: {
-    dia:   { period: "Dia",   time: "23:00 – 11:00", dur: "12h" },
-    noite: { period: "Noite", time: "11:00 – 23:00", dur: "12h" },
+    dia:   { period: "Dia",   time: "23:00 – 11:00" },
+    noite: { period: "Noite", time: "11:00 – 23:00" },
   },
   legado: { tipo: "ciclo", anchor: ANCHOR, ciclos: WEEKEND_CYCLE },
 };
@@ -243,15 +245,50 @@ export function parseTimeRange(timeStr) {
   return { sh, sm, eh, em };
 }
 
+// Defeito §7.6 corrigido: dur é SEMPRE derivado de time, nunca armazenado — um
+// override que muda só o horário não pode deixar uma duração antiga incoerente
+// (em produção, 2026-07-09 idx2 chegou a mostrar "5h" para um turno de 6h porque
+// o merge preservava o dur da base). shift.dur não existe mais em lugar nenhum
+// (WEEKDAY_SHIFTS, team.rotacao.turnos, os blocos vagos de infra/desenvolvimento);
+// todo leitor (calendário, Estrutura, "Dividir turno") chama esta função.
+export function shiftDuration(timeStr) {
+  const tr = parseTimeRange(timeStr);
+  if (!tr) return "";
+  let totalMin = (tr.eh * 60 + tr.em) - (tr.sh * 60 + tr.sm);
+  if (totalMin <= 0) totalMin += 1440; // cruza a meia-noite
+  const h = Math.floor(totalMin / 60), m = totalMin % 60;
+  return m === 0 ? `${h}h` : `${h}h${String(m).padStart(2, "0")}`;
+}
+
+// Ordena turnos pelo horário de início EFETIVO, com a mesma convenção de pernoite
+// do motor (ADR-0002): um turno que começa >= dayStart conta como se tivesse
+// começado antes da meia-noite (ordena primeiro). Necessário desde que "Dividir
+// turno" (§6 da spec) pode gerar índices novos que não têm mais relação com a
+// posição cronológica no dia — a UI não pode mais confiar na ordem do array.
+// Produz a MESMA ordem que o array já tinha para todos os turnos existentes hoje
+// (verificado nas três equipes) — só muda o que Dividir turno vier a criar.
+export function sortShiftsByStart(shifts, dayStart) {
+  const [dsH, dsM] = String(dayStart).split(":").map(Number);
+  const dayStartMin = (dsH || 0) * 60 + (dsM || 0);
+  const startKey = (s) => {
+    const tr = parseTimeRange(s.time);
+    if (!tr) return 0;
+    const startMin = tr.sh * 60 + tr.sm;
+    return (dayStartMin > 0 && startMin >= dayStartMin) ? startMin - 1440 : startMin;
+  };
+  return [...shifts].sort((a, b) => startKey(a) - startKey(b));
+}
+
 // team: definição da equipe (ver src/lib/teams.js) — obrigatório.
-//   team.blocos:  { [dow]: [{ period, time, dur, person? }] } — turnos fixos por dia da
+//   team.blocos:  { [dow]: [{ period, time, person? }] } — turnos fixos por dia da
 //                 semana; equipe sem cobertura naquele dow simplesmente não tem entrada.
 //   team.rotacao: { dows, roster, change, turnos:{dia,noite}, legado:{anchor,ciclos} } | null
 //                 — gera os turnos de fim de semana da sustentação (ver resolveRotation).
 //   team.startsOn/endsOn: vigência ('YYYY-MM-DD' | null) — recorta contra RANGE_START/END.
-// overrides: { [dayKey]: { [idx]: { person?|persons?, period, time, dur, editedAt } | null } }
+// overrides: { [dayKey]: { [idx]: { person?|persons?, period, time, editedAt } | null } }
 //   - idx além dos turnos base vira um turno NOVO (feriados/dias custom).
 //   - null reverte o slot base ao padrão (e remove um turno extra).
+//   - sem `dur`: duração é sempre derivada de `time` via shiftDuration() (defeito §7.6).
 // labels: { [dayKey]: string } — rótulo opcional do dia (ex.: "Feriado").
 // Cada turno retornado carrega um `idx` estável (a chave do override), usado pela UI
 // para seleção/edição/remoção — não confie na posição no array.
@@ -291,7 +328,11 @@ export function buildSchedule(team, overrides = {}, labels = {}) {
       const ov = ovDay[String(i)];
       if (ov === null) { if (b) shifts.push({ ...b, idx: i }); continue; } // reverte base; extra some
       if (ov) {
-        const merged = { ...(b || {}), ...ov, idx: i };
+        // dur nunca propaga: dados antigos gravados ainda podem trazer o campo (o
+        // schema Zod aceita por compatibilidade), mas o merge descarta — nenhum
+        // turno retornado carrega duração armazenada, só a derivada de time.
+        const { dur: _dur, ...ovRest } = ov;
+        const merged = { ...(b || {}), ...ovRest, idx: i };
         // Pessoas definidas explicitamente por override "travam" o turno: uma
         // substituição em que essa pessoa é titular NÃO redireciona mais este turno
         // (edição do admin vence a substituição). Só marca quando o override mexe

@@ -20,16 +20,7 @@ function MainApp() {
 
   const storageKey = user?.id ? `escala_profile_${user.id}` : null;
   const isAdmin = profile?.role === 'admin';
-
-  // ⚠ Gate temporário da Fase 1 — REMOVER NA FASE 2. O Controle de Horas ainda só
-  // entende a sustentação (CH_NAMES/PEOPLE em src/lib/schedule.js e
-  // buildSchedule(TEAMS.sustentacao) em ControleDeHoras.jsx), então a aba só aparece
-  // para quem pertence a ela ou a administra — nenhuma outra regra da Fase 1 depende
-  // disto, é só esta condição isolada (docs/specs/multi-equipe.md §8, Fase 2).
-  const chGateSustentacaoOnly = profile?.teamId === 'sustentacao'
-    || profile?.adminOf === '*'
-    || (Array.isArray(profile?.adminOf) && profile.adminOf.includes('sustentacao'));
-  const canAccessCH = (isAdmin || profile?.role === 'member') && chGateSustentacaoOnly;
+  const canAccessCH = isAdmin || profile?.role === 'member';
 
   const setView = (v) => {
     setViewState(v);

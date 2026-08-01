@@ -1,23 +1,22 @@
-// Registry de equipes — Fases 0 e 1 da spec de múltiplas equipes (docs/specs/multi-equipe.md).
+// Registry de equipes — Fases 0, 1 e 2 da spec de múltiplas equipes (docs/specs/multi-equipe.md).
 // Contém as três equipes: Sustentação, Infraestrutura e Desenvolvimento.
 // Vocabulário: CONTEXT.md. Decisão de manter a estrutura em código (não editável na UI): ADR-0001.
 //
 // Deriva de src/lib/schedule.js em vez de duplicar os dados: PEOPLE, WEEKDAY_SHIFTS,
 // WEEKEND_ROSTER, WEEKEND_CYCLE, ANCHOR, WEEKEND_CHANGE e RANGE_START continuam sendo a
-// fonte de verdade (consumida hoje por EscalaSobreaviso.jsx, ControleDeHoras.jsx e
-// EstruturaEscala.jsx); este arquivo só empacota esses mesmos valores no formato que o
-// motor genérico de buildSchedule()/buildOnCallSegments() espera. Infra e Desenvolvimento
-// não têm equivalente em schedule.js (só existiam nesta spec) — seus dados nascem aqui.
+// fonte de verdade (consumida hoje por EscalaSobreaviso.jsx e EstruturaEscala.jsx); este
+// arquivo só empacota esses mesmos valores no formato que o motor genérico de
+// buildSchedule()/buildOnCallSegments() espera. Infra e Desenvolvimento não têm
+// equivalente em schedule.js (só existiam nesta spec) — seus dados nascem aqui.
 import {
   PEOPLE, WEEKDAY_SHIFTS, WEEKEND_ROSTER, WEEKEND_CYCLE, ANCHOR, WEEKEND_CHANGE, RANGE_START,
   dayKey,
 } from "./schedule.js";
 
-// MEMBERS é a fonte única de pessoas prevista pela spec (§1 Modelo). A chave é o
-// identificador — primeiro nome; primeiro + sobrenome só quando há colisão entre
-// equipes (Leonardo Matheus / Leonardo Menegon) — e precisa ser única entre TODAS as
-// equipes (ADR-0003). `PEOPLE`/`CH_NAMES` (schedule.js) continuam sendo o que a UI do
-// Controle de Horas usa hoje (só sustentação) — MEMBERS ainda não os substitui.
+// MEMBERS é a fonte única de pessoas prevista pela spec (§1 Modelo) — desde a Fase 2,
+// é o que TODA a UI usa (ControleDeHoras.jsx incluído). A chave é o identificador —
+// primeiro nome; primeiro + sobrenome só quando há colisão entre equipes (Leonardo
+// Matheus / Leonardo Menegon) — e precisa ser única entre TODAS as equipes (ADR-0003).
 const SUSTENTACAO_MEMBERS = Object.fromEntries(
   Object.entries(PEOPLE).map(([name, p]) => [
     name,
@@ -49,7 +48,16 @@ export const MEMBERS = { ...SUSTENTACAO_MEMBERS, ...DESENVOLVIMENTO_MEMBERS, ...
 
 // Turnos sem dono fixo (infra e desenvolvimento, sem rotação — admin atribui à mão).
 // `persons: []` é o slot vago (ver invariante nova de shiftPeople() no §1 da spec).
-const vago = (period, time, dur) => ({ period, time, dur, persons: [] });
+// Sem `dur` — duração é sempre derivada de `time` via shiftDuration() (defeito §7.6).
+const vago = (period, time) => ({ period, time, persons: [] });
+
+// Infra e desenvolvimento começam em 2026-08-01, não 2026-07-01 (decisão da Fase 2):
+// julho de 2026 já fechou sem ninguém atribuído aos slots vagos — se startsOn ficasse
+// em julho, o Controle de Horas mostraria o mês inteiro como "sem plantonista", uma
+// afirmação falsa (o app simplesmente não existia para essas equipes ainda). Mover o
+// início para o mês em que o app de fato passa a ser usado evita inventar um passado
+// que não foi operado por aqui, sem exigir importar a planilha de julho.
+const EQUIPES_NOVAS_STARTS_ON = "2026-08-01";
 
 export const TEAMS = {
   sustentacao: {
@@ -67,8 +75,8 @@ export const TEAMS = {
       roster: WEEKEND_ROSTER,
       change: WEEKEND_CHANGE,
       turnos: {
-        dia:   { period: "Dia",   time: "23:00 – 11:00", dur: "12h" },
-        noite: { period: "Noite", time: "11:00 – 23:00", dur: "12h" },
+        dia:   { period: "Dia",   time: "23:00 – 11:00" },
+        noite: { period: "Noite", time: "11:00 – 23:00" },
       },
       legado: { tipo: "ciclo", anchor: ANCHOR, ciclos: WEEKEND_CYCLE },
     },
@@ -77,18 +85,18 @@ export const TEAMS = {
     id: "desenvolvimento",
     nome: "Desenvolvimento",
     dayStart: "00:00",
-    startsOn: "2026-07-01",
+    startsOn: EQUIPES_NOVAS_STARTS_ON,
     endsOn: null,
     roster: Object.keys(DESENVOLVIMENTO_MEMBERS),
     // Sem rodízio — blocos nascem vagos (persons: []), admin atribui à mão.
     blocos: {
-      1: [vago("Madrugada", "00:00 – 09:00", "9h"), vago("Noite", "18:00 – 00:00", "6h")],
-      2: [vago("Madrugada", "00:00 – 09:00", "9h"), vago("Noite", "18:00 – 00:00", "6h")],
-      3: [vago("Madrugada", "00:00 – 09:00", "9h"), vago("Noite", "18:00 – 00:00", "6h")],
-      4: [vago("Madrugada", "00:00 – 09:00", "9h"), vago("Noite", "18:00 – 00:00", "6h")],
-      5: [vago("Madrugada", "00:00 – 09:00", "9h"), vago("Noite", "18:00 – 00:00", "6h")],
-      0: [vago("Madrugada", "00:00 – 09:00", "9h"), vago("Dia", "09:00 – 00:00", "15h")],
-      6: [vago("Madrugada", "00:00 – 09:00", "9h"), vago("Dia", "09:00 – 00:00", "15h")],
+      1: [vago("Madrugada", "00:00 – 09:00"), vago("Noite", "18:00 – 00:00")],
+      2: [vago("Madrugada", "00:00 – 09:00"), vago("Noite", "18:00 – 00:00")],
+      3: [vago("Madrugada", "00:00 – 09:00"), vago("Noite", "18:00 – 00:00")],
+      4: [vago("Madrugada", "00:00 – 09:00"), vago("Noite", "18:00 – 00:00")],
+      5: [vago("Madrugada", "00:00 – 09:00"), vago("Noite", "18:00 – 00:00")],
+      0: [vago("Madrugada", "00:00 – 09:00"), vago("Dia", "09:00 – 00:00")],
+      6: [vago("Madrugada", "00:00 – 09:00"), vago("Dia", "09:00 – 00:00")],
     },
     rotacao: null,
   },
@@ -96,19 +104,19 @@ export const TEAMS = {
     id: "infra",
     nome: "Infraestrutura",
     dayStart: "00:00",
-    startsOn: "2026-07-01",
+    startsOn: EQUIPES_NOVAS_STARTS_ON,
     endsOn: null,
     roster: Object.keys(INFRA_MEMBERS),
     // Sem rodízio — blocos nascem vagos (persons: []), admin atribui à mão.
     // Sem cobertura 00:00–09:00 todos os dias e 09:00–18:00 nos dias úteis (expediente).
     blocos: {
-      1: [vago("Noite", "18:00 – 00:00", "6h")],
-      2: [vago("Noite", "18:00 – 00:00", "6h")],
-      3: [vago("Noite", "18:00 – 00:00", "6h")],
-      4: [vago("Noite", "18:00 – 00:00", "6h")],
-      5: [vago("Noite", "18:00 – 00:00", "6h")],
-      0: [vago("Dia", "09:00 – 17:00", "8h"), vago("Noite", "17:00 – 00:00", "7h")],
-      6: [vago("Dia", "09:00 – 17:00", "8h"), vago("Noite", "17:00 – 00:00", "7h")],
+      1: [vago("Noite", "18:00 – 00:00")],
+      2: [vago("Noite", "18:00 – 00:00")],
+      3: [vago("Noite", "18:00 – 00:00")],
+      4: [vago("Noite", "18:00 – 00:00")],
+      5: [vago("Noite", "18:00 – 00:00")],
+      0: [vago("Dia", "09:00 – 17:00"), vago("Noite", "17:00 – 00:00")],
+      6: [vago("Dia", "09:00 – 17:00"), vago("Noite", "17:00 – 00:00")],
     },
     rotacao: null,
   },

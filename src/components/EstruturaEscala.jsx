@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   PEOPLE, WEEKDAY_SHIFTS, WEEKEND_ROSTER, WEEKEND_CHANGE, MS_DAY,
-  weekendAssignment, shiftPeople, blocosAtivos, dayKey, parseTimeRange,
+  weekendAssignment, shiftPeople, blocosAtivos, dayKey, parseTimeRange, shiftDuration,
 } from '../lib/schedule';
 import { TEAMS } from '../lib/teams';
 import { getTheme } from '../lib/theme';
@@ -90,13 +90,13 @@ export default function EstruturaEscala({ dark, profile }) {
     return base.map((ref, i) => ({
       period: ref.period,
       time: ref.time,
-      dur: ref.dur,
+      dur: shiftDuration(ref.time), // derivado, nunca armazenado (defeito §7.6)
       // Dias cujo horário difere da referência de segunda (hoje: nenhum; antes de
       // 2026-08-01, a Noite de sexta ia até 24:00).
       excecoes: WEEKDAY_COLS
         .map(c => ({ c, s: blocosAtivos(WEEKDAY_SHIFTS, c.dow, hojeStr)[i] }))
         .filter(({ s }) => s && s.time !== ref.time)
-        .map(({ c, s }) => `${c.label} vai até ${s.time.split(/[–—-]/)[1].trim()} (${s.dur})`),
+        .map(({ c, s }) => `${c.label} vai até ${s.time.split(/[–—-]/)[1].trim()} (${shiftDuration(s.time)})`),
       cells: WEEKDAY_COLS.map(c => {
         const shift = blocosAtivos(WEEKDAY_SHIFTS, c.dow, hojeStr)[i];
         const override = WEEKDAY_DISPLAY_OVERRIDES[c.dow]?.[i];
@@ -260,7 +260,7 @@ export default function EstruturaEscala({ dark, profile }) {
                       {c.shifts.map((s, i) => (
                         <div key={i} className="text-xs">
                           <span className="font-semibold" style={{ color: T.textSecondary }}>{s.period}</span>{' '}
-                          <span className="font-mono" style={{ color: T.textMuted }}>{s.time} · {s.dur}</span>
+                          <span className="font-mono" style={{ color: T.textMuted }}>{s.time} · {shiftDuration(s.time)}</span>
                         </div>
                       ))}
                     </div>

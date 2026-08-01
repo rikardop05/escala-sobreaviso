@@ -52,7 +52,7 @@ Não bloqueiam a Fase 0.
 2. **`Anselmo` entra na escala?** Assumido como admin puro (`memberId: null`), porque não aparece na grade de julho — ao contrário de `Alberth`, que administra a infra **e** faz plantão nela. Confirmar.
 3. **`Luis` e `Pedro` não aparecem na contagem de horas** da planilha de julho, apesar de estarem entre os mais escalados do mês. Não afeta o app, mas afeta a folha de julho que já foi processada.
 4. **`Leonardo Menegon` é admin temporário para testes** — remover de `adminOf` quando os testes terminarem.
-5. **Backfill de julho/2026**: as duas equipes começam em 01/07/2026, mês já encerrado. São ~150 atribuições manuais para reconstituir. Os dados existem em `Sobreaviso(Jul-26).csv`; um script de importação one-shot é provavelmente mais barato e mais confiável que a reconstituição pela UI. Decidir antes da Fase 2.
+5. **Backfill de julho/2026 — ✅ RESOLVIDO (Fase 2, decisão do responsável)**: em vez de reconstituir ~150 atribuições de julho a partir de `Sobreaviso(Jul-26).csv`, `startsOn` de infra e desenvolvimento foi movido para `2026-08-01` (`EQUIPES_NOVAS_STARTS_ON` em `src/lib/teams.js`) — julho nunca existiu para essas equipes dentro do app, então não há nada a reconstituir; o CH mostra o mês anterior ao início como estado vazio ("equipe ainda não existia"), não como falha de cobertura.
 
 ---
 
@@ -265,9 +265,9 @@ Ação dedicada: o admin seleciona o turno, informa a hora do corte e quem assum
 
 5. **Noite de sexta até 24:00 — ✅ RESOLVIDO** (junto com a Fase 0, por decisão do usuário). `WEEKDAY_SHIFTS[5]` tinha `18:00 – 24:00` (6h) enquanto o `Dia` de sábado começa às 23:00 de sexta: duas pessoas de sobreaviso na mesma hora, ambas recebendo por ela. Corrigido com **vigência por entrada de turno** (`from`/`until`) a partir de `FRIDAY_NIGHT_CHANGE = "2026-08-01"`, preservando junho e julho de 2026. Verificado: 47 sextas alteradas na base, zero alterações fora delas, `idx` estável nos 388 dias, e **zero diferenças na escala de produção** — os 49 overrides já produziam o resultado correto, então a mudança é invisível hoje e serve para que a próxima extensão de `RANGE_END` não reintroduza o defeito.
 
-   Sobram **6 sextas com sobreposição real em produção** (12, 19 e 26/06 e 03, 10 e 17/07 de 2026), anteriores ao override. Se os meses de junho e julho de 2026 já estiverem fechados, o valor está congelado no snapshot e reabrir é decisão de quem administra.
+   Restaram **6 sextas com sobreposição real** (12, 19 e 26/06 e 03, 10 e 17/07 de 2026), anteriores ao override — nelas a hora das 23:00 à meia-noite foi paga a duas pessoas. **Caso encerrado por decisão do responsável: não serão corrigidas.** O valor é pequeno, os meses são passados e mexer em folha já processada custa mais do que o erro. Não reabrir este assunto.
 
-6. **Override de `time` sem `dur` deixa a duração exibida errada.** Em produção, 2026-07-09 idx2 tem `time: "17:00 - 23:00"` sem `dur`, e o merge mantém o `dur: "5h"` da base — a tela mostra 5h para um turno de 6h. O pagamento está certo (`scheduleEntries` deriva de `shift.time`, não de `dur`), mas o rótulo mente. `dur` deveria ser derivado de `time` em vez de armazenado, ou recalculado a cada edição.
+6. **Override de `time` sem `dur` deixa a duração exibida errada — ✅ RESOLVIDO (Fase 2).** `dur` foi removido de todo dado base (`WEEKDAY_SHIFTS`, `team.rotacao.turnos`, blocos vagos de infra/desenvolvimento) e o merge de override em `buildSchedule` descarta qualquer `dur` residual vindo de dado antigo gravado — a duração é sempre derivada de `time` via `shiftDuration()`. Verificado com dados reais de produção: 2026-07-09 idx2 (`time: "17:00 - 23:00"`) mostrava `dur: "5h"` no código anterior à Fase 2 e agora deriva corretamente `6h`; das 56 overrides de sustentação em produção que ainda carregavam `dur` gravado, nenhuma propaga esse campo depois do merge (0/56, confirmado). O schema Zod continua aceitando `dur` na entrada só por compatibilidade com dado antigo — nada volta a gravar nele.
 
 ## 8. Faseamento
 
@@ -281,10 +281,12 @@ Allowlist com `teamId`/`adminOf` e `role` derivado, escopo de escrita nos quatro
 
 **Aceite:** admin de uma equipe não consegue salvar edição em outra (403); slot vago aparece e é atribuível; equipe fora da vigência mostra estado vazio; infra mostra "sem plantão" entre 00:00 e 09:00; a sustentação continua se comportando como na Fase 0.
 
-### Fase 2 — controle de horas multi-equipe e dividir turno
+### Fase 2 — controle de horas multi-equipe e dividir turno — ✅ IMPLEMENTADA
 Dropdown escopado, sobreaviso gerado da equipe correta com corte por vigência, ação "Dividir turno".
 
 **Aceite:** pessoa de infra atribuída a um turno vê o SA correspondente no CH dela; nenhum SA é gerado antes de `startsOn`; totais da sustentação inalterados mês a mês contra os valores atuais; dividir um turno de 9h em 4h + 2h + 3h produz exatamente 9h de sobreaviso somadas.
+
+**Verificado**: `buildSchedule` da sustentação comparado com dados reais de produção antes/depois do fechamento da Fase 2 — 78 células pessoa×mês, 6836h de sobreaviso idênticas nos dois lados, zero divergência; split de turno testado com corte de 9h em 4h+2h+3h (zero sobreposição, soma exata); 2026-07-09 idx2 corrigido de `5h` exibido para `6h` derivado (ver defeito §7.6).
 
 ### Futuro
 Rotação de infra e desenvolvimento quando as equipes definirem uma; estrutura editável na UI (exige vigência versionada — ver ADR-0001); identificador estável de pessoa na migração para PostgreSQL/Turso (ADR-0003).
