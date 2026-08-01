@@ -1,12 +1,18 @@
-import { kvGet, kvSet } from './_redis.js';
+import { kvSet, kvGetWithFallback } from './_redis.js';
 import { requireUser } from './_auth.js';
 import { validate, checkBodySize, SubPostSchema } from './_validate.js';
+
+// Fase 0 da spec de múltiplas equipes (docs/specs/multi-equipe.md): chave migrou para
+// o prefixo por equipe; leitura cai para a chave global antiga quando a nova ainda não
+// existe (kvGetWithFallback). Escrita sempre na chave nova.
+const TEAM_ID = 'sustentacao'; // única equipe até a Fase 1
+const SUBS_KEY = `team:${TEAM_ID}:substitutions`;
 
 export default async function handler(req, res) {
   try {
     // GET is public — anyone can read substitutions
     if (req.method === 'GET') {
-      const subs = await kvGet('substitutions') ?? [];
+      const subs = await kvGetWithFallback(SUBS_KEY, 'substitutions') ?? [];
       return res.status(200).json(subs);
     }
 
@@ -30,9 +36,9 @@ export default async function handler(req, res) {
         return res.status(403).json({ error: 'Forbidden' });
       }
 
-      const subs = await kvGet('substitutions') ?? [];
+      const subs = await kvGetWithFallback(SUBS_KEY, 'substitutions') ?? [];
       const newSub = { ...body, id: String(Date.now()) };
-      await kvSet('substitutions', [...subs, newSub]);
+      await kvSet(SUBS_KEY, [...subs, newSub]);
       return res.status(200).json(newSub);
     }
 
@@ -44,14 +50,14 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Bad request' });
       }
 
-      const subs = await kvGet('substitutions') ?? [];
+      const subs = await kvGetWithFallback(SUBS_KEY, 'substitutions') ?? [];
       const target = subs.find(s => s.id === id);
       if (!target) return res.status(404).json({ error: 'Not found' });
       // Member can only delete substitutions where they appear as titular or substituto
       if (role === 'member' && target.titular !== memberId && target.substituto !== memberId) {
         return res.status(403).json({ error: 'Forbidden' });
       }
-      await kvSet('substitutions', subs.filter(s => s.id !== id));
+      await kvSet(SUBS_KEY, subs.filter(s => s.id !== id));
       return res.status(200).json({ ok: true });
     }
 

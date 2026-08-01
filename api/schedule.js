@@ -1,24 +1,33 @@
-import { kvGet, kvSet } from './_redis.js';
+import { kvSet, kvGetWithFallback } from './_redis.js';
 import { requireUser } from './_auth.js';
 import { validate, checkBodySize, SchedulePostSchema } from './_validate.js';
 
 // Persiste overrides do admin sobre a escala base determinística + rótulos de dia.
 //
+// Fase 0 da spec de múltiplas equipes (docs/specs/multi-equipe.md): só existe a
+// sustentação, então a equipe ainda não vem da requisição (chega na Fase 1, via
+// ?team= / adminOf). Chaves migraram para o prefixo por equipe; leitura cai para a
+// chave global antiga quando a nova ainda não existe (ver kvGetWithFallback).
+//
 // Chaves Redis (compartilhadas — afetam a visão de todos):
-//   schedule_overrides → { [dayKey]: { [idx]: { person?|persons?, period, time, dur, editedAt } | null } }
+//   team:{TEAM_ID}:schedule_overrides → { [dayKey]: { [idx]: { person?|persons?, period, time, dur, editedAt } | null } }
 //       idx '0','1','2',… — índices além dos base viram turnos NOVOS (feriados/dias custom).
 //       null = reverter o slot base (ou remover turno extra).
-//   schedule_labels    → { [dayKey]: string }  — rótulo do dia (ex.: "Feriado").
+//   team:{TEAM_ID}:schedule_labels    → { [dayKey]: string }  — rótulo do dia (ex.: "Feriado").
 //
 // GET (público) devolve { overrides, labels }. POST (admin) aceita { overrides, labels }
 // (ou um patch cru, compat. com o cliente antigo) e carimba editedAt em cada override.
+
+const TEAM_ID = 'sustentacao'; // única equipe até a Fase 1
+const OVERRIDES_KEY = `team:${TEAM_ID}:schedule_overrides`;
+const LABELS_KEY = `team:${TEAM_ID}:schedule_labels`;
 
 export default async function handler(req, res) {
   try {
     if (req.method === 'GET') {
       const [overrides, labels] = await Promise.all([
-        kvGet('schedule_overrides'),
-        kvGet('schedule_labels'),
+        kvGetWithFallback(OVERRIDES_KEY, 'schedule_overrides'),
+        kvGetWithFallback(LABELS_KEY, 'schedule_labels'),
       ]);
       return res.status(200).json({ overrides: overrides ?? {}, labels: labels ?? {} });
     }
@@ -43,7 +52,7 @@ export default async function handler(req, res) {
       const patch = data.overrides || {};
       const labelPatch = data.labels || {};
 
-      const current = await kvGet('schedule_overrides') ?? {};
+      const current = await kvGetWithFallback(OVERRIDES_KEY, 'schedule_overrides') ?? {};
       const editedAt = new Date().toISOString();
       for (const [day, shifts] of Object.entries(patch)) {
         if (!current[day]) current[day] = {};
@@ -54,15 +63,15 @@ export default async function handler(req, res) {
         if (Object.keys(current[day]).length === 0) delete current[day];
       }
 
-      const labels = await kvGet('schedule_labels') ?? {};
+      const labels = await kvGetWithFallback(LABELS_KEY, 'schedule_labels') ?? {};
       for (const [day, label] of Object.entries(labelPatch)) {
         if (label === null || label === '') delete labels[day];
         else labels[day] = label;
       }
 
       await Promise.all([
-        kvSet('schedule_overrides', current),
-        kvSet('schedule_labels', labels),
+        kvSet(OVERRIDES_KEY, current),
+        kvSet(LABELS_KEY, labels),
       ]);
       return res.status(200).json({ overrides: current, labels });
     }

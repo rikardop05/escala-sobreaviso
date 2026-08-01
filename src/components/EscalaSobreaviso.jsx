@@ -5,6 +5,7 @@ import {
   MS_DAY, dayKey, sameDay, fmtDS,
   buildSchedule, currentOnCall, adjacentOnCall, getActiveSub, getCoverSuggestions, shiftPeople, resolveShiftPeople,
 } from '../lib/schedule';
+import { TEAMS } from '../lib/teams';
 import { getTheme, ACCENT, DANGER, WARN } from '../lib/theme';
 import { Icon, Snackbar, ConfirmDialog, Skeleton, friendlyError } from './ui';
 
@@ -131,7 +132,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
   };
 
   // Schedule recomputes when overrides/labels change (admin edits reflect immediately)
-  const schedule = useMemo(() => buildSchedule(overrides, labels), [overrides, labels]);
+  const schedule = useMemo(() => buildSchedule(TEAMS.sustentacao, overrides, labels), [overrides, labels]);
   const todayStr = dayKey(now);
 
   const months = useMemo(() => {

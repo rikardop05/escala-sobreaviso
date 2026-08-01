@@ -246,7 +246,15 @@ Ação dedicada: o admin seleciona o turno, informa a hora do corte e quem assum
 
 - Impossível deixar sobreposição para trás — as partes são geradas a partir do intervalo original.
 - Turnos passam a ser renderizados ordenados por horário de início; o `idx` volta a ser só chave de override.
-- Detector de sobreposição no mesmo dia (rede de segurança para turnos criados pelo caminho manual, que continua existindo), com aviso no bloco do dia e no relatório do CH.
+- Detector de sobreposição no mesmo dia (rede de segurança para turnos criados pelo caminho manual, que continua existindo).
+
+**O detector não pode gritar lobo.** Os dados de produção mostram que sobreposição entre pessoas diferentes é frequentemente **intencional**: em 09/07/2026 (feriado) o admin escalou Marcus Túlio e Alice juntos das 05:00 às 11:00, e Emanoel e Raul juntos das 11:00 às 17:00 — cobertura dupla deliberada, montada como turnos separados. Um aviso genérico de "turnos sobrepostos" seria ruído nesse caso e o admin aprenderia a ignorá-lo. Diferencie:
+
+| Situação | Tratamento |
+|---|---|
+| **A mesma pessoa** em dois turnos que se sobrepõem | **Aviso.** É pagamento em duplicidade para um indivíduo — nunca intencional |
+| Pessoas diferentes, janelas **idênticas** | Indicador passivo de cobertura dupla, sem alarme |
+| Pessoas diferentes, sobreposição **parcial** | Aviso discreto — é a assinatura do "esqueci de encurtar o turno original" |
 
 ## 7. Defeitos a corrigir no caminho
 
@@ -254,6 +262,12 @@ Ação dedicada: o admin seleciona o turno, informa a hora do corte e quem assum
 2. **Patch anual estoura o limite de corpo.** Propagar 1 turno por ~365 dias gera ~30 KB contra os 50 KB de `MAX_BODY_BYTES`; 2 turnos estouram. Com equipes montadas à mão isso deixa de ser caso raro. Corrigir enviando em lotes (~150 dias por requisição), com progresso e falha atômica por lote. Expandir no servidor foi descartado: manteria a lógica de escala fora de `src/lib/schedule.js`.
 3. **`api/migrate-ch.js`** — remover (item também em §4).
 4. **Corrida entre admins** — resolvida de graça pela chave por equipe: dois admins de equipes diferentes deixam de reescrever o mesmo blob.
+
+5. **Noite de sexta até 24:00 — ✅ RESOLVIDO** (junto com a Fase 0, por decisão do usuário). `WEEKDAY_SHIFTS[5]` tinha `18:00 – 24:00` (6h) enquanto o `Dia` de sábado começa às 23:00 de sexta: duas pessoas de sobreaviso na mesma hora, ambas recebendo por ela. Corrigido com **vigência por entrada de turno** (`from`/`until`) a partir de `FRIDAY_NIGHT_CHANGE = "2026-08-01"`, preservando junho e julho de 2026. Verificado: 47 sextas alteradas na base, zero alterações fora delas, `idx` estável nos 388 dias, e **zero diferenças na escala de produção** — os 49 overrides já produziam o resultado correto, então a mudança é invisível hoje e serve para que a próxima extensão de `RANGE_END` não reintroduza o defeito.
+
+   Sobram **6 sextas com sobreposição real em produção** (12, 19 e 26/06 e 03, 10 e 17/07 de 2026), anteriores ao override. Se os meses de junho e julho de 2026 já estiverem fechados, o valor está congelado no snapshot e reabrir é decisão de quem administra.
+
+6. **Override de `time` sem `dur` deixa a duração exibida errada.** Em produção, 2026-07-09 idx2 tem `time: "17:00 - 23:00"` sem `dur`, e o merge mantém o `dur: "5h"` da base — a tela mostra 5h para um turno de 6h. O pagamento está certo (`scheduleEntries` deriva de `shift.time`, não de `dur`), mas o rótulo mente. `dur` deveria ser derivado de `time` em vez de armazenado, ou recalculado a cada edição.
 
 ## 8. Faseamento
 
