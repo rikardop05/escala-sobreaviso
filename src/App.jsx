@@ -20,7 +20,16 @@ function MainApp() {
 
   const storageKey = user?.id ? `escala_profile_${user.id}` : null;
   const isAdmin = profile?.role === 'admin';
-  const canAccessCH = isAdmin || profile?.role === 'member';
+
+  // ⚠ Gate temporário da Fase 1 — REMOVER NA FASE 2. O Controle de Horas ainda só
+  // entende a sustentação (CH_NAMES/PEOPLE em src/lib/schedule.js e
+  // buildSchedule(TEAMS.sustentacao) em ControleDeHoras.jsx), então a aba só aparece
+  // para quem pertence a ela ou a administra — nenhuma outra regra da Fase 1 depende
+  // disto, é só esta condição isolada (docs/specs/multi-equipe.md §8, Fase 2).
+  const chGateSustentacaoOnly = profile?.teamId === 'sustentacao'
+    || profile?.adminOf === '*'
+    || (Array.isArray(profile?.adminOf) && profile.adminOf.includes('sustentacao'));
+  const canAccessCH = (isAdmin || profile?.role === 'member') && chGateSustentacaoOnly;
 
   const setView = (v) => {
     setViewState(v);
@@ -64,7 +73,7 @@ function MainApp() {
       })
       .catch(err => {
         console.error('Erro ao sincronizar perfil:', err);
-        if (!hasLocal) setProfile({ role: 'viewer', memberId: null, dark: true });
+        if (!hasLocal) setProfile({ role: 'viewer', memberId: null, teamId: null, adminOf: [], dark: true });
       })
       .finally(() => {
         if (!hasLocal) setLoading(false);
@@ -75,12 +84,13 @@ function MainApp() {
     const next = { ...profile, ...updates };
     setProfile(next);
     if (storageKey) localStorage.setItem(storageKey, JSON.stringify(next));
-    // Only send mutable user preferences — role/memberId are backend-controlled
-    const { dark: d, filter, monthKey } = updates;
+    // Only send mutable user preferences — role/memberId/teamId/adminOf são do backend
+    const { dark: d, filter, monthKey, teamView } = updates;
     const prefs = {};
     if (typeof d === 'boolean') prefs.dark = d;
     if (filter   !== undefined) prefs.filter   = filter;
     if (monthKey !== undefined) prefs.monthKey = monthKey;
+    if (teamView !== undefined) prefs.teamView = teamView;
     if (Object.keys(prefs).length > 0) {
       api('/api/profile', { method: 'POST', body: prefs }).catch(console.error);
     }
@@ -164,7 +174,7 @@ function MainApp() {
       </nav>
 
       {view === 'estrutura' && isAdmin ? (
-        <EstruturaEscala dark={dark} />
+        <EstruturaEscala dark={dark} profile={profile} />
       ) : view === 'controle' && canAccessCH ? (
         <ControleDeHoras dark={dark} profile={profile} />
       ) : (
@@ -222,7 +232,7 @@ function PublicApp() {
       <EscalaSobreaviso
         dark={dark}
         onToggleDark={() => setDark(d => !d)}
-        profile={{ role: 'viewer', memberId: null }}
+        profile={{ role: 'viewer', memberId: null, teamId: null, adminOf: [] }}
         saveProfile={() => {}}
       />
     </div>

@@ -1,16 +1,25 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useApi } from '../lib/api';
 import {
-  PEOPLE, DOW, DOW_SHORT, MONTHS, MONTHS_SHORT,
+  DOW, DOW_SHORT, MONTHS, MONTHS_SHORT,
   MS_DAY, dayKey, sameDay, fmtDS,
-  buildSchedule, currentOnCall, adjacentOnCall, getActiveSub, getCoverSuggestions, shiftPeople, resolveShiftPeople,
+  buildSchedule, currentOnCall, adjacentOnCall,
+  getActiveSub, getCoverSuggestions, shiftPeople, resolveShiftPeople, parseTimeRange,
 } from '../lib/schedule';
-import { TEAMS } from '../lib/teams';
+import { TEAMS, MEMBERS } from '../lib/teams';
 import { getTheme, ACCENT, DANGER, WARN } from '../lib/theme';
 import { Icon, Snackbar, ConfirmDialog, Skeleton, friendlyError } from './ui';
 
+// Envio em lotes de overrides "aplicar a todos os meses seguintes" — propagar 1
+// turno pelo range inteiro (~365 dias) gera ~30 KB, perto do limite de 50 KB do
+// corpo da requisição (MAX_BODY_BYTES em api/_validate.js); 2 turnos estouram.
+const PATCH_BATCH_DAYS = 150;
+
+// Pessoas de TODAS as equipes (src/lib/teams.js) — cores/badges usadas em qualquer
+// tela que possa mostrar gente de mais de uma equipe (o widget "Agora", em
+// particular, sempre mostra as três). `PEOPLE` (schedule.js) cobre só a sustentação.
 function PersonTag({ name, dim, subOf }) {
-  const p = PEOPLE[name] || { color: "#555", bg: "#eee" };
+  const p = MEMBERS[name] || { color: "#555", bg: "#eee" };
   return (
     <span
       className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-sm font-bold"
@@ -28,10 +37,13 @@ function PersonTag({ name, dim, subOf }) {
 }
 
 // Multi-seleção de pessoas (chips) — usado ao editar e ao adicionar turnos.
-function PersonPicker({ selected, onToggle }) {
+// `roster` é a lista de nomes elegíveis — SEMPRE a equipe ativa, nunca todo mundo
+// (um turno da sustentação não pode ser atribuído a alguém da infra).
+function PersonPicker({ selected, onToggle, roster }) {
   return (
     <div className="flex flex-wrap gap-1.5">
-      {Object.entries(PEOPLE).map(([name, p]) => {
+      {roster.map(name => {
+        const p = MEMBERS[name] || { color: "#555", bg: "#eee" };
         const on = selected.includes(name);
         return (
           <button key={name} type="button" onClick={() => onToggle(name)} aria-pressed={on}
@@ -43,6 +55,59 @@ function PersonPicker({ selected, onToggle }) {
       })}
     </div>
   );
+}
+
+// Equipe padrão ao abrir a tela, quando não há equipe no hash nem em teamView
+// salvo (docs/specs/multi-equipe.md §5): a da própria pessoa; viewer/visitante
+// sempre sustentação.
+function defaultTeamId(profile) {
+  if (!profile || profile.role === 'viewer') return 'sustentacao';
+  if (profile.teamId && TEAMS[profile.teamId]) return profile.teamId;
+  if (Array.isArray(profile.adminOf) && profile.adminOf.length) return profile.adminOf[0];
+  return 'sustentacao';
+}
+
+// Lê a equipe do hash da URL (#escala/infra) — só quando é um id de equipe válido.
+function hashTeam() {
+  const m = window.location.hash.match(/^#escala\/([a-z]+)/);
+  return m && TEAMS[m[1]] ? m[1] : null;
+}
+
+// Turno cujo início é >= dayStart da equipe (23:00 na sustentação) pertence ao
+// dia anterior no calendário. Chame antes de "hoje" ou "01/07/2026" — datas de
+// vigência são strings YYYY-MM-DD, comparam lexicograficamente sem problema.
+function teamVigenciaMessage(team, dateStr) {
+  if (team.startsOn && dateStr < team.startsOn) return `${team.nome} passa a existir em ${fmtDS(team.startsOn)}`;
+  if (team.endsOn && dateStr > team.endsOn) return `${team.nome} encerrou em ${fmtDS(team.endsOn)}`;
+  return null;
+}
+
+// Detecta sobreposição de horário entre turnos do MESMO dia (docs/specs/multi-equipe.md §6).
+// O detector não pode "gritar lobo": sobreposição entre pessoas diferentes é
+// frequentemente cobertura dupla intencional (feriados com dupla escala montada
+// como turnos separados) — só a MESMA pessoa em dois turnos que se sobrepõem é
+// inequivocamente um problema (pagamento em duplicidade).
+function detectOverlaps(day, dateStr, subs) {
+  const parsed = day.shifts.map(s => {
+    const tr = parseTimeRange(s.time);
+    if (!tr) return null;
+    let start = tr.sh * 60 + tr.sm, end = tr.eh * 60 + tr.em;
+    if (end <= start) end += 1440; // cruza meia-noite
+    const people = resolveShiftPeople(s, dateStr, subs).map(r => r.person);
+    return { start, end, people };
+  }).filter(Boolean);
+
+  let samePerson = false, identical = false, partial = false;
+  for (let i = 0; i < parsed.length; i++) {
+    for (let j = i + 1; j < parsed.length; j++) {
+      const a = parsed[i], b = parsed[j];
+      if (!(a.start < b.end && b.start < a.end)) continue; // não se sobrepõem
+      if (a.people.some(p => b.people.includes(p))) { samePerson = true; continue; }
+      if (a.start === b.start && a.end === b.end) identical = true;
+      else partial = true;
+    }
+  }
+  return { samePerson, identical, partial };
 }
 
 // Ignora um monthKey salvo que aponta para um mês já passado —
@@ -69,6 +134,17 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
   const api = useApi();
   const isAdmin = profile?.role === 'admin';
 
+  // ─── EQUIPE ATIVA (aba Escala) ───────────────────────────────────────────────
+  // Prioridade: hash da URL (#escala/infra, link compartilhável) > teamView salvo
+  // no perfil > equipe da própria pessoa > sustentação (docs/specs/multi-equipe.md §5).
+  const [activeTeam, setActiveTeamState] = useState(() => {
+    const h = hashTeam();
+    if (h) return h;
+    if (profile?.teamView && TEAMS[profile.teamView]) return profile.teamView;
+    return defaultTeamId(profile);
+  });
+  const team = TEAMS[activeTeam];
+
   const [now,      setNow]      = useState(new Date());
   const [filter,   setFilter]   = useState(profile?.filter ?? null);
   const [monthKey, setMonthKey] = useState(() => freshMonthKey(profile?.monthKey));
@@ -90,29 +166,46 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
   const [selectedShifts, setSelectedShifts] = useState(new Set());
   const [editForm,       setEditForm]       = useState({ persons: [], period: '', time: '', dur: '' });
   const [editSaving,     setEditSaving]     = useState(false);
+  const [editProgress,   setEditProgress]   = useState(null); // "lote 2 de 3" durante envio em lotes
   const [editError,      setEditError]      = useState(null);
   const [applyToFuture,  setApplyToFuture]  = useState(false);
   const [confirmAction,  setConfirmAction]  = useState(null); // 'apply' | 'reset' | null
   const [addDay,   setAddDay]   = useState(null); // dayKey ao qual estamos adicionando um turno
   const [addForm,  setAddForm]  = useState({ persons: [], period: '', time: '', dur: '' });
 
-  // Carrega substituições e overrides do servidor
-  const loadOverrides = useCallback(() => {
+  // Troca a equipe ativa: atualiza hash + perfil, e limpa estado específico da
+  // equipe anterior (filtro, seleção de edição, mês) para não vazar entre elas.
+  function switchTeam(id) {
+    if (id === activeTeam) return;
+    setActiveTeamState(id);
+    saveProfile({ teamView: id });
+    window.history.replaceState(null, '', `#escala/${id}`);
+    setFilter(null);
+    setEditMode(false);
+    setSelectedShifts(new Set());
+    setAddDay(null);
+    setMonthKey(null); // volta pro mês atual — evita cair num mês sem dias na equipe nova
+    setSubForm({ show: false, titular: "", substituto: "", from: "", until: "" });
+  }
+
+  // Carrega substituições e overrides do servidor, para a equipe ativa
+  const loadOverrides = useCallback((teamId) => {
     setOverridesLoading(true);
     setOverridesError(false);
-    api('/api/schedule')
+    api(`/api/schedule?team=${teamId}`)
       .then(data => { setOverrides(data?.overrides || {}); setLabels(data?.labels || {}); })
       .catch(err => { console.error(err); setOverridesError(true); })
       .finally(() => setOverridesLoading(false));
   }, [api]);
 
   useEffect(() => {
-    api('/api/substitutions')
+    setSubsLoading(true);
+    api(`/api/substitutions?team=${activeTeam}`)
       .then(data => setSubs(data || []))
       .catch(console.error)
       .finally(() => setSubsLoading(false));
-    loadOverrides();
-  }, []);
+    loadOverrides(activeTeam);
+  }, [activeTeam]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Relógio
   useEffect(() => {
@@ -132,7 +225,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
   };
 
   // Schedule recomputes when overrides/labels change (admin edits reflect immediately)
-  const schedule = useMemo(() => buildSchedule(TEAMS.sustentacao, overrides, labels), [overrides, labels]);
+  const schedule = useMemo(() => buildSchedule(team, overrides, labels), [team, overrides, labels]);
   const todayStr = dayKey(now);
 
   const months = useMemo(() => {
@@ -145,7 +238,12 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
   }, [schedule]);
 
   const currentMonthKey = `${now.getFullYear()}-${now.getMonth()}`;
-  const activeMonth = monthKey || (months.some(m => m.key === currentMonthKey) ? currentMonthKey : months[0].key);
+  // monthKey salvo pode ser de OUTRA equipe (vigência diferente) — só usa se
+  // existir de fato nesta; senão cai no mês atual, e na ausência dele, no
+  // primeiro mês que a equipe tiver (pode não haver nenhum → activeMonth null,
+  // tratado como estado vazio abaixo).
+  const validMonthKey = monthKey && months.some(m => m.key === monthKey) ? monthKey : null;
+  const activeMonth = validMonthKey || (months.some(m => m.key === currentMonthKey) ? currentMonthKey : (months[0]?.key ?? null));
 
   // Scrolla para hoje quando o mês ativo for o mês atual
   useEffect(() => {
@@ -161,23 +259,73 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
   };
 
   const monthDays = useMemo(
-    () => schedule.filter(d => `${d.date.getFullYear()}-${d.date.getMonth()}` === activeMonth),
+    () => activeMonth ? schedule.filter(d => `${d.date.getFullYear()}-${d.date.getMonth()}` === activeMonth) : [],
     [schedule, activeMonth]
   );
 
+  // ─── WIDGET "AGORA" — sempre as três equipes (docs/specs/multi-equipe.md §5) ──
+  // Ignora o seletor: cada equipe usa SEMPRE o próprio dayStart (nunca o da
+  // equipe ativa) — passar o dayStart errado desloca a escala em um dia sem erro
+  // visível (ver ADR-0002 e Commit 1).
+  const [teamsNow, setTeamsNow] = useState({}); // { [teamId]: { schedule, subs } }
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all(Object.values(TEAMS).map(t =>
+      Promise.all([
+        api(`/api/schedule?team=${t.id}`),
+        api(`/api/substitutions?team=${t.id}`),
+      ]).then(([schedData, subsData]) => ({
+        id: t.id,
+        schedule: buildSchedule(t, schedData?.overrides || {}, schedData?.labels || {}),
+        subs: subsData || [],
+      })).catch(() => ({ id: t.id, schedule: null, subs: [] }))
+    )).then(results => {
+      if (cancelled) return;
+      setTeamsNow(prev => {
+        const next = { ...prev };
+        results.forEach(r => {
+          // Uma falha pontual nunca regride uma entrada que já tinha dado bom — a
+          // equipe ativa, em particular, é sempre recomputável localmente (ver o
+          // efeito de sincronização abaixo) e não deve virar "carregando" por causa
+          // de uma falha de rede neste fetch específico.
+          if (r.schedule === null && prev[r.id]?.schedule) return;
+          next[r.id] = { schedule: r.schedule, subs: r.subs };
+        });
+        return next;
+      });
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Mantém a linha da equipe ativa sempre em dia com o que acabou de ser editado,
+  // sem esperar o próximo refresh (as outras duas só atualizam na montagem).
+  useEffect(() => {
+    setTeamsNow(prev => ({ ...prev, [activeTeam]: { schedule, subs } }));
+  }, [activeTeam, schedule, subs]);
+
+  const nowRows = useMemo(() => Object.values(TEAMS).map(t => {
+    const vig = teamVigenciaMessage(t, todayStr);
+    if (vig) return { team: t, vig };
+    const snap = teamsNow[t.id];
+    if (!snap || !snap.schedule) return { team: t, loading: true };
+    return { team: t, onCall: currentOnCall(now, snap.schedule, snap.subs, t.dayStart) };
+  }), [teamsNow, now, todayStr]);
+
   // { people: [{ person, coveringFor }], label, time } | null — pode ter +1 pessoa (feriado)
-  const onCall = currentOnCall(now, schedule, subs, TEAMS.sustentacao.dayStart);
+  const onCall = currentOnCall(now, schedule, subs, team.dayStart);
   const onCallColor = onCall && onCall.people.length === 1
-    ? (PEOPLE[onCall.people[0].person] || {}).color || "#94A3B8"
+    ? (MEMBERS[onCall.people[0].person] || {}).color || "#94A3B8"
     : "#94A3B8";
 
-  // Handoff: plantonista anterior e próximo (com substituições) para o widget "Agora"
-  const handoff = useMemo(() => adjacentOnCall(now, schedule, subs, TEAMS.sustentacao.dayStart), [now, schedule, subs]);
+  // Handoff: plantonista anterior e próximo (com substituições), referente à equipe ativa
+  const handoff = useMemo(() => adjacentOnCall(now, schedule, subs, team.dayStart), [now, schedule, subs, team]);
 
   const coverSuggestions = useMemo(() => {
     if (!subForm.titular || !subForm.from || !subForm.until || subForm.from > subForm.until) return [];
-    return getCoverSuggestions(subForm.titular, subForm.from, subForm.until, schedule);
-  }, [subForm.titular, subForm.from, subForm.until, schedule]);
+    return getCoverSuggestions(subForm.titular, subForm.from, subForm.until, schedule, team.roster);
+  }, [subForm.titular, subForm.from, subForm.until, schedule, team]);
 
   const upcoming = useMemo(() => {
     if (!filter) return [];
@@ -224,7 +372,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     if (!canSave || subSaving) return;
     setSubError(null);
     setSubSaving(true);
-    const newSub = { titular: subForm.titular, substituto: subForm.substituto, from: subForm.from, until: subForm.until };
+    const newSub = { team: activeTeam, titular: subForm.titular, substituto: subForm.substituto, from: subForm.from, until: subForm.until };
     try {
       const saved = await api('/api/substitutions', { method: 'POST', body: newSub });
       setSubs(prev => [...prev, saved]);
@@ -245,7 +393,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     setUndoSub(sub);
     undoTimer.current = setTimeout(() => setUndoSub(null), 6000);
     try {
-      await api(`/api/substitutions?id=${sub.id}`, { method: 'DELETE' });
+      await api(`/api/substitutions?id=${sub.id}&team=${activeTeam}`, { method: 'DELETE' });
     } catch (e) {
       console.error('Erro ao remover substituição:', e);
       clearTimeout(undoTimer.current);
@@ -263,7 +411,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     try {
       const saved = await api('/api/substitutions', {
         method: 'POST',
-        body: { titular: sub.titular, substituto: sub.substituto, from: sub.from, until: sub.until },
+        body: { team: activeTeam, titular: sub.titular, substituto: sub.substituto, from: sub.from, until: sub.until },
       });
       setSubs(prev => [...prev, saved]);
     } catch (e) {
@@ -287,6 +435,11 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
 
   // Expands a base patch (selected shifts only) to all future occurrences of the
   // same shift pattern: same weekday for weekday shifts, same cycle-week + dow for weekend shifts.
+  //
+  // Defeito §7.1 corrigido: casava e.shifts[numIdx] por POSIÇÃO no array, mas
+  // e.shifts é compactado (só contém os turnos que existem naquele dia) — um dia
+  // com turno extra (feriado) deslocava os índices e o patch acertava o turno
+  // errado. Casa por s.idx (a chave estável do override) em vez da posição.
   function expandPatchToFuture(basePatch) {
     const expanded = {};
     for (const [dk, shifts] of Object.entries(basePatch)) {
@@ -298,7 +451,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
         for (const e of schedule) {
           const eDk = dayKey(e.date);
           if (eDk < dk) continue;
-          if (!e.shifts[numIdx]) continue;
+          if (!e.shifts.some(s => s.idx === numIdx)) continue;
           const matches = isWeekend
             ? (e.dow === 0 || e.dow === 6) && e.cycleWeek === entry.cycleWeek && e.dow === entry.dow
             : e.dow === entry.dow;
@@ -343,20 +496,45 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     return basePatch;
   }
 
+  // Divide um patch de overrides em lotes de até PATCH_BATCH_DAYS dias — propagar
+  // 1 turno pelo range inteiro (~365 dias) gera ~30 KB, perto do limite de 50 KB
+  // do corpo da requisição (defeito §7.2). Cada lote é uma requisição própria;
+  // o servidor mescla cada uma no que já está salvo, então a ordem não importa.
+  function chunkPatchByDays(patch) {
+    const days = Object.keys(patch);
+    if (days.length <= PATCH_BATCH_DAYS) return [patch];
+    const batches = [];
+    for (let i = 0; i < days.length; i += PATCH_BATCH_DAYS) {
+      const batch = {};
+      days.slice(i, i + PATCH_BATCH_DAYS).forEach(dk => { batch[dk] = patch[dk]; });
+      batches.push(batch);
+    }
+    return batches;
+  }
+
   async function postPatch(patch, clearForm) {
     setEditSaving(true);
     setEditError(null);
+    setEditProgress(null);
+    const batches = chunkPatchByDays(patch);
     try {
-      const updated = await api('/api/schedule', { method: 'POST', body: { overrides: patch } });
-      setOverrides(updated.overrides || {});
-      setLabels(updated.labels || {});
+      let lastResult = null;
+      for (let i = 0; i < batches.length; i++) {
+        if (batches.length > 1) setEditProgress(`Salvando lote ${i + 1} de ${batches.length}…`);
+        lastResult = await api('/api/schedule', { method: 'POST', body: { team: activeTeam, overrides: batches[i] } });
+      }
+      if (lastResult) { setOverrides(lastResult.overrides || {}); setLabels(lastResult.labels || {}); }
       setSelectedShifts(new Set());
       if (clearForm) setEditForm({ persons: [], period: '', time: '', dur: '' });
       setApplyToFuture(false);
     } catch (e) {
       setEditError(friendlyError(e));
+      // Lotes anteriores podem ter sido salvos com sucesso — recarrega do servidor
+      // para o estado local nunca mostrar algo diferente do que está persistido.
+      loadOverrides(activeTeam);
     } finally {
       setEditSaving(false);
+      setEditProgress(null);
     }
   }
 
@@ -372,7 +550,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     setEditSaving(true);
     setEditError(null);
     try {
-      const body = { overrides: { [addDay]: { [nextIdx]: {
+      const body = { team: activeTeam, overrides: { [addDay]: { [nextIdx]: {
         persons: addForm.persons, period: addForm.period, time: addForm.time, dur: addForm.dur || '',
       } } } };
       const updated = await api('/api/schedule', { method: 'POST', body });
@@ -393,7 +571,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     if ((labels[dk] || '') === v) return; // sem mudança
     setLabels(prev => { const n = { ...prev }; if (v) n[dk] = v; else delete n[dk]; return n; });
     try {
-      const updated = await api('/api/schedule', { method: 'POST', body: { labels: { [dk]: v || null } } });
+      const updated = await api('/api/schedule', { method: 'POST', body: { team: activeTeam, labels: { [dk]: v || null } } });
       setOverrides(updated.overrides || {});
       setLabels(updated.labels || {});
     } catch (e) {
@@ -439,7 +617,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
       count += schedule.filter(e => {
         const eDk = dayKey(e.date);
         if (eDk < dk) return false;
-        if (!e.shifts[numIdx]) return false;
+        if (!e.shifts.some(s => s.idx === numIdx)) return false; // casa pelo idx estável, não pela posição (§7.1)
         return isWeekend
           ? (e.dow === 0 || e.dow === 6) && e.cycleWeek === entry.cycleWeek && e.dow === entry.dow
           : e.dow === entry.dow;
@@ -488,6 +666,20 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
 
   const scheduleReady = !overridesLoading;
 
+  // Texto/cor de uma linha do widget "Agora" (docs/specs/multi-equipe.md §5):
+  // vigência > carregando > sem cobertura agora > turno vago > nome(s).
+  function rowInfo(row) {
+    if (row.vig) return { text: row.vig, dotColor: "#64748B", until: null };
+    if (row.loading) return { text: "…", dotColor: "#475569", until: null };
+    if (!row.onCall) return { text: "Sem plantão", dotColor: "#475569", until: null };
+    if (row.onCall.people.length === 0) return { text: "Turno vago", dotColor: WARN, until: null };
+    const until = row.onCall.time.split(/[–—-]/)[1]?.trim();
+    const dotColor = row.onCall.people.length === 1
+      ? (MEMBERS[row.onCall.people[0].person] || {}).color || "#94A3B8"
+      : "#94A3B8";
+    return { text: row.onCall.people.map(p => p.person).join(" · "), dotColor, until };
+  }
+
   return (
     <div style={{ minHeight:"100vh", background:T.pageBg, fontFamily:"'Segoe UI',system-ui,sans-serif", color:T.textPrimary, transition:"background 0.2s,color 0.2s" }}>
       <div className="max-w-3xl mx-auto px-4 py-6">
@@ -507,7 +699,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
               <h1 className="text-sm font-semibold opacity-80 mb-1" style={{ letterSpacing:"0.01em" }}>Escala de Sobreaviso</h1>
               <div className="text-2xl font-bold">{DOW[now.getDay()]}, {fmtDate(now)}/{now.getFullYear()}</div>
             </div>
-            <div className="rounded-xl px-4 py-3 min-w-[200px]" style={{ background:"rgba(255,255,255,0.08)", borderLeft:`4px solid ${scheduleReady ? onCallColor : "rgba(255,255,255,0.25)"}` }}>
+            <div className="rounded-xl px-4 py-3 min-w-[230px]" style={{ background:"rgba(255,255,255,0.08)", borderLeft:`4px solid ${scheduleReady ? onCallColor : "rgba(255,255,255,0.25)"}` }}>
               <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider opacity-80">
                 <span className="relative flex w-2 h-2">
                   <span className="animate-ping motion-reduce:animate-none absolute inline-flex h-full w-full rounded-full opacity-60" style={{ background:scheduleReady ? onCallColor : "#94A3B8" }} />
@@ -515,34 +707,29 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                 </span>
                 Agora
               </div>
-              {!scheduleReady ? (
-                <div role="status" aria-label="Carregando escala">
-                  <Skeleton w="8rem" h="1.35rem" T={{ skeletonBg:"rgba(255,255,255,0.18)" }} style={{ margin:"0.35rem 0 0.3rem" }} />
-                  <Skeleton w="11rem" h="0.8rem" T={{ skeletonBg:"rgba(255,255,255,0.12)" }} />
-                </div>
-              ) : onCall ? (
-                <>
-                  <div className="text-lg font-bold leading-tight" style={{ color: onCallColor === "#37474F" ? "#CBD5E1" : onCallColor }}>
-                    {onCall.people.map(p => p.person).join(" · ")}
-                  </div>
-                  <div className="text-xs opacity-80">
-                    {onCall.label} · {onCall.time}
-                    {onCall.people.some(p => p.coveringFor) && (
-                      <span className="ml-1">· cobre {onCall.people.filter(p => p.coveringFor).map(p => p.coveringFor).join(", ")}</span>
-                    )}
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="text-lg font-bold opacity-90">Sem sobreaviso</div>
-                  <div className="text-xs opacity-80">Horário comercial (09:00 – 18:00)</div>
-                </>
-              )}
 
-              {/* Handoff: plantonista anterior e próximo */}
+              {/* Sempre as três equipes, ignorando o seletor (docs/specs/multi-equipe.md §5) */}
+              <div className="mt-1.5">
+                {nowRows.map(row => {
+                  const info = rowInfo(row);
+                  return (
+                    <div key={row.team.id} style={{ display:"flex", alignItems:"center", gap:"0.45rem", marginTop:"0.3rem" }}>
+                      <span style={{ width:7, height:7, borderRadius:"50%", flexShrink:0, background:info.dotColor }} />
+                      <span style={{ width:"5.2rem", flexShrink:0, fontSize:"0.68rem", color:"rgba(255,255,255,0.6)" }}>{row.team.nome}</span>
+                      <span className="truncate" style={{ fontSize:"0.82rem", fontWeight:600 }}>{info.text}</span>
+                      {info.until && (
+                        <span style={{ fontSize:"0.65rem", color:"rgba(255,255,255,0.5)", flexShrink:0 }}>até {info.until}</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Handoff: plantonista anterior e próximo, referente à equipe selecionada */}
               {scheduleReady && (handoff.anterior || handoff.proximo) && (
                 <>
                   <div style={{ height:1, background:"rgba(255,255,255,0.12)", margin:"0.7rem 0 0.15rem" }} />
+                  <div style={{ fontSize:"0.62rem", color:"rgba(255,255,255,0.45)", marginBottom:"0.15rem" }}>{team.nome}</div>
                   {[
                     { label:"antes",  data:handoff.anterior, prefix:"até " },
                     { label:"depois", data:handoff.proximo,  prefix:"" },
@@ -551,8 +738,8 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                       <span style={{ width:"3rem", flex:"none", fontSize:"0.7rem", color:"rgba(255,255,255,0.5)" }}>{label}</span>
                       {data ? (
                         <>
-                          <span style={{ width:8, height:8, borderRadius:"50%", flex:"none", background: data.people.length === 1 ? ((PEOPLE[data.people[0]]||{}).color||"#94A3B8") : "#94A3B8", boxShadow:"0 0 0 1px rgba(255,255,255,0.15)" }} />
-                          <span style={{ fontWeight:600, color:"#E2E8F0" }}>{data.people.join(" / ")}</span>
+                          <span style={{ width:8, height:8, borderRadius:"50%", flex:"none", background: data.people.length === 1 ? ((MEMBERS[data.people[0]]||{}).color||"#94A3B8") : "#94A3B8", boxShadow:"0 0 0 1px rgba(255,255,255,0.15)" }} />
+                          <span style={{ fontWeight:600, color:"#E2E8F0" }}>{data.people.length ? data.people.join(" / ") : "vago"}</span>
                           <span style={{ color:"rgba(255,255,255,0.55)" }}>· {prefix}{data.hora}</span>
                         </>
                       ) : (
@@ -566,6 +753,19 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
           </div>
         </header>
 
+        {/* SELETOR DE EQUIPE */}
+        <section className="mb-4" aria-label="Seletor de equipe">
+          <div className="flex flex-wrap gap-2">
+            {Object.values(TEAMS).map(t => (
+              <button key={t.id} onClick={() => switchTeam(t.id)} aria-pressed={activeTeam === t.id}
+                className="px-3.5 rounded-full text-sm font-bold transition-all"
+                style={{ minHeight:"2.5rem", background:activeTeam===t.id?ACCENT:T.filterDefBg, color:activeTeam===t.id?"#fff":T.filterDefColor, border:`1.5px solid ${activeTeam===t.id?ACCENT:T.filterDefBorder}` }}>
+                {t.nome}
+              </button>
+            ))}
+          </div>
+        </section>
+
         {overridesError && (
           <div role="alert" className="rounded-xl px-4 py-3 mb-4 flex items-center justify-between gap-3 flex-wrap"
             style={{ background:"rgba(245,158,11,0.12)", border:`1px solid ${WARN}` }}>
@@ -573,14 +773,14 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
               <Icon name="alert" size={16} />
               Não foi possível carregar as edições da escala — mostrando a escala base.
             </span>
-            <button onClick={loadOverrides}
+            <button onClick={() => loadOverrides(activeTeam)}
               style={{ background:"transparent", border:`1px solid ${WARN}`, color:WARN, borderRadius:"9999px", padding:"0.35rem 0.9rem", fontSize:"0.75rem", fontWeight:700, cursor:"pointer", minHeight:"2.25rem" }}>
               Tentar de novo
             </button>
           </div>
         )}
 
-        {/* FILTRO */}
+        {/* FILTRO — limitado ao roster da equipe selecionada */}
         <section className="mb-4" aria-label="Filtro por responsável">
           <h2 className="text-sm font-semibold mb-2" style={{ color:T.textSecondary }}>Filtrar por responsável</h2>
           <div className="flex flex-wrap gap-2">
@@ -588,7 +788,8 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
               style={{ minHeight:"2.5rem", background:!filter?T.filterAllBg:T.filterDefBg, color:!filter?T.filterAllColor:T.filterDefColor, border:"1.5px solid "+(!filter?T.filterAllBorder:T.filterDefBorder) }}>
               Todos
             </button>
-            {Object.entries(PEOPLE).map(([name, p]) => {
+            {team.roster.map(name => {
+              const p = MEMBERS[name] || { color: "#64748B" };
               const temSubHoje = activeTitulares.has(name);
               return (
                 <button key={name} onClick={() => handleFilterChange(name)} className="px-3.5 rounded-full text-sm font-bold transition-all inline-flex items-center gap-1.5"
@@ -611,7 +812,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
         {filter && (
           <section className="rounded-2xl p-4 mb-5" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}` }}>
             <div className="flex items-center gap-2 mb-3">
-              <span className="w-3 h-3 rounded-full" style={{ background: PEOPLE[filter].color }} />
+              <span className="w-3 h-3 rounded-full" style={{ background: (MEMBERS[filter] || {}).color }} />
               <h2 className="font-bold text-base">Próximos sobreavisos de {filter}</h2>
             </div>
             {upcoming.length === 0 ? (
@@ -629,7 +830,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                           <Icon name="umbrella" size={12} /> Folga FDS
                         </span>
                       ) : (
-                        <span className="font-semibold" style={{ color: PEOPLE[filter].color }}>{u.period}</span>
+                        <span className="font-semibold" style={{ color: (MEMBERS[filter] || {}).color }}>{u.period}</span>
                       )}
                       {u.coveringFor && <span className="text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:"#DBEAFE", color:"#1D4ED8" }}>cobre {u.coveringFor}</span>}
                       {u.coveredBy  && <span className="text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:"#F3E5F5", color:"#7B1FA2" }}>coberto por {u.coveredBy}</span>}
@@ -676,6 +877,13 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
           <div className="space-y-2 pb-4" role="status" aria-label="Carregando calendário">
             {[0,1,2,3].map(i => <Skeleton key={i} h="4.5rem" T={T} style={{ borderRadius:"0.75rem" }} />)}
           </div>
+        ) : !am ? (
+          // Estado vazio: equipe sem dias neste período (fora da vigência —
+          // infra e desenvolvimento só existem a partir de startsOn).
+          <div className="rounded-xl p-6 mb-4 text-center text-sm" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}`, color:T.textMuted }}>
+            {team.nome} não tem escala neste período.
+            {team.startsOn && ` A equipe existe a partir de ${fmtDS(team.startsOn)}.`}
+          </div>
         ) : (
         <div className="space-y-2 pb-4">
           {monthDays.map(d => {
@@ -690,6 +898,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                 return (sub ? sub.substituto : p) === filter || p === filter;
               });
             }) || d.folga.includes(filter);
+            const overlap = detectOverlaps(d, dk, subs);
             return (
               <div key={dayKey(d.date)} ref={isToday ? todayRef : null} className="rounded-xl overflow-hidden"
                 style={{ scrollMarginTop:'64px', border:`${isToday?2:1}px solid ${isToday?T.cardBorderToday:T.cardBorder}`, opacity: isPast?0.45:filter&&!hasFiltered?0.35:1, background:isWeekend?T.cardBgWeekend:T.cardBg }}>
@@ -702,11 +911,29 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                     {isToday && <div className="mt-1 text-[9px] font-bold text-white bg-slate-800 rounded px-1.5 py-0.5">HOJE</div>}
                   </div>
                   <div className="flex-1 px-3 py-2">
-                    {(d.label || (editMode && isAdmin)) && (
+                    {(d.label || (editMode && isAdmin) || overlap.samePerson || overlap.partial || overlap.identical) && (
                       <div className="flex flex-wrap items-center gap-2 mb-1.5">
                         {d.label && !editMode && (
                           <span className="inline-flex items-center gap-1 text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:"rgba(99,102,241,0.15)", color:"#A5B4FC" }}>
                             <Icon name="umbrella" size={10} /> {d.label}
+                          </span>
+                        )}
+                        {/* Detector de sobreposição (§6): só a MESMA pessoa em turnos que se
+                            sobrepõem é aviso forte — pessoas diferentes em janelas idênticas é
+                            cobertura dupla intencional (feriado com dupla escala), sem alarme. */}
+                        {overlap.samePerson && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:"rgba(239,68,68,0.15)", color:DANGER }}>
+                            <Icon name="alert" size={10} /> mesma pessoa em turnos sobrepostos
+                          </span>
+                        )}
+                        {overlap.partial && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:"rgba(245,158,11,0.15)", color:WARN }}>
+                            <Icon name="alert" size={10} /> sobreposição parcial
+                          </span>
+                        )}
+                        {overlap.identical && !overlap.samePerson && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:"rgba(148,163,184,0.15)", color:"#94A3B8" }}>
+                            cobertura dupla
                           </span>
                         )}
                         {editMode && isAdmin && (
@@ -721,7 +948,10 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                         )}
                       </div>
                     )}
-                    {isWeekend && d.dow === 6 && (
+                    {/* Semana do ciclo / Folga FDS só existem em equipe com rotação (a
+                        sustentação) — infra e desenvolvimento não têm rodízio, então
+                        d.cycleWeek vem null e não há nada a mostrar aqui. */}
+                    {isWeekend && d.dow === 6 && d.cycleWeek !== null && (
                       <div className="flex flex-wrap items-center gap-2 mb-1.5">
                         <span className="text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:T.cycleBg, color:T.cycleColor }}>
                           Semana {d.cycleWeek} do ciclo
@@ -777,7 +1007,17 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                             <span className="font-mono text-xs w-28" style={{ color: highlight ? '#818CF8' : T.textMuted }}>{s.time}</span>
                             <span className="font-mono text-xs w-7" style={{ color:T.textMuted }}>{s.dur}</span>
                             <span className="inline-flex flex-wrap items-center gap-1">
-                              {people.map((p, pi) => <PersonTag key={pi} name={p.person} subOf={p.subOf} />)}
+                              {people.length > 0 ? (
+                                people.map((p, pi) => <PersonTag key={pi} name={p.person} subOf={p.subOf} />)
+                              ) : isAdmin && !editMode ? (
+                                <button type="button"
+                                  onClick={() => { setEditMode(true); setSelectedShifts(new Set([shiftKey])); }}
+                                  style={{ fontSize:'0.7rem', fontWeight:700, color:WARN, background:'rgba(245,158,11,0.1)', border:`1px dashed ${WARN}`, borderRadius:'0.4rem', padding:'0.15rem 0.55rem', cursor:'pointer' }}>
+                                  sem plantonista — atribuir
+                                </button>
+                              ) : (
+                                <span style={{ fontSize:'0.75rem', fontWeight:600, color:T.textMuted, fontStyle:'italic' }}>sem plantonista</span>
+                              )}
                             </span>
                             {recent ? (
                               <span title={`Alterado em ${fmtEdited(ov.editedAt)}`} style={{ fontSize:'0.6rem', color:'#818CF8', fontWeight:'700', background:'rgba(99,102,241,0.1)', borderRadius:'3px', padding:'0 4px' }}>
@@ -799,7 +1039,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                           <input value={addForm.time} onChange={e => setAddForm(f => ({ ...f, time:e.target.value }))} placeholder="Horário (ex: 17:00 – 23:00)" style={{ ...selStyle, marginTop:0 }} />
                           <input value={addForm.dur} onChange={e => setAddForm(f => ({ ...f, dur:e.target.value }))} placeholder="Duração (ex: 6h)" style={{ ...selStyle, marginTop:0 }} />
                         </div>
-                        <div className="mb-2"><PersonPicker selected={addForm.persons} onToggle={n => setAddForm(f => ({ ...f, persons: togglePerson(f.persons, n) }))} /></div>
+                        <div className="mb-2"><PersonPicker selected={addForm.persons} onToggle={n => setAddForm(f => ({ ...f, persons: togglePerson(f.persons, n) }))} roster={team.roster} /></div>
                         <div className="flex gap-2">
                           <button onClick={addShift} disabled={editSaving}
                             style={{ background:ACCENT, color:'#fff', border:'none', borderRadius:'0.5rem', padding:'0.4rem 0.9rem', minHeight:'2.5rem', fontWeight:700, fontSize:'0.78rem', cursor:editSaving?'not-allowed':'pointer' }}>
@@ -890,7 +1130,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                   <label style={labelStyle}>Titular (ausente)
                   <select value={subForm.titular} onChange={e => setSubForm(f => ({ ...f, titular:e.target.value, substituto: f.substituto===e.target.value?"":f.substituto }))} style={selStyle}>
                     <option value="">Selecionar…</option>
-                    {Object.keys(PEOPLE).map(p => <option key={p} value={p}>{p}</option>)}
+                    {team.roster.map(p => <option key={p} value={p}>{p}</option>)}
                   </select>
                   </label>
                 </div>
@@ -898,7 +1138,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                   <label style={labelStyle}>Substituto
                   <select value={subForm.substituto} onChange={e => setSubForm(f => ({ ...f, substituto:e.target.value }))} style={selStyle}>
                     <option value="">Selecionar…</option>
-                    {Object.keys(PEOPLE).filter(p => p !== subForm.titular).map(p => <option key={p} value={p}>{p}</option>)}
+                    {team.roster.filter(p => p !== subForm.titular).map(p => <option key={p} value={p}>{p}</option>)}
                   </select>
                   </label>
                 </div>
@@ -973,7 +1213,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                 <div className="mb-3">
                   <div style={labelStyle}>Pessoas <span style={{ fontWeight:400, color:T.textMuted }}>(vazio = manter as atuais)</span></div>
                   <div className="mt-1">
-                    <PersonPicker selected={editForm.persons} onToggle={n => setEditForm(f => ({ ...f, persons: togglePerson(f.persons, n) }))} />
+                    <PersonPicker selected={editForm.persons} onToggle={n => setEditForm(f => ({ ...f, persons: togglePerson(f.persons, n) }))} roster={team.roster} />
                   </div>
                 </div>
                 <div className="grid gap-3 mb-3" style={{ gridTemplateColumns:'repeat(auto-fit, minmax(130px, 1fr))' }}>
@@ -1039,11 +1279,11 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                 <div className="flex flex-wrap gap-2 items-center">
                   <button onClick={applyEditOverrides} disabled={editSaving}
                     style={{ background:editSaving?T.cardBorder:ACCENT, color:'#fff', border:'none', borderRadius:'0.5rem', padding:'0.5rem 1rem', minHeight:'2.75rem', fontWeight:700, fontSize:'0.8rem', cursor:editSaving?'not-allowed':'pointer' }}>
-                    {editSaving ? 'Salvando…' : applyToFuture ? `Aplicar a ${futureShiftCount} turnos` : 'Aplicar alteração'}
+                    {editSaving ? (editProgress || 'Salvando…') : applyToFuture ? `Aplicar a ${futureShiftCount} turnos` : 'Aplicar alteração'}
                   </button>
                   <button onClick={resetSelectedShifts} disabled={editSaving}
                     style={{ background:'transparent', color:DANGER, border:`1px solid ${DANGER}`, borderRadius:'0.5rem', padding:'0.5rem 0.85rem', minHeight:'2.75rem', fontWeight:700, fontSize:'0.8rem', cursor:editSaving?'not-allowed':'pointer' }}>
-                    {applyToFuture ? `Resetar ${futureShiftCount} turnos` : 'Resetar para padrão'}
+                    {editSaving ? (editProgress || 'Salvando…') : applyToFuture ? `Resetar ${futureShiftCount} turnos` : 'Resetar para padrão'}
                   </button>
                 </div>
                 {editError && (

@@ -427,7 +427,10 @@ export function resolveShiftPeople(shift, dateStr, subs = []) {
   });
 }
 
-export function getCoverSuggestions(titular, fromStr, untilStr, schedule) {
+// roster: pessoas elegíveis para cobrir (default = sustentação, para não quebrar
+// quem já chamava sem o parâmetro). Quem edita substituições de outra equipe deve
+// passar TEAMS[team].roster — senão "quem está livre" mistura nomes de fora.
+export function getCoverSuggestions(titular, fromStr, untilStr, schedule, roster = Object.keys(PEOPLE)) {
   return schedule
     .filter(d => {
       const k = dayKey(d.date);
@@ -435,7 +438,7 @@ export function getCoverSuggestions(titular, fromStr, untilStr, schedule) {
     })
     .map(d => {
       const busy = new Set(d.shifts.flatMap(s => shiftPeople(s)));
-      const available = Object.keys(PEOPLE).filter(p => p !== titular && !busy.has(p));
+      const available = roster.filter(p => p !== titular && !busy.has(p));
       return { date: d.date, dow: d.dow, shifts: d.shifts.filter(s => shiftPeople(s).includes(titular)), available };
     });
 }

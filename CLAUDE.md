@@ -1,7 +1,9 @@
 # Escala de Sobreaviso — Documentação de Projeto
 
-App interno da MT Fintech para a equipe de sobreaviso (6 pessoas).
-Gerencia o calendário de plantões e o controle financeiro de horas.
+App interno da MT Fintech para sobreaviso — três equipes (Sustentação, Infraestrutura,
+Desenvolvimento; 19 pessoas no total). Gerencia o calendário de plantões e o controle
+financeiro de horas (Controle de Horas ainda é sustentação-pura, ver Fase 2 em
+`docs/specs/multi-equipe.md`).
 
 **URL em produção**: https://escala-sobreaviso.vercel.app
 **Repo**: https://github.com/rikardop05/escala-sobreaviso (DEVE permanecer PRIVADO — contém e-mails)
@@ -26,7 +28,7 @@ Gerencia o calendário de plantões e o controle financeiro de horas.
 ```
 src/
   main.jsx                  ClerkProvider + ReactDOM root; publishable key hardcoded (público por design)
-  App.jsx                   Guard de auth, roteamento por role, navegação por abas (sem ProfileSetup)
+  App.jsx                   Guard de auth, roteamento por role, navegação por abas (sem ProfileSetup). Gate temporário: aba Controle de Horas só aparece pra quem é/administra a sustentação (remover na Fase 2)
   index.css                 Tailwind directives
   lib/
     api.js                  Hook useApi() — fetch autenticado com JWT Clerk
@@ -35,17 +37,17 @@ src/
     theme.js                Tema unificado getTheme(dark) — tokens de cor AA usados pelos dois views (não criar temas locais)
   components/
     ui.jsx                  Kit compartilhado: Icon (SVGs), SaveStatus, Snackbar (undo), ConfirmDialog, Skeleton, friendlyError()
-    EscalaSobreaviso.jsx    Calendário mensal, filtro, substituições, edição de escala (admin)
-    ControleDeHoras.jsx     CH: parâmetros, lançamentos HE/Comp, relatório, exportação CSV; admin pode ver qualquer membro
-    EstruturaEscala.jsx     Aba "Estrutura" (só admin, #estrutura): tabelas read-only da estrutura base — semana (WEEKDAY_SHIFTS) e escada de FDS (gerada de WEEKEND_ROSTER). Fase 1: só visualização; edição versionada é fase futura
+    EscalaSobreaviso.jsx    Calendário mensal com seletor de equipe (#escala/<id>), filtro por responsável (roster da equipe), substituições, edição de escala (admin), widget "Agora" multi-equipe, slot vago, detector de sobreposição
+    ControleDeHoras.jsx     CH: parâmetros, lançamentos HE/Comp, relatório, exportação CSV; admin pode ver qualquer membro — ainda sustentação-pura (ver gate em App.jsx), Fase 2 estende para as três equipes
+    EstruturaEscala.jsx     Aba "Estrutura" (#estrutura, some para quem não administra nenhuma equipe): tabelas read-only, com seletor limitado às equipes em adminOf. Sustentação mostra semana (WEEKDAY_SHIFTS) + escada de FDS; infra/desenvolvimento mostram blocos por dia-da-semana, faixas sem cobertura e aviso "sem rodízio definido". Edição versionada é fase futura
 
 api/
   _allowlist.js             EDITAR AQUI: mapeamento email→{memberId, teamId, adminOf}; resolveAccess(), adminCovers()
   _auth.js                  requireUser(req) — verifica JWT + busca email via Clerk API + resolve { memberId, teamId, adminOf, role }
-  _validate.js              Schemas Zod — TeamIdSchema, schedulePostSchemaFor(team)/subPostSchemaFor(team) validam contra TEAMS[team].roster (src/lib/teams.js)
+  _validate.js              Schemas Zod — TeamIdSchema, schedulePostSchemaFor(team)/subPostSchemaFor(team) validam contra TEAMS[team].roster (src/lib/teams.js); persons[] limita no tamanho do roster da própria equipe, não num número fixo
   _redis.js                 kvGet / kvSet / kvScanAll / kvGetWithFallback — helpers JSON sobre ioredis; kvGetWithFallback lê a chave por equipe, cai para a global antiga se ausente
   _backup-crypto.js         encrypt/decrypt AES-256-GCM dos dumps de backup (BACKUP_ENCRYPTION_KEY)
-  profile.js                GET/POST preferências do usuário (dark, filter, monthKey); role/memberId vêm da allowlist
+  profile.js                GET/POST preferências do usuário (dark, filter, monthKey, teamView); memberId/teamId/adminOf/role vêm da allowlist (somente-leitura)
   substitutions.js          GET/POST/DELETE substituições, escopadas por equipe (?team= / body.team; chave team:{team}:substitutions, leitura dupla só na sustentação)
   ch.js                     GET/POST lançamentos e parâmetros CH; acesso: a própria pessoa, ou admin da equipe dela (MEMBERS[pessoa].teamId)
   ch-close.js               Fechamento mensal do CH: GET fechamentos; POST fecha mês; DELETE reabre — sempre admin da equipe da pessoa-alvo
@@ -186,15 +188,19 @@ buildOnCallSegments(schedule, dayStart)   // dayStart OBRIGATÓRIO — sem defau
   `WEEKEND_CHANGE`/`RANGE_START`/`RANGE_END` continuam exportados de `schedule.js` sem mudança —
   são a fonte de dados que `teams.js` empacota em `TEAMS.sustentacao` (não duplica). Infra e
   desenvolvimento não têm equivalente em `schedule.js` (só existiam na spec) — nascem direto em
-  `teams.js`. `EstruturaEscala.jsx`, `EscalaSobreaviso.jsx` e `ControleDeHoras.jsx` continuam
-  importando `PEOPLE`/`CH_NAMES`/etc. normalmente (só sustentação, inalterado nesta fase); as
-  chamadas a `buildSchedule`/`currentOnCall`/`adjacentOnCall` passam `TEAMS.sustentacao` /
-  `TEAMS.sustentacao.dayStart` explicitamente.
+  `teams.js`.
 - `MEMBERS` (`src/lib/teams.js`) é a fonte única de pessoas das **três** equipes (19 no total:
   6 sustentação + 8 desenvolvimento + 5 infra) — usada pelo backend (`api/_validate.js`,
-  `api/ch.js`, `api/ch-close.js`) para validar `person` e resolver a equipe de alguém
-  (`MEMBERS[nome].teamId`). A UI do Controle de Horas ainda usa só `PEOPLE`/`CH_NAMES`
-  (sustentação) — ver "NÃO faça" da Fase 1 em §8 da spec.
+  `api/ch.js`, `api/ch-close.js`) para validar `person`/resolver a equipe de alguém
+  (`MEMBERS[nome].teamId`), e por `EscalaSobreaviso.jsx` para cor/badge de qualquer pessoa (o
+  widget "Agora" mostra as três equipes ao mesmo tempo). `PEOPLE`/`CH_NAMES` (`schedule.js`)
+  continuam existindo só para o que ainda é sustentação-only: `ControleDeHoras.jsx` inteiro, e a
+  tabela da sustentação em `EstruturaEscala.jsx` (`weekendAssignment`, `WEEKDAY_SHIFTS`).
+- `EscalaSobreaviso.jsx` é **multi-equipe desde a Fase 1**: mantém uma **equipe ativa**
+  (`activeTeam`, estado local) e chama `buildSchedule(TEAMS[activeTeam], …)` /
+  `currentOnCall(…, TEAMS[activeTeam].dayStart)` / `adjacentOnCall(…, TEAMS[activeTeam].dayStart)`
+  — nunca mais `TEAMS.sustentacao` fixo. `ControleDeHoras.jsx` e a branch sustentação de
+  `EstruturaEscala.jsx` continuam fixos em `TEAMS.sustentacao` (ver gates específicos abaixo).
 
 ```js
 PEOPLE    = { Emanoel, "Marcus Túlio", Ricardo, Carlos, Raul, Alice }
@@ -241,29 +247,71 @@ ADR-0002; substitui a antiga heurística restrita a `idx === 0`).
 
 `day.folga` é **sempre array** (vazio em dia útil; 1 nome no ciclo antigo; 2 na escada nova) — a UI usa `d.folga.includes(...)` / `d.folga.join(', ')`.
 
+### Seletor de equipe, widget "Agora" e estado vazio (Fase 1)
+
+**Seletor de equipe** (`EscalaSobreaviso.jsx`): estado local `activeTeam`, resolvido nesta ordem —
+hash da URL (`#escala/infra`, link compartilhável) → `teamView` salvo no perfil → equipe da
+própria pessoa (`profile.teamId`) → primeira equipe do `adminOf` → `sustentacao` (default para
+viewer/visitante). Trocar de equipe (`switchTeam`) atualiza hash + perfil e limpa filtro, seleção
+de edição e mês (evita landing num mês sem dias da equipe nova).
+
+**Widget "Agora"** ignora o seletor: sempre mostra as **três** equipes, uma linha cada (nome →
+quem está de plantão → até que horas), usando **sempre o `dayStart` da própria equipe da linha**
+(nunca o da equipe ativa — ver ADR-0002). Estado próprio `teamsNow` (`{ [teamId]: { schedule,
+subs } }`) é carregado uma vez na montagem para as três; a linha da equipe **ativa** é
+resssincronizada a cada render via `useEffect` (reflete edições do admin sem esperar reload). Uma
+falha pontual de rede nunca regride uma entrada que já tinha dado bom (ver comentário em
+`EscalaSobreaviso.jsx` — importante porque a equipe ativa é sempre recomputável localmente). Uma
+linha mostra, nesta ordem de prioridade: mensagem de vigência (equipe fora do período) → "…"
+(carregando) → "Sem plantão" (sem cobertura agora — normal, ex. infra 00:00–09:00) → "Turno
+vago" (há turno, ninguém atribuído) → nome(s). O bloco "antes/depois" (handoff) continua existindo
+abaixo, mas é sempre da equipe **ativa** (`adjacentOnCall(…, TEAMS[activeTeam].dayStart)`).
+
+**Slot vago**: bloco de `blocos` sem `persons`/`person` (infra e desenvolvimento, que não têm
+rotação) — `shiftPeople()` retorna `[]`. Todo leitor precisa tratar array vazio: no calendário,
+um turno vago mostra "sem plantonista" (admin, fora do modo edição: botão que já entra no modo
+edição com o turno pré-selecionado, pronto pra atribuir); no widget "Agora", vira "Turno vago";
+no handoff, vira "vago" no lugar do nome.
+
+**Estado vazio por vigência**: `teamVigenciaMessage(team, dateStr)` compara a data com
+`team.startsOn`/`team.endsOn` (strings `YYYY-MM-DD`, comparam lexicograficamente). Cobre dois
+casos: o widget "Agora" (linha da equipe fora do período) e o calendário principal (`activeMonth`
+só aceita um `monthKey` salvo se ele **existir de fato** nos dias gerados para a equipe ativa —
+um `monthKey` de outra equipe, ou uma equipe sem nenhum dia no range, cai no estado vazio em vez
+de mostrar uma tela em branco).
+
+**Detector de sobreposição** (`detectOverlaps`, §6 da spec): por dia, compara os horários de
+todos os turnos (já resolvidos por `resolveShiftPeople`, então substituições contam). Só a
+**mesma pessoa** em turnos que se sobrepõem é aviso forte (vermelho — pagamento em duplicidade,
+nunca intencional); pessoas diferentes em janelas **idênticas** é cobertura dupla deliberada
+(indicador passivo, cinza); pessoas diferentes com sobreposição **parcial** é aviso discreto
+(âmbar — assinatura de "esqueci de encurtar o turno original").
+
 ### Overrides de escala (admin)
 
-`buildSchedule(team, overrides = {}, labels = {})` aceita overrides por dia/índice e rótulos por dia (chamadas atuais passam `TEAMS.sustentacao` como `team`):
+`buildSchedule(team, overrides = {}, labels = {})` aceita overrides por dia/índice e rótulos por dia (`EscalaSobreaviso.jsx` passa `TEAMS[activeTeam]`, a equipe selecionada no momento):
 ```js
 // overrides: { 'YYYY-MM-DD': { '0': { persons:['Ricardo'], period, time, dur }, '1': null } }
 //   null = revert para base (num índice extra, remove o turno)
 //   índice além dos turnos base (ex.: '3') vira um turno NOVO — dias custom/feriado
-//   persons: string[] (multi-pessoa). person (string) ainda é aceito como legado.
+//   persons: string[] (multi-pessoa, teto = tamanho do roster da equipe). person (string) ainda é aceito como legado.
 // labels: { 'YYYY-MM-DD': 'Feriado' } — rótulo opcional do dia
 ```
 
 Cada turno retornado carrega um `idx` **estável** (a chave do override), usado pela UI para seleção/edição/remoção — não confie na posição no array. Use `shiftPeople(shift)` (não `shift.person`) para ler as pessoas de um turno em qualquer lugar.
 
-Overrides e labels ficam em `team:sustentacao:schedule_overrides` / `team:sustentacao:schedule_labels` (chaves por equipe, Fase 0 — ver "Redis — Todas as Chaves" abaixo). O admin edita no modo de edição do calendário: seleciona turnos + form (multi-seleção de pessoas), **"+ Adicionar turno"** por dia (feriados), reset (remove turno extra) e um input de **rótulo do dia**. POST `/api/schedule` com `{ overrides?, labels? }`.
+Overrides e labels ficam em `team:{teamId}:schedule_overrides` / `team:{teamId}:schedule_labels` (chaves por equipe — ver "Redis — Todas as Chaves" abaixo; só a sustentação tem fallback pra chave global, Fase 0). O admin edita no modo de edição do calendário: seleciona turnos + form (multi-seleção de pessoas, restrita ao roster da equipe ativa), **"+ Adicionar turno"** por dia (feriados), reset (remove turno extra) e um input de **rótulo do dia**. POST `/api/schedule` com `{ team, overrides?, labels? }` — **toda escrita** (edição, turno novo, rótulo) envia `team` explicitamente; sem ele o backend responde 400 (ver `adminCovers` em Sistema de Acesso).
+
+**Envio em lotes** (defeito §7.2): "aplicar a todos os meses seguintes" pode gerar um patch de ~365 dias (~30 KB, perto do limite de 50 KB do corpo — `MAX_BODY_BYTES` em `api/_validate.js`). `postPatch`/`chunkPatchByDays` dividem em lotes de até `PATCH_BATCH_DAYS` (150) dias, uma requisição por lote, mostrando progresso ("Salvando lote X de Y…"). Uma falha no meio recarrega do servidor (`loadOverrides`) em vez de deixar o estado local divergir do que foi de fato salvo.
+
+**`expandPatchToFuture` casa por `s.idx`, não por posição** (defeito §7.1 corrigido): `e.shifts` é um array **compactado** (só os turnos que existem naquele dia) — um dia com turno extra (feriado) desloca as posições. O código antigo indexava `e.shifts[numIdx]` (posição); agora usa `e.shifts.some(s => s.idx === numIdx)` (a chave estável). O mesmo padrão existia (e foi corrigido) em `futureShiftCount`, que conta quantos turnos a expansão afetaria.
 
 **Carimbo de edição**: ao aplicar o patch, `api/schedule.js` adiciona `editedAt` (ISO) a cada override não-nulo (só data, sem autor). O cliente usa isso para um marcador **"alterado dd/mm" que expira após 14 dias** (`EDIT_RECENT_MS` em `EscalaSobreaviso.jsx`). No modo de edição, todos os overrides ficam destacados (gerenciamento).
-
-O widget "Agora" usa `currentOnCall(now, schedule, subs, dayStart)` e `adjacentOnCall(now, schedule, subs, dayStart)` — `EscalaSobreaviso.jsx` passa `TEAMS.sustentacao.dayStart` explicitamente (sem default desde a Fase 1). Ambos derivam de `buildOnCallSegments(schedule, dayStart)`, que calcula os blocos de plantão a partir do **`shift.time` real** (não de janelas fixas), preservando a convenção de atribuição de dia (derivada de `dayStart`: na sustentação, todo turno que começa às 23:00 ou depois pertence ao dia seguinte no calendário). Assim, edições de horário e turnos de feriado são refletidos, e o "Agora" mostra **todas** as pessoas quando o turno é multi-pessoa.
 
 ### Substituições
 
 `getActiveSub(person, dateStr, subs)` → busca substituição ativa onde `titular === person` e `dateStr` está no período.
-Lista `subs` é compartilhada (todos veem as mesmas substituições via `team:sustentacao:substitutions` — chave por equipe, Fase 0).
+Lista `subs` é compartilhada por equipe (`team:{teamId}:substitutions`) — `EscalaSobreaviso.jsx` recarrega `subs` sempre que `activeTeam` muda. Titular/substituto no formulário vêm de `TEAMS[activeTeam].roster` (não de todo mundo). POST e DELETE enviam `team` (body/query) — backend confere `adminCovers(adminOf, team)` **ou** que a própria pessoa seja titular/substituto.
 
 **Resolução de quem aparece no turno — fonte única `resolveShiftPeople(shift, dateStr, subs)`** → retorna `[{ person, coveringFor, titular }]` aplicando as substituições. Usada pelo calendário, filtro, widget "Agora" (via `buildOnCallSegments`/`currentOnCall`/`adjacentOnCall`, que carregam `personsOverridden` no segmento) **e** pelo cálculo do CH (`scheduleEntries`) — todos compartilham a mesma regra, então calendário e folha nunca divergem.
 
@@ -277,10 +325,17 @@ Lista `subs` é compartilhada (todos veem as mesmas substituições via `team:su
 
 ### Acesso
 
-`canAccessCH = role === 'admin' || role === 'member'`
+`canAccessCH = (role === 'admin' || role === 'member') && chGateSustentacaoOnly`
 
-Admin pode trocar o "Responsável" via dropdown para ver/editar CH de qualquer membro.
-Member só vê/edita o próprio painel.
+⚠️ **Gate temporário da Fase 1 — remover na Fase 2** (`src/App.jsx`): `chGateSustentacaoOnly` é
+`true` quando `profile.teamId === 'sustentacao'` ou `adminOf` cobre `'sustentacao'` (`'*'` ou
+array com o id). A aba some pra quem é/administra só infra ou desenvolvimento, porque a UI do CH
+(`ControleDeHoras.jsx`) ainda é sustentação-pura — `CH_NAMES`/`PEOPLE` e
+`buildSchedule(TEAMS.sustentacao, …)` fixos. É **uma condição isolada**, comentada no próprio
+código; nenhuma outra regra da Fase 1 depende dela.
+
+Admin (da sustentação) pode trocar o "Responsável" via dropdown para ver/editar CH de qualquer
+membro (da sustentação). Member só vê/edita o próprio painel.
 
 ### Redis — Chaves CH
 
@@ -333,8 +388,8 @@ useApi() [src/lib/api.js]
 requireUser(req) [api/_auth.js]
   verifyToken()        ← assinatura + emissor + expiração
   clerkClient.getUser()← e-mail verificado via Clerk API
-  resolveAccess()      ← allowlist → { memberId, role }
-  return { userId, email, memberId, role }
+  resolveAccess()      ← allowlist → { memberId, teamId, adminOf, role }
+  return { userId, email, memberId, teamId, adminOf, role }
     ↓
 Handler usa role para controle de acesso, memberId para isolar dados
 ```
@@ -353,8 +408,8 @@ Handler usa role para controle de acesso, memberId para isolar dados
 ### Profile e localStorage
 
 1. Montagem: lê `localStorage` → mostra app imediatamente se há cache válido
-2. GET `/api/profile` → `{ memberId, role, dark, filter, monthKey }` (memberId/role da allowlist)
-3. `saveProfile` só persiste preferências (`dark`, `filter`, `monthKey`) — role/memberId são somente-leitura
+2. GET `/api/profile` → `{ memberId, teamId, adminOf, role, dark, filter, monthKey, teamView }` (memberId/teamId/adminOf/role vêm da allowlist)
+3. `saveProfile` só persiste preferências (`dark`, `filter`, `monthKey`, `teamView`) — memberId/teamId/adminOf/role são somente-leitura. `teamView` é a equipe deixada selecionada na aba Escala (Fase 1) — `EscalaSobreaviso.jsx` usa como fallback quando não há equipe no hash da URL.
 
 ---
 
@@ -362,7 +417,7 @@ Handler usa role para controle de acesso, memberId para isolar dados
 
 | Chave | Formato | Proprietário |
 |-------|---------|--------------|
-| `user:{clerkId}:profile` | `{ dark, filter, monthKey }` | Por usuário |
+| `user:{clerkId}:profile` | `{ dark, filter, monthKey, teamView }` | Por usuário |
 | `member:{memberId}:ch_entries` | `[{ id, person, tipo, data, inicio, fim, projeto, atividade }]` | Por membro |
 | `member:{memberId}:ch_params` | `{ [memberId]: { remuneracao, jornada } }` | Por membro |
 | `member:{memberId}:ch_closed` | `{ 'YYYY-MM': { closedAt, closedBy, params, totals, entries[] } }` | Por membro |
@@ -420,7 +475,7 @@ Erros de validação: log server-side dos primeiros 5 issues; resposta sempre `4
 - **Remuneração mensal oculta** (ControleDeHoras): estilo app de banco — mascarada por padrão ("R$ ••••••"), olho revela, lápis abre edição (input real + confirmar). Estado puramente visual (`remuneracaoVisible`/`remuneracaoEditing`), reseta ao trocar de pessoa e ao concluir a edição; não toca em `setParam`/persistência.
 - **Exclusões**: otimistas com `Snackbar` de undo (~6s); nada de window.confirm. Ações em massa ("aplicar/resetar a todos os meses seguintes") pedem `ConfirmDialog`.
 - **Erros ao usuário**: sempre via `friendlyError()` — mensagens em PT-BR com ação sugerida; detalhes só no console.
-- **View por hash**: `#escala` / `#controle` — refresh preserva a aba; `document.title` acompanha.
+- **View por hash**: `#escala` / `#controle` / `#estrutura` — refresh preserva a aba; `document.title` acompanha. Na aba Escala, `#escala/<teamId>` (ex.: `#escala/infra`) também guarda a equipe selecionada — link compartilhável.
 - **monthKey salvo no passado é ignorado** na montagem — o app abre no mês atual.
 - **Acessibilidade**: foco visível global via `:focus-visible` (index.css); alvos de toque ≥40–44px; seleção de turnos no modo edição usa role="checkbox" + teclado; `prefers-reduced-motion` respeitado.
 
