@@ -166,13 +166,13 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
   );
 
   // { people: [{ person, coveringFor }], label, time } | null — pode ter +1 pessoa (feriado)
-  const onCall = currentOnCall(now, schedule, subs);
+  const onCall = currentOnCall(now, schedule, subs, TEAMS.sustentacao.dayStart);
   const onCallColor = onCall && onCall.people.length === 1
     ? (PEOPLE[onCall.people[0].person] || {}).color || "#94A3B8"
     : "#94A3B8";
 
   // Handoff: plantonista anterior e próximo (com substituições) para o widget "Agora"
-  const handoff = useMemo(() => adjacentOnCall(now, schedule, subs), [now, schedule, subs]);
+  const handoff = useMemo(() => adjacentOnCall(now, schedule, subs, TEAMS.sustentacao.dayStart), [now, schedule, subs]);
 
   const coverSuggestions = useMemo(() => {
     if (!subForm.titular || !subForm.from || !subForm.until || subForm.from > subForm.until) return [];
