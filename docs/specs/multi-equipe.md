@@ -267,7 +267,7 @@ Ação dedicada: o admin seleciona o turno, informa a hora do corte e quem assum
 
    Restaram **6 sextas com sobreposição real** (12, 19 e 26/06 e 03, 10 e 17/07 de 2026), anteriores ao override — nelas a hora das 23:00 à meia-noite foi paga a duas pessoas. **Caso encerrado por decisão do responsável: não serão corrigidas.** O valor é pequeno, os meses são passados e mexer em folha já processada custa mais do que o erro. Não reabrir este assunto.
 
-6. **Override de `time` sem `dur` deixa a duração exibida errada.** Em produção, 2026-07-09 idx2 tem `time: "17:00 - 23:00"` sem `dur`, e o merge mantém o `dur: "5h"` da base — a tela mostra 5h para um turno de 6h. O pagamento está certo (`scheduleEntries` deriva de `shift.time`, não de `dur`), mas o rótulo mente. `dur` deveria ser derivado de `time` em vez de armazenado, ou recalculado a cada edição.
+6. **Override de `time` sem `dur` deixa a duração exibida errada — ✅ RESOLVIDO (Fase 2).** `dur` foi removido de todo dado base (`WEEKDAY_SHIFTS`, `team.rotacao.turnos`, blocos vagos de infra/desenvolvimento) e o merge de override em `buildSchedule` descarta qualquer `dur` residual vindo de dado antigo gravado — a duração é sempre derivada de `time` via `shiftDuration()`. Verificado com dados reais de produção: 2026-07-09 idx2 (`time: "17:00 - 23:00"`) mostrava `dur: "5h"` no código anterior à Fase 2 e agora deriva corretamente `6h`; das 56 overrides de sustentação em produção que ainda carregavam `dur` gravado, nenhuma propaga esse campo depois do merge (0/56, confirmado). O schema Zod continua aceitando `dur` na entrada só por compatibilidade com dado antigo — nada volta a gravar nele.
 
 ## 8. Faseamento
 
@@ -281,10 +281,12 @@ Allowlist com `teamId`/`adminOf` e `role` derivado, escopo de escrita nos quatro
 
 **Aceite:** admin de uma equipe não consegue salvar edição em outra (403); slot vago aparece e é atribuível; equipe fora da vigência mostra estado vazio; infra mostra "sem plantão" entre 00:00 e 09:00; a sustentação continua se comportando como na Fase 0.
 
-### Fase 2 — controle de horas multi-equipe e dividir turno
+### Fase 2 — controle de horas multi-equipe e dividir turno — ✅ IMPLEMENTADA
 Dropdown escopado, sobreaviso gerado da equipe correta com corte por vigência, ação "Dividir turno".
 
 **Aceite:** pessoa de infra atribuída a um turno vê o SA correspondente no CH dela; nenhum SA é gerado antes de `startsOn`; totais da sustentação inalterados mês a mês contra os valores atuais; dividir um turno de 9h em 4h + 2h + 3h produz exatamente 9h de sobreaviso somadas.
+
+**Verificado**: `buildSchedule` da sustentação comparado com dados reais de produção antes/depois do fechamento da Fase 2 — 78 células pessoa×mês, 6836h de sobreaviso idênticas nos dois lados, zero divergência; split de turno testado com corte de 9h em 4h+2h+3h (zero sobreposição, soma exata); 2026-07-09 idx2 corrigido de `5h` exibido para `6h` derivado (ver defeito §7.6).
 
 ### Futuro
 Rotação de infra e desenvolvimento quando as equipes definirem uma; estrutura editável na UI (exige vigência versionada — ver ADR-0001); identificador estável de pessoa na migração para PostgreSQL/Turso (ADR-0003).

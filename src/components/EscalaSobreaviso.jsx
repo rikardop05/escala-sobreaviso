@@ -5,6 +5,7 @@ import {
   MS_DAY, dayKey, sameDay, fmtDS,
   buildSchedule, currentOnCall, adjacentOnCall,
   getActiveSub, getCoverSuggestions, shiftPeople, resolveShiftPeople, parseTimeRange,
+  shiftDuration, sortShiftsByStart,
 } from '../lib/schedule';
 import { TEAMS, MEMBERS } from '../lib/teams';
 import { getTheme, ACCENT, DANGER, WARN } from '../lib/theme';
@@ -164,14 +165,18 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
   const [overridesError,    setOverridesError]    = useState(false);
   const [editMode,       setEditMode]       = useState(false);
   const [selectedShifts, setSelectedShifts] = useState(new Set());
-  const [editForm,       setEditForm]       = useState({ persons: [], period: '', time: '', dur: '' });
+  const [editForm,       setEditForm]       = useState({ persons: [], period: '', time: '' });
   const [editSaving,     setEditSaving]     = useState(false);
   const [editProgress,   setEditProgress]   = useState(null); // "lote 2 de 3" durante envio em lotes
   const [editError,      setEditError]      = useState(null);
   const [applyToFuture,  setApplyToFuture]  = useState(false);
   const [confirmAction,  setConfirmAction]  = useState(null); // 'apply' | 'reset' | null
   const [addDay,   setAddDay]   = useState(null); // dayKey ao qual estamos adicionando um turno
-  const [addForm,  setAddForm]  = useState({ persons: [], period: '', time: '', dur: '' });
+  const [addForm,  setAddForm]  = useState({ persons: [], period: '', time: '' });
+  // "Dividir turno" (docs/specs/multi-equipe.md §6): null = painel fechado; senão
+  // { dk, idx, originalPeriod, originalTime, cuts: string[], parts: [{period,persons}] }.
+  // cuts.length === parts.length - 1 sempre (N cortes geram N+1 partes).
+  const [splitForm, setSplitForm] = useState(null);
 
   // Troca a equipe ativa: atualiza hash + perfil, e limpa estado específico da
   // equipe anterior (filtro, seleção de edição, mês) para não vazar entre elas.
@@ -184,6 +189,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     setEditMode(false);
     setSelectedShifts(new Set());
     setAddDay(null);
+    setSplitForm(null);
     setMonthKey(null); // volta pro mês atual — evita cair num mês sem dias na equipe nova
     setSubForm({ show: false, titular: "", substituto: "", from: "", until: "" });
   }
@@ -348,7 +354,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
       });
       if (d.folga.includes(filter) && d.dow === 6) {
         const sub = getActiveSub(filter, dayKey(d.date), subs);
-        if (!sub) rows.push({ date:d.date, dow:d.dow, period:"Folga FDS", time:"Sáb + Dom", dur:"", person:filter, kind:"folga" });
+        if (!sub) rows.push({ date:d.date, dow:d.dow, period:"Folga FDS", time:"Sáb + Dom", person:filter, kind:"folga" });
       }
       if (rows.length >= 30) break;
     }
@@ -425,9 +431,10 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     setEditMode(e => !e);
     setSelectedShifts(new Set());
     setEditError(null);
-    setEditForm({ persons: [], period: '', time: '', dur: '' });
+    setEditForm({ persons: [], period: '', time: '' });
     setApplyToFuture(false);
     setAddDay(null);
+    setSplitForm(null);
   }
 
   const togglePerson = (list, name) =>
@@ -487,7 +494,6 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
         if (editForm.persons.length) override.persons = editForm.persons;
         if (editForm.period)         override.period  = editForm.period;
         if (editForm.time)           override.time    = editForm.time;
-        if (editForm.dur)            override.dur     = editForm.dur;
         basePatch[dk][idx] = Object.keys(override).length ? override : null;
       } else {
         basePatch[dk][idx] = null;
@@ -525,7 +531,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
       }
       if (lastResult) { setOverrides(lastResult.overrides || {}); setLabels(lastResult.labels || {}); }
       setSelectedShifts(new Set());
-      if (clearForm) setEditForm({ persons: [], period: '', time: '', dur: '' });
+      if (clearForm) setEditForm({ persons: [], period: '', time: '' });
       setApplyToFuture(false);
     } catch (e) {
       setEditError(friendlyError(e));
@@ -551,13 +557,126 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     setEditError(null);
     try {
       const body = { team: activeTeam, overrides: { [addDay]: { [nextIdx]: {
-        persons: addForm.persons, period: addForm.period, time: addForm.time, dur: addForm.dur || '',
+        persons: addForm.persons, period: addForm.period, time: addForm.time,
       } } } };
       const updated = await api('/api/schedule', { method: 'POST', body });
       setOverrides(updated.overrides || {});
       setLabels(updated.labels || {});
       setAddDay(null);
-      setAddForm({ persons: [], period: '', time: '', dur: '' });
+      setAddForm({ persons: [], period: '', time: '' });
+    } catch (e) {
+      setEditError(friendlyError(e));
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  // ─── DIVIDIR TURNO (ADMIN) ────────────────────────────────────────────────
+  // docs/specs/multi-equipe.md §6: parte o intervalo original em N sub-turnos
+  // contíguos, sem sobreposição possível — os cortes são pontos dentro do
+  // próprio intervalo, e cada parte nasce como [corte anterior, próximo corte),
+  // então a soma das partes é sempre exatamente o intervalo original.
+
+  function fmtMinutes(min) {
+    const m = ((min % 1440) + 1440) % 1440;
+    return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  }
+
+  // Abre o painel a partir de um turno existente — pré-carrega a 1ª parte com
+  // as pessoas/período atuais (mesma convenção do formulário de edição: vazio
+  // no override = mantém quem já está; aqui só se aplica à 1ª parte, que reusa
+  // o idx original — as demais nascem sem base, então vazio ali é turno vago).
+  function openSplitForm(dk, idx, shift) {
+    setAddDay(null);
+    setEditError(null);
+    setSplitForm({
+      dk, idx,
+      originalPeriod: shift.period,
+      originalTime: shift.time,
+      cuts: [''],
+      parts: [
+        { period: shift.period, persons: shiftPeople(shift) },
+        { period: '', persons: [] },
+      ],
+    });
+  }
+
+  function updateSplitPart(pi, field, value) {
+    setSplitForm(f => f && { ...f, parts: f.parts.map((p, i) => i === pi ? { ...p, [field]: value } : p) });
+  }
+
+  function updateSplitCut(pi, value) {
+    setSplitForm(f => f && { ...f, cuts: f.cuts.map((c, i) => i === pi ? value : c) });
+  }
+
+  const MAX_SPLIT_PARTS = 8;
+
+  function addSplitCut() {
+    setSplitForm(f => (f && f.parts.length < MAX_SPLIT_PARTS)
+      ? { ...f, cuts: [...f.cuts, ''], parts: [...f.parts, { period: '', persons: [] }] }
+      : f);
+  }
+
+  function removeSplitCut() {
+    setSplitForm(f => (f && f.cuts.length > 1) ? { ...f, cuts: f.cuts.slice(0, -1), parts: f.parts.slice(0, -1) } : f);
+  }
+
+  // Converte os cortes em fronteiras de minutos absolutos (o turno pode cruzar
+  // meia-noite — mesma convenção de shiftDuration/detectOverlaps: um horário
+  // que cai antes do início pertence à "volta" seguinte, +1440min).
+  const splitPreview = useMemo(() => {
+    if (!splitForm) return null;
+    const tr = parseTimeRange(splitForm.originalTime);
+    if (!tr) return { error: 'Horário do turno original inválido.', parts: null };
+    const startMin = tr.sh * 60 + tr.sm;
+    let endMin = tr.eh * 60 + tr.em;
+    if (endMin <= startMin) endMin += 1440;
+
+    const boundaries = [startMin];
+    for (const cut of splitForm.cuts) {
+      if (!cut) return { error: 'Preencha o horário de todos os cortes.', parts: null };
+      const [h, m] = cut.split(':').map(Number);
+      if (Number.isNaN(h) || Number.isNaN(m)) return { error: 'Horário de corte inválido.', parts: null };
+      let cutMin = h * 60 + m;
+      if (cutMin <= startMin) cutMin += 1440;
+      boundaries.push(cutMin);
+    }
+    boundaries.push(endMin);
+
+    for (let i = 1; i < boundaries.length; i++) {
+      if (boundaries[i] <= boundaries[i - 1]) {
+        return { error: 'Os cortes devem estar em ordem crescente e dentro do horário do turno original.', parts: null };
+      }
+    }
+
+    return {
+      error: null,
+      parts: splitForm.parts.map((_, i) => ({ time: `${fmtMinutes(boundaries[i])} – ${fmtMinutes(boundaries[i + 1])}` })),
+    };
+  }, [splitForm]);
+
+  async function applySplit() {
+    if (!splitForm || editSaving || !splitPreview || splitPreview.error) return;
+    if (splitForm.parts.some(p => !p.period.trim())) {
+      setEditError('Preencha o período de cada parte.');
+      return;
+    }
+    const day = schedule.find(d => dayKey(d.date) === splitForm.dk);
+    let nextIdx = day ? day.shifts.reduce((mx, s) => Math.max(mx, s.idx), -1) + 1 : 0;
+    const dayPatch = {};
+    splitForm.parts.forEach((p, i) => {
+      const idx = i === 0 ? splitForm.idx : nextIdx++;
+      const override = { period: p.period.trim(), time: splitPreview.parts[i].time };
+      if (p.persons.length) override.persons = p.persons; // vazio = omite (§ vago/mantém, ver comentário acima)
+      dayPatch[idx] = override;
+    });
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      const updated = await api('/api/schedule', { method: 'POST', body: { team: activeTeam, overrides: { [splitForm.dk]: dayPatch } } });
+      setOverrides(updated.overrides || {});
+      setLabels(updated.labels || {});
+      setSplitForm(null);
     } catch (e) {
       setEditError(friendlyError(e));
     } finally {
@@ -835,7 +954,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                       {u.coveringFor && <span className="text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:"#DBEAFE", color:"#1D4ED8" }}>cobre {u.coveringFor}</span>}
                       {u.coveredBy  && <span className="text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:"#F3E5F5", color:"#7B1FA2" }}>coberto por {u.coveredBy}</span>}
                     </div>
-                    <span className="font-mono text-xs" style={{ color:T.textMuted }}>{u.time}{u.dur?` · ${u.dur}`:""}</span>
+                    <span className="font-mono text-xs" style={{ color:T.textMuted }}>{u.time}{shiftDuration(u.time)?` · ${shiftDuration(u.time)}`:""}</span>
                   </div>
                 ))}
               </div>
@@ -962,7 +1081,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                       </div>
                     )}
                     <div className="space-y-0.5">
-                      {d.shifts.map((s) => {
+                      {sortShiftsByStart(d.shifts, team.dayStart).map((s) => {
                         const i = s.idx; // índice estável do override (não a posição no array)
                         const people = resolveShiftPeople(s, dk, subs)
                           .map(r => ({ person: r.person, subOf: r.coveringFor, titular: r.titular }));
@@ -1005,7 +1124,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                             )}
                             <span className="w-24 font-semibold" style={{ color: highlight ? '#818CF8' : T.textSecondary }}>{s.period}</span>
                             <span className="font-mono text-xs w-28" style={{ color: highlight ? '#818CF8' : T.textMuted }}>{s.time}</span>
-                            <span className="font-mono text-xs w-7" style={{ color:T.textMuted }}>{s.dur}</span>
+                            <span className="font-mono text-xs w-9" style={{ color:T.textMuted }}>{shiftDuration(s.time)}</span>
                             <span className="inline-flex flex-wrap items-center gap-1">
                               {people.length > 0 ? (
                                 people.map((p, pi) => <PersonTag key={pi} name={p.person} subOf={p.subOf} />)
@@ -1026,6 +1145,14 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                             ) : (editMode && hasOverride) ? (
                               <span style={{ fontSize:'0.6rem', color:T.textMuted, fontWeight:'700', background:'rgba(148,163,184,0.12)', borderRadius:'3px', padding:'0 4px' }}>editado</span>
                             ) : null}
+                            {editMode && isAdmin && (
+                              <button type="button"
+                                onClick={(e) => { e.stopPropagation(); openSplitForm(dk, i, s); }}
+                                title="Dividir este turno em partes"
+                                style={{ marginLeft:'auto', fontSize:'0.65rem', fontWeight:700, color:T.textMuted, background:'transparent', border:`1px solid ${T.cardBorder}`, borderRadius:'0.4rem', padding:'0.15rem 0.5rem', minHeight:'1.75rem', cursor:'pointer' }}>
+                                Dividir
+                              </button>
+                            )}
                           </div>
                         );
                       })}
@@ -1037,7 +1164,6 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                         <div className="grid gap-2 mb-2" style={{ gridTemplateColumns:'repeat(auto-fit, minmax(120px, 1fr))' }}>
                           <input value={addForm.period} onChange={e => setAddForm(f => ({ ...f, period:e.target.value }))} placeholder="Período (ex: Tarde)" style={{ ...selStyle, marginTop:0 }} />
                           <input value={addForm.time} onChange={e => setAddForm(f => ({ ...f, time:e.target.value }))} placeholder="Horário (ex: 17:00 – 23:00)" style={{ ...selStyle, marginTop:0 }} />
-                          <input value={addForm.dur} onChange={e => setAddForm(f => ({ ...f, dur:e.target.value }))} placeholder="Duração (ex: 6h)" style={{ ...selStyle, marginTop:0 }} />
                         </div>
                         <div className="mb-2"><PersonPicker selected={addForm.persons} onToggle={n => setAddForm(f => ({ ...f, persons: togglePerson(f.persons, n) }))} roster={team.roster} /></div>
                         <div className="flex gap-2">
@@ -1052,12 +1178,70 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                         </div>
                       </div>
                     ) : (
-                      <button onClick={() => { setAddDay(dk); setAddForm({ persons: [], period: '', time: '', dur: '' }); setEditError(null); }}
+                      <button onClick={() => { setAddDay(dk); setAddForm({ persons: [], period: '', time: '' }); setEditError(null); }}
                         className="mt-1.5 inline-flex items-center gap-1"
                         style={{ background:'transparent', color:T.textMuted, border:`1px dashed ${T.cardBorder}`, borderRadius:'0.5rem', padding:'0.35rem 0.7rem', minHeight:'2.25rem', fontSize:'0.72rem', fontWeight:700, cursor:'pointer' }}>
                         <Icon name="plus" size={12} /> Adicionar turno
                       </button>
                     ))}
+
+                    {/* Dividir turno (admin, modo edição) — docs/specs/multi-equipe.md §6 */}
+                    {editMode && isAdmin && splitForm?.dk === dk && (
+                      <div className="mt-2 pt-2" style={{ borderTop:`1px dashed ${T.cardBorder}` }}>
+                        <div className="text-xs font-semibold mb-1" style={{ color:T.textSecondary }}>
+                          Dividir turno · {splitForm.originalPeriod} · {splitForm.originalTime}
+                        </div>
+                        <p className="text-xs mb-2" style={{ color:T.textMuted }}>
+                          Pessoas vazias mantêm quem já está na 1ª parte; nas partes novas, viram turno vago.
+                        </p>
+                        {splitPreview?.error && (
+                          <p role="alert" className="flex items-center gap-1.5 text-xs font-semibold mb-2" style={{ color:DANGER }}>
+                            <Icon name="alert" size={13} /> {splitPreview.error}
+                          </p>
+                        )}
+                        {splitForm.parts.map((part, pi) => (
+                          <div key={pi} className="mb-2 pb-2" style={{ borderBottom: pi < splitForm.parts.length - 1 ? `1px dashed ${T.divider}` : 'none' }}>
+                            <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                              <span className="font-mono text-xs font-bold" style={{ color:T.textSecondary, minWidth:'7rem' }}>
+                                {splitPreview?.parts?.[pi]?.time || '…'}
+                              </span>
+                              <input value={part.period} onChange={e => updateSplitPart(pi, 'period', e.target.value)}
+                                placeholder="Período (ex: Manhã)" style={{ ...selStyle, marginTop:0, maxWidth:'11rem' }} />
+                            </div>
+                            <PersonPicker selected={part.persons} onToggle={n => updateSplitPart(pi, 'persons', togglePerson(part.persons, n))} roster={team.roster} />
+                            {pi < splitForm.cuts.length && (
+                              <div className="flex items-center gap-2 mt-1.5">
+                                <label style={labelStyle}>corte em</label>
+                                <input type="time" value={splitForm.cuts[pi]} onChange={e => updateSplitCut(pi, e.target.value)}
+                                  style={{ ...selStyle, marginTop:0, width:'8rem' }} />
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                        <div className="flex flex-wrap gap-2 mb-2">
+                          <button type="button" onClick={addSplitCut} disabled={splitForm.parts.length >= MAX_SPLIT_PARTS}
+                            style={{ background:'transparent', color:T.textSecondary, border:`1px dashed ${T.cardBorder}`, borderRadius:'0.5rem', padding:'0.35rem 0.7rem', minHeight:'2.25rem', fontSize:'0.72rem', fontWeight:700, cursor: splitForm.parts.length >= MAX_SPLIT_PARTS ? 'not-allowed' : 'pointer' }}>
+                            + Adicionar corte
+                          </button>
+                          {splitForm.cuts.length > 1 && (
+                            <button type="button" onClick={removeSplitCut}
+                              style={{ background:'transparent', color:T.textMuted, border:`1px solid ${T.cardBorder}`, borderRadius:'0.5rem', padding:'0.35rem 0.7rem', minHeight:'2.25rem', fontSize:'0.72rem', fontWeight:700, cursor:'pointer' }}>
+                              Remover último corte
+                            </button>
+                          )}
+                        </div>
+                        <div className="flex gap-2">
+                          <button onClick={applySplit} disabled={editSaving || !!splitPreview?.error}
+                            style={{ background: (editSaving || splitPreview?.error) ? T.cardBorder : ACCENT, color:'#fff', border:'none', borderRadius:'0.5rem', padding:'0.4rem 0.9rem', minHeight:'2.5rem', fontWeight:700, fontSize:'0.78rem', cursor: (editSaving || splitPreview?.error) ? 'not-allowed' : 'pointer' }}>
+                            {editSaving ? 'Salvando…' : `Dividir em ${splitForm.parts.length} partes`}
+                          </button>
+                          <button onClick={() => { setSplitForm(null); setEditError(null); }}
+                            style={{ background:'transparent', color:T.textMuted, border:`1px solid ${T.cardBorder}`, borderRadius:'0.5rem', padding:'0.4rem 0.9rem', minHeight:'2.5rem', fontWeight:700, fontSize:'0.78rem', cursor:'pointer' }}>
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1227,12 +1411,6 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                     <label style={labelStyle}>Horário
                     <input value={editForm.time} onChange={e => setEditForm(f => ({ ...f, time:e.target.value }))}
                       placeholder="ex: 23:00 – 04:00" style={selStyle} />
-                    </label>
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Duração
-                    <input value={editForm.dur} onChange={e => setEditForm(f => ({ ...f, dur:e.target.value }))}
-                      placeholder="ex: 5h" style={selStyle} />
                     </label>
                   </div>
                 </div>

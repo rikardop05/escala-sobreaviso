@@ -48,7 +48,8 @@ export const MEMBERS = { ...SUSTENTACAO_MEMBERS, ...DESENVOLVIMENTO_MEMBERS, ...
 
 // Turnos sem dono fixo (infra e desenvolvimento, sem rotação — admin atribui à mão).
 // `persons: []` é o slot vago (ver invariante nova de shiftPeople() no §1 da spec).
-const vago = (period, time, dur) => ({ period, time, dur, persons: [] });
+// Sem `dur` — duração é sempre derivada de `time` via shiftDuration() (defeito §7.6).
+const vago = (period, time) => ({ period, time, persons: [] });
 
 // Infra e desenvolvimento começam em 2026-08-01, não 2026-07-01 (decisão da Fase 2):
 // julho de 2026 já fechou sem ninguém atribuído aos slots vagos — se startsOn ficasse
@@ -74,8 +75,8 @@ export const TEAMS = {
       roster: WEEKEND_ROSTER,
       change: WEEKEND_CHANGE,
       turnos: {
-        dia:   { period: "Dia",   time: "23:00 – 11:00", dur: "12h" },
-        noite: { period: "Noite", time: "11:00 – 23:00", dur: "12h" },
+        dia:   { period: "Dia",   time: "23:00 – 11:00" },
+        noite: { period: "Noite", time: "11:00 – 23:00" },
       },
       legado: { tipo: "ciclo", anchor: ANCHOR, ciclos: WEEKEND_CYCLE },
     },
@@ -89,13 +90,13 @@ export const TEAMS = {
     roster: Object.keys(DESENVOLVIMENTO_MEMBERS),
     // Sem rodízio — blocos nascem vagos (persons: []), admin atribui à mão.
     blocos: {
-      1: [vago("Madrugada", "00:00 – 09:00", "9h"), vago("Noite", "18:00 – 00:00", "6h")],
-      2: [vago("Madrugada", "00:00 – 09:00", "9h"), vago("Noite", "18:00 – 00:00", "6h")],
-      3: [vago("Madrugada", "00:00 – 09:00", "9h"), vago("Noite", "18:00 – 00:00", "6h")],
-      4: [vago("Madrugada", "00:00 – 09:00", "9h"), vago("Noite", "18:00 – 00:00", "6h")],
-      5: [vago("Madrugada", "00:00 – 09:00", "9h"), vago("Noite", "18:00 – 00:00", "6h")],
-      0: [vago("Madrugada", "00:00 – 09:00", "9h"), vago("Dia", "09:00 – 00:00", "15h")],
-      6: [vago("Madrugada", "00:00 – 09:00", "9h"), vago("Dia", "09:00 – 00:00", "15h")],
+      1: [vago("Madrugada", "00:00 – 09:00"), vago("Noite", "18:00 – 00:00")],
+      2: [vago("Madrugada", "00:00 – 09:00"), vago("Noite", "18:00 – 00:00")],
+      3: [vago("Madrugada", "00:00 – 09:00"), vago("Noite", "18:00 – 00:00")],
+      4: [vago("Madrugada", "00:00 – 09:00"), vago("Noite", "18:00 – 00:00")],
+      5: [vago("Madrugada", "00:00 – 09:00"), vago("Noite", "18:00 – 00:00")],
+      0: [vago("Madrugada", "00:00 – 09:00"), vago("Dia", "09:00 – 00:00")],
+      6: [vago("Madrugada", "00:00 – 09:00"), vago("Dia", "09:00 – 00:00")],
     },
     rotacao: null,
   },
@@ -109,13 +110,13 @@ export const TEAMS = {
     // Sem rodízio — blocos nascem vagos (persons: []), admin atribui à mão.
     // Sem cobertura 00:00–09:00 todos os dias e 09:00–18:00 nos dias úteis (expediente).
     blocos: {
-      1: [vago("Noite", "18:00 – 00:00", "6h")],
-      2: [vago("Noite", "18:00 – 00:00", "6h")],
-      3: [vago("Noite", "18:00 – 00:00", "6h")],
-      4: [vago("Noite", "18:00 – 00:00", "6h")],
-      5: [vago("Noite", "18:00 – 00:00", "6h")],
-      0: [vago("Dia", "09:00 – 17:00", "8h"), vago("Noite", "17:00 – 00:00", "7h")],
-      6: [vago("Dia", "09:00 – 17:00", "8h"), vago("Noite", "17:00 – 00:00", "7h")],
+      1: [vago("Noite", "18:00 – 00:00")],
+      2: [vago("Noite", "18:00 – 00:00")],
+      3: [vago("Noite", "18:00 – 00:00")],
+      4: [vago("Noite", "18:00 – 00:00")],
+      5: [vago("Noite", "18:00 – 00:00")],
+      0: [vago("Dia", "09:00 – 17:00"), vago("Noite", "17:00 – 00:00")],
+      6: [vago("Dia", "09:00 – 17:00"), vago("Noite", "17:00 – 00:00")],
     },
     rotacao: null,
   },
