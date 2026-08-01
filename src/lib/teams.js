@@ -1,23 +1,22 @@
-// Registry de equipes — Fases 0 e 1 da spec de múltiplas equipes (docs/specs/multi-equipe.md).
+// Registry de equipes — Fases 0, 1 e 2 da spec de múltiplas equipes (docs/specs/multi-equipe.md).
 // Contém as três equipes: Sustentação, Infraestrutura e Desenvolvimento.
 // Vocabulário: CONTEXT.md. Decisão de manter a estrutura em código (não editável na UI): ADR-0001.
 //
 // Deriva de src/lib/schedule.js em vez de duplicar os dados: PEOPLE, WEEKDAY_SHIFTS,
 // WEEKEND_ROSTER, WEEKEND_CYCLE, ANCHOR, WEEKEND_CHANGE e RANGE_START continuam sendo a
-// fonte de verdade (consumida hoje por EscalaSobreaviso.jsx, ControleDeHoras.jsx e
-// EstruturaEscala.jsx); este arquivo só empacota esses mesmos valores no formato que o
-// motor genérico de buildSchedule()/buildOnCallSegments() espera. Infra e Desenvolvimento
-// não têm equivalente em schedule.js (só existiam nesta spec) — seus dados nascem aqui.
+// fonte de verdade (consumida hoje por EscalaSobreaviso.jsx e EstruturaEscala.jsx); este
+// arquivo só empacota esses mesmos valores no formato que o motor genérico de
+// buildSchedule()/buildOnCallSegments() espera. Infra e Desenvolvimento não têm
+// equivalente em schedule.js (só existiam nesta spec) — seus dados nascem aqui.
 import {
   PEOPLE, WEEKDAY_SHIFTS, WEEKEND_ROSTER, WEEKEND_CYCLE, ANCHOR, WEEKEND_CHANGE, RANGE_START,
   dayKey,
 } from "./schedule.js";
 
-// MEMBERS é a fonte única de pessoas prevista pela spec (§1 Modelo). A chave é o
-// identificador — primeiro nome; primeiro + sobrenome só quando há colisão entre
-// equipes (Leonardo Matheus / Leonardo Menegon) — e precisa ser única entre TODAS as
-// equipes (ADR-0003). `PEOPLE`/`CH_NAMES` (schedule.js) continuam sendo o que a UI do
-// Controle de Horas usa hoje (só sustentação) — MEMBERS ainda não os substitui.
+// MEMBERS é a fonte única de pessoas prevista pela spec (§1 Modelo) — desde a Fase 2,
+// é o que TODA a UI usa (ControleDeHoras.jsx incluído). A chave é o identificador —
+// primeiro nome; primeiro + sobrenome só quando há colisão entre equipes (Leonardo
+// Matheus / Leonardo Menegon) — e precisa ser única entre TODAS as equipes (ADR-0003).
 const SUSTENTACAO_MEMBERS = Object.fromEntries(
   Object.entries(PEOPLE).map(([name, p]) => [
     name,
@@ -51,6 +50,14 @@ export const MEMBERS = { ...SUSTENTACAO_MEMBERS, ...DESENVOLVIMENTO_MEMBERS, ...
 // `persons: []` é o slot vago (ver invariante nova de shiftPeople() no §1 da spec).
 const vago = (period, time, dur) => ({ period, time, dur, persons: [] });
 
+// Infra e desenvolvimento começam em 2026-08-01, não 2026-07-01 (decisão da Fase 2):
+// julho de 2026 já fechou sem ninguém atribuído aos slots vagos — se startsOn ficasse
+// em julho, o Controle de Horas mostraria o mês inteiro como "sem plantonista", uma
+// afirmação falsa (o app simplesmente não existia para essas equipes ainda). Mover o
+// início para o mês em que o app de fato passa a ser usado evita inventar um passado
+// que não foi operado por aqui, sem exigir importar a planilha de julho.
+const EQUIPES_NOVAS_STARTS_ON = "2026-08-01";
+
 export const TEAMS = {
   sustentacao: {
     id: "sustentacao",
@@ -77,7 +84,7 @@ export const TEAMS = {
     id: "desenvolvimento",
     nome: "Desenvolvimento",
     dayStart: "00:00",
-    startsOn: "2026-07-01",
+    startsOn: EQUIPES_NOVAS_STARTS_ON,
     endsOn: null,
     roster: Object.keys(DESENVOLVIMENTO_MEMBERS),
     // Sem rodízio — blocos nascem vagos (persons: []), admin atribui à mão.
@@ -96,7 +103,7 @@ export const TEAMS = {
     id: "infra",
     nome: "Infraestrutura",
     dayStart: "00:00",
-    startsOn: "2026-07-01",
+    startsOn: EQUIPES_NOVAS_STARTS_ON,
     endsOn: null,
     roster: Object.keys(INFRA_MEMBERS),
     // Sem rodízio — blocos nascem vagos (persons: []), admin atribui à mão.

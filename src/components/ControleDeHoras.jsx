@@ -1,10 +1,10 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useApi } from '../lib/api';
 import {
-  PEOPLE, CH_NAMES, MONTHS, durationHours, mergedHours, fmtHM, brl,
+  MONTHS, durationHours, mergedHours, fmtHM, brl,
   buildSchedule, dayKey, resolveShiftPeople,
 } from '../lib/schedule';
-import { TEAMS } from '../lib/teams';
+import { TEAMS, MEMBERS } from '../lib/teams';
 import { getTheme, DANGER, WARN } from '../lib/theme';
 import { Icon, SaveStatus, Snackbar, ConfirmDialog, friendlyError } from './ui';
 
@@ -21,6 +21,18 @@ const TYPE_META = {
 function parseShiftTime(timeStr) {
   const parts = String(timeStr).split(/[–—-]/).map(t => t.trim());
   return { inicio: parts[0], fim: parts[1] };
+}
+
+// Pessoas que o admin pode ver/editar no CH, agrupadas por equipe (Fase 2 —
+// docs/specs/multi-equipe.md §5): adminOf === '*' vê as três; um array vê só as
+// equipes ali. Member nunca usa isto — fica travado no próprio painel. A ordem de
+// TEAMS (sustentação, desenvolvimento, infra) decide a ordem dos grupos no dropdown.
+function chGroupsFor(profile) {
+  const adminOf = profile?.adminOf;
+  const teamIds = adminOf === '*' ? Object.keys(TEAMS)
+    : Array.isArray(adminOf) ? adminOf.filter(id => TEAMS[id])
+    : [];
+  return teamIds.map(teamId => ({ teamId, nome: TEAMS[teamId].nome, people: TEAMS[teamId].roster }));
 }
 
 export default function ControleDeHoras({ dark, profile }) {
@@ -61,11 +73,19 @@ export default function ControleDeHoras({ dark, profile }) {
   // mas só olho (sem edição, é um valor derivado). Reseta ao trocar de pessoa.
   const [nfVisible, setNfVisible] = useState(false);
 
-  // Admin can switch to view any CH_NAMES member; member is locked to their own.
-  // Admin fora da escala (sem memberId) cai no primeiro membro por padrão — assim o
-  // painel já abre com dados em vez de um dropdown "fantasma" sem seleção real.
-  const [viewPerson, setViewPerson] = useState(profile?.memberId ?? (isAdmin ? CH_NAMES[0] : null));
+  // Admin pode trocar para qualquer membro das equipes em adminOf (agrupado por
+  // equipe no dropdown — ver chGroupsFor); member trava no próprio painel. Admin
+  // fora da escala (sem memberId) cai no primeiro membro do primeiro grupo por
+  // padrão — assim o painel já abre com dados em vez de um dropdown "fantasma".
+  const chGroups = useMemo(() => chGroupsFor(profile), [profile]);
+  const chPeopleFlat = useMemo(() => chGroups.flatMap(g => g.people), [chGroups]);
+  const [viewPerson, setViewPerson] = useState(profile?.memberId ?? (isAdmin ? (chPeopleFlat[0] ?? null) : null));
   const person = isAdmin ? (viewPerson ?? profile?.memberId) : profile?.memberId;
+  // A equipe da pessoa selecionada determina TUDO daqui pra baixo: escala, overrides,
+  // labels e substituições vêm sempre da equipe dela (MEMBERS[person].teamId), nunca
+  // fixas na sustentação (docs/specs/multi-equipe.md §5, Fase 2).
+  const personTeamId = person ? MEMBERS[person]?.teamId : null;
+  const team = personTeamId ? TEAMS[personTeamId] : null;
 
   const [monthIdx, setMonthIdx] = useState(now.getMonth());
   const [year,     setYear]     = useState(now.getFullYear());
@@ -75,14 +95,17 @@ export default function ControleDeHoras({ dark, profile }) {
   const blank = { tipo: "Hora Extra", data: "", inicio: "", fim: "", projeto: "", atividade: "" };
   const [form, setForm] = useState(blank);
 
-  // Reload CH data when admin switches person
+  // Recarrega dados do CH quando a pessoa (e portanto a equipe dela) muda — a
+  // escala/overrides/labels/substituições vêm sempre da equipe de `person`, nunca
+  // de uma equipe fixa (Fase 2 — antes carregava uma vez só, sem equipe nenhuma).
   useEffect(() => {
+    if (!person || !personTeamId) { setDataLoading(false); return; }
     setDataLoading(true);
     const query = isAdmin && person ? `?person=${encodeURIComponent(person)}` : '';
     Promise.all([
       api(`/api/ch${query}`),
-      api('/api/substitutions'),
-      api('/api/schedule'),
+      api(`/api/substitutions?team=${personTeamId}`),
+      api(`/api/schedule?team=${personTeamId}`),
       api(`/api/ch-close${query}`).catch(() => ({})), // fechamentos são opcionais — falha não bloqueia o painel
     ]).then(([chData, subData, overridesData, closedData]) => {
       setEntries(chData.entries || []);
@@ -93,7 +116,7 @@ export default function ControleDeHoras({ dark, profile }) {
     }).catch(console.error)
       .finally(() => setDataLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [person]);
+  }, [person, personTeamId]);
 
   useEffect(() => () => {
     clearTimeout(entriesTimer.current);
@@ -193,7 +216,9 @@ export default function ControleDeHoras({ dark, profile }) {
   };
 
   // ─── ENTRADAS DA ESCALA (SA automático, com overrides) ─────────────────────
-  const schedule = useMemo(() => buildSchedule(TEAMS.sustentacao, overrides), [overrides]);
+  // buildSchedule já recorta pela vigência da equipe (team.startsOn/endsOn) — nenhum
+  // sobreaviso é gerado antes disso, sem precisar de nenhuma lógica extra aqui.
+  const schedule = useMemo(() => (team ? buildSchedule(team, overrides) : []), [team, overrides]);
 
   const scheduleEntries = useMemo(() => {
     if (!person) return [];
@@ -275,6 +300,9 @@ export default function ControleDeHoras({ dark, profile }) {
   const monthKeyStr = `${year}-${String(monthIdx + 1).padStart(2, '0')}`;
   const closedSnap = closedMonths[monthKeyStr] || null;
   const isClosed = !!closedSnap;
+  // Mês anterior ao startsOn da equipe: zero SA é esperado (a equipe não existia
+  // ainda), não "turno descoberto" — diferencia isso de um mês simplesmente vazio.
+  const monthBeforeTeamStart = !!(team?.startsOn && monthKeyStr < team.startsOn.slice(0, 7));
 
   const displayEntries = useMemo(() => (
     isClosed
@@ -431,7 +459,7 @@ export default function ControleDeHoras({ dark, profile }) {
     URL.revokeObjectURL(url);
   };
 
-  const p = PEOPLE[person] || { color: "#64748B", bg: "#F1F5F9" };
+  const p = MEMBERS[person] || { color: "#64748B", bg: "#F1F5F9" };
   const years = [year - 1, year, year + 1];
   const liveDuration = durationHours(form.inicio, form.fim);
   const crossesMidnight = form.inicio && form.fim && form.fim <= form.inicio;
@@ -470,7 +498,11 @@ export default function ControleDeHoras({ dark, profile }) {
             <label style={labelStyle} htmlFor="ch-person">Responsável</label>
             {isAdmin ? (
               <select id="ch-person" style={{ ...inputStyle, width:'auto' }} value={viewPerson || ''} onChange={e => { setViewPerson(e.target.value); setEditId(null); setForm(blank); }}>
-                {CH_NAMES.map(name => <option key={name} value={name}>{name}</option>)}
+                {chGroups.map(g => (
+                  <optgroup key={g.teamId} label={g.nome}>
+                    {g.people.map(name => <option key={name} value={name}>{name}</option>)}
+                  </optgroup>
+                ))}
               </select>
             ) : (
               <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-bold"
@@ -723,7 +755,9 @@ export default function ControleDeHoras({ dark, profile }) {
 
           {displayEntries.length === 0 ? (
             <div className="px-4 py-8 text-center text-sm" style={{ color:T.textMuted, background:T.cardBg }}>
-              {dataLoading ? "Carregando…" : "Nenhum lançamento neste mês. Os sobreavisos da escala aparecem aqui automaticamente."}
+              {dataLoading ? "Carregando…"
+                : monthBeforeTeamStart ? `${team.nome} só passou a existir a partir de ${team.startsOn.slice(8,10)}/${team.startsOn.slice(5,7)}/${team.startsOn.slice(0,4)} — não há sobreaviso a mostrar antes disso.`
+                : "Nenhum lançamento neste mês. Os sobreavisos da escala aparecem aqui automaticamente."}
             </div>
           ) : (
             <div style={{ background:T.cardBg, overflowX:"auto" }}>

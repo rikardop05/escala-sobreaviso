@@ -2,7 +2,7 @@
 
 App interno da MT Fintech para sobreaviso — três equipes (Sustentação, Infraestrutura,
 Desenvolvimento; 19 pessoas no total). Gerencia o calendário de plantões e o controle
-financeiro de horas (Controle de Horas ainda é sustentação-pura, ver Fase 2 em
+financeiro de horas — Controle de Horas é multi-equipe desde a Fase 2 (ver
 `docs/specs/multi-equipe.md`).
 
 **URL em produção**: https://escala-sobreaviso.vercel.app
@@ -28,7 +28,7 @@ financeiro de horas (Controle de Horas ainda é sustentação-pura, ver Fase 2 e
 ```
 src/
   main.jsx                  ClerkProvider + ReactDOM root; publishable key hardcoded (público por design)
-  App.jsx                   Guard de auth, roteamento por role, navegação por abas (sem ProfileSetup). Gate temporário: aba Controle de Horas só aparece pra quem é/administra a sustentação (remover na Fase 2)
+  App.jsx                   Guard de auth, roteamento por role, navegação por abas (sem ProfileSetup). canAccessCH = role admin ou member — sem gate de equipe desde a Fase 2
   index.css                 Tailwind directives
   lib/
     api.js                  Hook useApi() — fetch autenticado com JWT Clerk
@@ -38,7 +38,7 @@ src/
   components/
     ui.jsx                  Kit compartilhado: Icon (SVGs), SaveStatus, Snackbar (undo), ConfirmDialog, Skeleton, friendlyError()
     EscalaSobreaviso.jsx    Calendário mensal com seletor de equipe (#escala/<id>), filtro por responsável (roster da equipe), substituições, edição de escala (admin), widget "Agora" multi-equipe, slot vago, detector de sobreposição
-    ControleDeHoras.jsx     CH: parâmetros, lançamentos HE/Comp, relatório, exportação CSV; admin pode ver qualquer membro — ainda sustentação-pura (ver gate em App.jsx), Fase 2 estende para as três equipes
+    ControleDeHoras.jsx     CH multi-equipe desde a Fase 2: parâmetros, lançamentos HE/Comp, relatório, exportação CSV; "Responsável" vem de MEMBERS (agrupado por equipe no dropdown do admin); admin só vê/edita membros das equipes em adminOf
     EstruturaEscala.jsx     Aba "Estrutura" (#estrutura, some para quem não administra nenhuma equipe): tabelas read-only, com seletor limitado às equipes em adminOf. Sustentação mostra semana (WEEKDAY_SHIFTS) + escada de FDS; infra/desenvolvimento mostram blocos por dia-da-semana, faixas sem cobertura e aviso "sem rodízio definido". Edição versionada é fase futura
 
 api/
@@ -171,7 +171,10 @@ buildOnCallSegments(schedule, dayStart)   // dayStart OBRIGATÓRIO — sem defau
   mão) e cobrem os 7 dias. `rotacao` (só a sustentação tem) gera os turnos de fim de semana via
   escada — `null` nas outras duas. `startsOn`/`endsOn` recortam a vigência da equipe contra
   `RANGE_START`/`RANGE_END` (globais, inalterados); infra e desenvolvimento começam em
-  `2026-07-01`.
+  `2026-08-01` (`EQUIPES_NOVAS_STARTS_ON` em `teams.js` — decisão da Fase 2: mover para o mês em
+  que o app de fato passou a ser usado por essas equipes, em vez de `2026-07-01`, evita que o CH
+  mostre julho inteiro como "sem plantonista" para 13 pessoas que simplesmente não usavam o app
+  ainda, sem precisar importar a planilha operacional de julho).
 - `dayStart` substitui a antiga heurística posicional (`idx === 0 && crosses && startMin >=
   12*60`) por um dado explícito por equipe (ADR-0002): um turno cujo horário de início é
   `>= dayStart` (quando `dayStart > "00:00"`) pertence ao dia anterior no calendário — é
@@ -192,22 +195,18 @@ buildOnCallSegments(schedule, dayStart)   // dayStart OBRIGATÓRIO — sem defau
 - `MEMBERS` (`src/lib/teams.js`) é a fonte única de pessoas das **três** equipes (19 no total:
   6 sustentação + 8 desenvolvimento + 5 infra) — usada pelo backend (`api/_validate.js`,
   `api/ch.js`, `api/ch-close.js`) para validar `person`/resolver a equipe de alguém
-  (`MEMBERS[nome].teamId`), e por `EscalaSobreaviso.jsx` para cor/badge de qualquer pessoa (o
-  widget "Agora" mostra as três equipes ao mesmo tempo). `PEOPLE`/`CH_NAMES` (`schedule.js`)
-  continuam existindo só para o que ainda é sustentação-only: `ControleDeHoras.jsx` inteiro, e a
-  tabela da sustentação em `EstruturaEscala.jsx` (`weekendAssignment`, `WEEKDAY_SHIFTS`).
+  (`MEMBERS[nome].teamId`), e desde a Fase 2 por **toda** a UI que mostra pessoas de qualquer
+  equipe: `EscalaSobreaviso.jsx` (cor/badge, o widget "Agora" mostra as três equipes ao mesmo
+  tempo) e `ControleDeHoras.jsx` (lista de "Responsável"). `CH_NAMES` (`schedule.js`) não tem mais
+  leitor desde que `ControleDeHoras.jsx` passou a usar `MEMBERS` — o export em si só será removido
+  quando o resto do defeito §7.6 (duração derivada de `time`) for endereçado, para não misturar as
+  duas limpezas num commit só.
 - `EscalaSobreaviso.jsx` é **multi-equipe desde a Fase 1**: mantém uma **equipe ativa**
   (`activeTeam`, estado local) e chama `buildSchedule(TEAMS[activeTeam], …)` /
   `currentOnCall(…, TEAMS[activeTeam].dayStart)` / `adjacentOnCall(…, TEAMS[activeTeam].dayStart)`
-  — nunca mais `TEAMS.sustentacao` fixo. `ControleDeHoras.jsx` e a branch sustentação de
-  `EstruturaEscala.jsx` continuam fixos em `TEAMS.sustentacao` (ver gates específicos abaixo).
-
-```js
-PEOPLE    = { Emanoel, "Marcus Túlio", Ricardo, Carlos, Raul, Alice }
-CH_NAMES  = ["Raul", "Emanoel", "Marcus Túlio", "Ricardo", "Carlos", "Alice"]
-// Todos os membros participam do Controle de Horas (Alice incluída em jul/2026)
-// MEMBERS em teams.js espelha os mesmos 6 (mais teamId) — ainda não é a fonte que a UI usa.
-```
+  — nunca mais `TEAMS.sustentacao` fixo. `ControleDeHoras.jsx` é **multi-equipe desde a Fase 2**
+  (ver seção Controle de Horas abaixo) — a única exceção que continua fixa em `TEAMS.sustentacao`
+  é a branch sustentação de `EstruturaEscala.jsx`.
 
 ### Turnos de semana (seg–sex) — `WEEKDAY_SHIFTS`
 
@@ -325,17 +324,29 @@ Lista `subs` é compartilhada por equipe (`team:{teamId}:substitutions`) — `Es
 
 ### Acesso
 
-`canAccessCH = (role === 'admin' || role === 'member') && chGateSustentacaoOnly`
+`canAccessCH = role === 'admin' || role === 'member'` (`src/App.jsx`) — sem gate de equipe desde
+a Fase 2. O CH vale para as **19 pessoas das três equipes**, não só a sustentação.
 
-⚠️ **Gate temporário da Fase 1 — remover na Fase 2** (`src/App.jsx`): `chGateSustentacaoOnly` é
-`true` quando `profile.teamId === 'sustentacao'` ou `adminOf` cobre `'sustentacao'` (`'*'` ou
-array com o id). A aba some pra quem é/administra só infra ou desenvolvimento, porque a UI do CH
-(`ControleDeHoras.jsx`) ainda é sustentação-pura — `CH_NAMES`/`PEOPLE` e
-`buildSchedule(TEAMS.sustentacao, …)` fixos. É **uma condição isolada**, comentada no próprio
-código; nenhuma outra regra da Fase 1 depende dela.
-
-Admin (da sustentação) pode trocar o "Responsável" via dropdown para ver/editar CH de qualquer
-membro (da sustentação). Member só vê/edita o próprio painel.
+**"Responsável" multi-equipe** (`ControleDeHoras.jsx`): a lista vem de `MEMBERS`
+(`src/lib/teams.js`), nunca mais de `CH_NAMES`/`PEOPLE` (removidos deste componente na Fase 2):
+- **Member**: só enxerga a si mesmo — sem dropdown.
+- **Admin**: `chGroupsFor(profile)` monta um grupo por `teamId` em `adminOf` (`'*'` → as três
+  equipes; array → só as equipes cobertas), e o dropdown mostra as pessoas agrupadas por equipe
+  (`<optgroup>`). Um admin de uma única equipe nunca vê nem consegue selecionar alguém de outra —
+  tanto na UI (grupo simplesmente não existe) quanto no backend (`api/ch.js`/`api/ch-close.js`
+  respondem 403 via `adminCovers` se o `person` do request não pertencer a uma equipe do
+  `adminOf`, ver `api/ch.js`).
+- **A equipe da pessoa selecionada decide tudo**: `MEMBERS[person].teamId` resolve `team =
+  TEAMS[teamId]`, e a partir daí `buildSchedule(team, overrides)` roda com **os overrides e
+  substituições daquela equipe** (`GET /api/schedule?team=…` / `GET /api/substitutions?team=…`) —
+  não mais fixo em `TEAMS.sustentacao`. Trocar de pessoa numa equipe diferente recarrega esses dois
+  fetches (efeito depende de `[person, personTeamId]`).
+- **Vigência**: como `buildSchedule` já recorta o calendário gerado a `team.startsOn`/`endsOn`,
+  nenhum sobreaviso é gerado antes do início da equipe automaticamente — sem lógica extra no CH.
+  Para infra/desenvolvimento (`startsOn = 2026-08-01`), um mês anterior ao início mostra estado
+  vazio ("equipe ainda não existia") em vez de "sem plantonista" (que sugeriria uma falha).
+- Fórmulas, valor da NF, CSV e fechamento mensal **não mudaram de lógica** — só passaram a valer
+  para qualquer uma das três equipes, não só a sustentação.
 
 ### Redis — Chaves CH
 
