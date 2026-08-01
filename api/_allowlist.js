@@ -23,7 +23,7 @@ export const ALLOWLIST = {
   'emanoel.barros@mtpagamentos.com.br':    { memberId: 'Emanoel',      teamId: 'sustentacao', adminOf: [] },
   'raul.vitti@mtpagamentos.com.br':        { memberId: 'Raul',         teamId: 'sustentacao', adminOf: [] },
   'marcus.silva@mtpagamentos.com.br':      { memberId: 'Marcus Túlio', teamId: 'sustentacao', adminOf: [] },
-  'ricardo.correa@mtpagamentos.com.br':    { memberId: 'Ricardo',      teamId: 'sustentacao', adminOf: ['sustentacao'] },
+  'ricardo.correa@mtpagamentos.com.br':    { memberId: 'Ricardo',      teamId: 'sustentacao', adminOf: '*' }, // ⚠ admin de TODAS as equipes — para testes da migração multi-equipe; reduzir para ['sustentacao'] quando terminarem
   'carlos.beda@mtpagamentos.com.br':       { memberId: 'Carlos',       teamId: 'sustentacao', adminOf: ['sustentacao'] },
   'cbeda.de@gmail.com':                    { memberId: 'Carlos',       teamId: 'sustentacao', adminOf: [] }, // segundo e-mail do Carlos — sem admin aqui (mantido do formato anterior)
   'alessandra.lisboa@mtpagamentos.com.br': { memberId: null,          teamId: null,           adminOf: '*' }, // admin de todas as equipes, fora de qualquer escala

@@ -31,9 +31,12 @@ function rosterMember(teamId) {
 // deve ser enviado como null = reverter para o padrão).
 function overrideSchemaFor(teamId) {
   const Member = rosterMember(teamId);
+  // Teto de persons[] = tamanho do roster da própria equipe — não um número mágico.
+  // Um turno não pode ter mais gente escalada do que a equipe tem pessoas.
+  const maxPersons = Math.max(TEAMS[teamId]?.roster.length ?? 1, 1);
   return z.object({
-    person:  Member.optional(),                             // legado (1 pessoa)
-    persons: z.array(Member).min(1).max(10).optional(),      // multi-pessoa (feriados/slots)
+    person:  Member.optional(),                                    // legado (1 pessoa)
+    persons: z.array(Member).min(1).max(maxPersons).optional(),    // multi-pessoa (feriados/slots)
     period:  z.string().min(1).max(30).optional(),
     time:    z.string().min(1).max(25).optional(),
     dur:     z.string().min(1).max(10).optional(),

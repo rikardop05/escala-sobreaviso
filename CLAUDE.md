@@ -311,7 +311,7 @@ Sem fechamento, os valores são recalculados a cada render — editar remuneraç
 - **Fechar mês** (só admin, botão no Relatório): grava snapshot imutável `{ closedAt, closedBy, params, totals, entries[] }` em `member:{id}:ch_closed[YYYY-MM]`. Recusa fechar mês já fechado (409).
 - **Mês fechado**: relatório, ledger e CSV usam o snapshot (badge "Mês fechado" + "congelados"); novos lançamentos com data nesse mês são bloqueados no cliente; botões editar/excluir somem. Parâmetros continuam editáveis — só afetam meses abertos.
 - **Reabrir** (só admin): descarta o snapshot; valores voltam a ser recalculados.
-- Totais são calculados no cliente (lógica da escala vive em `src/lib/schedule.js`, fronteira Vite/Node impede import no `api/`); o snapshot é validado por schema e a ação é exclusiva de admin — congela o que o admin viu e aprovou na tela.
+- Totais são calculados no cliente. **Não é uma restrição técnica** — `api/*.js` importa módulos de `src/lib/` normalmente desde a Fase 1 (`api/_validate.js`, `api/ch.js` e `api/ch-close.js` importam `TEAMS`/`MEMBERS` de `src/lib/teams.js`; são módulos ESM simples, sem JSX nem nada específico de Vite, e o bundler do Vercel rastreia o import sem problema). A escolha é não duplicar a lógica financeira do CH em dois runtimes: o snapshot é validado por schema e a ação é exclusiva de admin — congela o que o admin viu e aprovou na tela, sem reimplementar `buildSchedule`/cálculo de horas no servidor para conferir.
 - ⚠ O bloqueio de lançamento em mês fechado é client-side; `api/ch.js` não valida contra `ch_closed` (aceitável para ferramenta interna; endurecer na migração Postgres).
 
 ---
