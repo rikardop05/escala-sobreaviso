@@ -1,13 +1,27 @@
 import { z } from 'zod';
+import { TEAMS, MEMBERS } from '../src/lib/teams.js';
 
-// Team member names — must stay in sync with PEOPLE keys in src/lib/schedule.js.
-// Defined inline here to avoid cross-boundary import (api/ is Node.js; src/ is Vite).
-const TEAM_MEMBERS = /** @type {[string, ...string[]]} */ (
-  ['Emanoel', 'Marcus Túlio', 'Ricardo', 'Carlos', 'Raul', 'Alice']
-);
+// TEAMS/MEMBERS vivem em src/lib/teams.js (plain JS, sem JSX/Vite) — importáveis
+// direto no runtime Node do Vercel, igual a qualquer outro módulo ESM. Substituem o
+// enum fixo TEAM_MEMBERS (Fase 0-only, sustentação): validação agora é contra o
+// roster real da equipe em questão (docs/specs/multi-equipe.md §4).
 
-const DateStr    = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD');
-const TeamMember = z.enum(TEAM_MEMBERS);
+const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD');
+
+// Ids de equipe válidos — hoje sustentacao/desenvolvimento/infra (src/lib/teams.js).
+export const TeamIdSchema = z.enum(Object.keys(TEAMS));
+
+// Qualquer pessoa de qualquer equipe (usado pelo Controle de Horas, que não é
+// escopado por equipe única — cada chave Redis já isola por memberId).
+const AnyMember = z.enum(Object.keys(MEMBERS));
+
+// Pessoas do roster de UMA equipe — usado por schedule/substitutions, que são
+// escopados por equipe (o titular/substituto/persons de um turno só pode vir do
+// roster da equipe do próprio turno).
+function rosterMember(teamId) {
+  const roster = TEAMS[teamId]?.roster ?? [];
+  return z.enum(roster.length ? roster : ['__equipe_sem_roster__']);
+}
 
 // ─── SCHEDULE ────────────────────────────────────────────────────────────────
 
@@ -15,20 +29,28 @@ const TeamMember = z.enum(TEAM_MEMBERS);
 // mantendo a pessoa original). buildSchedule() mescla o override sobre a base,
 // então todos os campos são opcionais — exige-se apenas ≥1 campo (override vazio
 // deve ser enviado como null = reverter para o padrão).
-const OverrideObj = z.object({
-  person:  TeamMember.optional(),               // legado (1 pessoa)
-  persons: z.array(TeamMember).min(1).max(6).optional(), // multi-pessoa (feriados)
-  period:  z.string().min(1).max(30).optional(),
-  time:    z.string().min(1).max(25).optional(),
-  dur:     z.string().min(1).max(10).optional(),
-}).refine(o => Object.keys(o).length > 0, 'override não pode ser vazio (use null para reverter)');
+function overrideSchemaFor(teamId) {
+  const Member = rosterMember(teamId);
+  // Teto de persons[] = tamanho do roster da própria equipe — não um número mágico.
+  // Um turno não pode ter mais gente escalada do que a equipe tem pessoas.
+  const maxPersons = Math.max(TEAMS[teamId]?.roster.length ?? 1, 1);
+  return z.object({
+    person:  Member.optional(),                                    // legado (1 pessoa)
+    persons: z.array(Member).min(1).max(maxPersons).optional(),    // multi-pessoa (feriados/slots)
+    period:  z.string().min(1).max(30).optional(),
+    time:    z.string().min(1).max(25).optional(),
+    dur:     z.string().min(1).max(10).optional(),
+  }).refine(o => Object.keys(o).length > 0, 'override não pode ser vazio (use null para reverter)');
+}
 
 // { 'YYYY-MM-DD': { idx: OverrideObj | null } } — idx é '0','1','2',... (string).
 // Índices além dos turnos base viram turnos NOVOS (dias custom/feriado). null reverte.
-export const SchedulePatchSchema = z.record(
-  z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  z.record(z.string(), z.union([OverrideObj, z.null()]))
-).refine(obj => Object.keys(obj).length <= 366, 'Patch exceeds maximum day count');
+function schedulePatchSchemaFor(teamId) {
+  return z.record(
+    z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    z.record(z.string(), z.union([overrideSchemaFor(teamId), z.null()]))
+  ).refine(obj => Object.keys(obj).length <= 366, 'Patch exceeds maximum day count');
+}
 
 // { 'YYYY-MM-DD': string | null } — rótulo do dia (ex.: "Feriado"); null/'' remove.
 export const LabelPatchSchema = z.record(
@@ -36,28 +58,39 @@ export const LabelPatchSchema = z.record(
   z.union([z.string().max(60), z.null()])
 ).refine(obj => Object.keys(obj).length <= 366, 'Label patch exceeds maximum day count');
 
-// Corpo do POST /api/schedule: overrides e/ou labels (ambos opcionais).
-export const SchedulePostSchema = z.object({
-  overrides: SchedulePatchSchema.optional(),
-  labels:    LabelPatchSchema.optional(),
-}).refine(o => o.overrides || o.labels, 'nada para atualizar');
+// Corpo do POST /api/schedule: team obrigatório + overrides e/ou labels (opcionais).
+// A equipe precisa ser conhecida ANTES de montar o schema (o roster de overrides
+// depende dela) — por isso é uma função, não uma constante; o handler valida
+// `team` isoladamente primeiro (ver TeamIdSchema) e só então monta este schema.
+export function schedulePostSchemaFor(teamId) {
+  return z.object({
+    team: TeamIdSchema,
+    overrides: schedulePatchSchemaFor(teamId).optional(),
+    labels:    LabelPatchSchema.optional(),
+  }).refine(o => o.overrides || o.labels, 'nada para atualizar');
+}
 
 // ─── SUBSTITUTIONS ───────────────────────────────────────────────────────────
 
-export const SubPostSchema = z.object({
-  titular:    TeamMember,
-  substituto: TeamMember,
-  from:  DateStr,
-  until: DateStr,
-})
-  .refine(d => d.until >= d.from,           'until must be >= from')
-  .refine(d => d.titular !== d.substituto,  'titular and substituto must differ');
+// titular/substituto precisam ser do roster da MESMA equipe (a do body.team).
+export function subPostSchemaFor(teamId) {
+  const Member = rosterMember(teamId);
+  return z.object({
+    team:       TeamIdSchema,
+    titular:    Member,
+    substituto: Member,
+    from:  DateStr,
+    until: DateStr,
+  })
+    .refine(d => d.until >= d.from,           'until must be >= from')
+    .refine(d => d.titular !== d.substituto,  'titular and substituto must differ');
+}
 
 // ─── CONTROLE DE HORAS ───────────────────────────────────────────────────────
 
 const EntrySchema = z.object({
   id:        z.string().min(1),
-  person:    TeamMember,
+  person:    AnyMember,
   tipo:      z.enum(['Sobreaviso', 'Hora Extra', 'Compensação']),
   data:      DateStr,
   inicio:    z.string().max(10),
@@ -107,7 +140,7 @@ const ClosedTotalsSchema = z.object({
 });
 
 export const ChClosePostSchema = z.object({
-  person: TeamMember.optional(),
+  person: AnyMember.optional(),
   month:  MonthStr,
   snapshot: z.object({
     params: z.object({

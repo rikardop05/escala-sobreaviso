@@ -319,7 +319,10 @@ export function buildSchedule(team, overrides = {}, labels = {}) {
 // Com o handoff do FDS às 23:00, domingo à noite termina 23:00 e a Madrugada de
 // segunda começa 23:00 do domingo — sem o antigo caso especial de segunda.
 // Cada segmento carrega `people` (array) — turno multi-pessoa é um único bloco.
-export function buildOnCallSegments(schedule, dayStart = "00:00") {
+// dayStart é OBRIGATÓRIO (sem default): um default de equipe errada desloca a
+// escala em um dia sem erro visível — cada chamador deve passar o dayStart da
+// equipe que está de fato consultando (team.dayStart).
+export function buildOnCallSegments(schedule, dayStart) {
   const [dsH, dsM] = String(dayStart).split(":").map(Number);
   const dayStartMin = (dsH || 0) * 60 + (dsM || 0);
   const dayMs = (D, off, h, m) => {
@@ -349,14 +352,11 @@ export function buildOnCallSegments(schedule, dayStart = "00:00") {
   return segs.sort((a, b) => a.start - b.start);
 }
 
-// dayStart default = sustentação ("23:00") — única equipe que a UI consome até a
-// Fase 1 passar a informar a equipe ativa explicitamente.
-const DEFAULT_DAY_START = "23:00";
-
 // schedule: array de buildSchedule(team, overrides, labels). `subs` aplica substituições.
+// dayStart é OBRIGATÓRIO — o da equipe cuja escala está em `schedule` (team.dayStart).
 // Retorna quem está de plantão AGORA (pode ser mais de uma pessoa em feriado/turno
 // multi-pessoa) ou null no vão sem plantão. `people` = [{ person, coveringFor }].
-export function currentOnCall(now, schedule, subs = [], dayStart = DEFAULT_DAY_START) {
+export function currentOnCall(now, schedule, subs = [], dayStart) {
   const segs = buildOnCallSegments(schedule, dayStart);
   const t = now.getTime();
   const hits = segs.filter(s => t >= s.start && t < s.end);
@@ -372,9 +372,10 @@ export function currentOnCall(now, schedule, subs = [], dayStart = DEFAULT_DAY_S
 }
 
 // Plantonista anterior e próximo em relação a `now`, com substituições aplicadas.
+// dayStart é OBRIGATÓRIO — o da equipe cuja escala está em `schedule` (team.dayStart).
 // Cada lado vem como { people: [nomes], hora }. `hora` formatada (HH:MM, com dia curto
 // se for outro dia). Retorna null quando não há vizinho (bordas da escala).
-export function adjacentOnCall(now, schedule, subs = [], dayStart = DEFAULT_DAY_START) {
+export function adjacentOnCall(now, schedule, subs = [], dayStart) {
   const segs = buildOnCallSegments(schedule, dayStart);
   const t = now.getTime();
   const nowDay = dayKey(now);
@@ -426,7 +427,10 @@ export function resolveShiftPeople(shift, dateStr, subs = []) {
   });
 }
 
-export function getCoverSuggestions(titular, fromStr, untilStr, schedule) {
+// roster: pessoas elegíveis para cobrir (default = sustentação, para não quebrar
+// quem já chamava sem o parâmetro). Quem edita substituições de outra equipe deve
+// passar TEAMS[team].roster — senão "quem está livre" mistura nomes de fora.
+export function getCoverSuggestions(titular, fromStr, untilStr, schedule, roster = Object.keys(PEOPLE)) {
   return schedule
     .filter(d => {
       const k = dayKey(d.date);
@@ -434,7 +438,7 @@ export function getCoverSuggestions(titular, fromStr, untilStr, schedule) {
     })
     .map(d => {
       const busy = new Set(d.shifts.flatMap(s => shiftPeople(s)));
-      const available = Object.keys(PEOPLE).filter(p => p !== titular && !busy.has(p));
+      const available = roster.filter(p => p !== titular && !busy.has(p));
       return { date: d.date, dow: d.dow, shifts: d.shifts.filter(s => shiftPeople(s).includes(titular)), available };
     });
 }

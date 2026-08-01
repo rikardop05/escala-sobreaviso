@@ -15,7 +15,7 @@ function getClerkClient() {
 /**
  * Verifies the Clerk JWT and resolves the caller's identity from the allowlist.
  *
- * Returns { userId, email, memberId, role } on success.
+ * Returns { userId, email, memberId, teamId, adminOf, role } on success.
  * Throws { status: 401 } ONLY on token verification failure.
  * If email cannot be resolved, returns role:'viewer' (no throw) so the app still loads.
  *
@@ -72,6 +72,6 @@ export async function requireUser(req) {
       '— add CLERK_SECRET_KEY to Vercel env vars to enable role lookup');
   }
 
-  const { memberId, role } = resolveAccess(email);
-  return { userId, email, memberId, role };
+  const { memberId, teamId, adminOf, role } = resolveAccess(email);
+  return { userId, email, memberId, teamId, adminOf, role };
 }
