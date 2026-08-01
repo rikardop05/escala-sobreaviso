@@ -15,6 +15,18 @@ export const kvSet = async (key, value) => {
   await redis.set(key, JSON.stringify(value));
 };
 
+// Leitura com fallback: lê a chave nova (por equipe); se ausente, cai para a chave
+// global antiga. Suporta a migração da Fase 0 da spec de múltiplas equipes
+// (docs/specs/multi-equipe.md) sem downtime — enquanto o script de migração não roda
+// (ou para instalações que nunca tiveram a chave nova), os dados antigos continuam
+// sendo lidos. Escritas vão sempre para a chave nova (ver api/schedule.js e
+// api/substitutions.js) — não há escrita de volta na chave antiga.
+export const kvGetWithFallback = async (newKey, oldKey) => {
+  const val = await kvGet(newKey);
+  if (val !== null) return val;
+  return kvGet(oldKey);
+};
+
 // Percorre TODAS as chaves via SCAN (não bloqueia como KEYS) e devolve
 // { key: valorParseado }. Usado só pelo backup — pega qualquer chave, mesmo
 // tipos de dado adicionados no futuro, sem precisar manter uma lista.

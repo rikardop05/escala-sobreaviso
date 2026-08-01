@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import {
   PEOPLE, WEEKDAY_SHIFTS, WEEKEND_ROSTER, WEEKEND_CHANGE, MS_DAY,
-  weekendAssignment, shiftPeople,
+  weekendAssignment, shiftPeople, blocosAtivos, dayKey,
 } from '../lib/schedule';
 import { getTheme } from '../lib/theme';
 import { Icon } from './ui';
@@ -34,21 +34,32 @@ const WEEKDAY_DISPLAY_OVERRIDES = {
 export default function EstruturaEscala({ dark }) {
   const T = getTheme(dark);
 
+  // A tabela mostra a estrutura VIGENTE HOJE: entradas de WEEKDAY_SHIFTS podem ter
+  // vigência por data (ver blocosAtivos), então resolver sem uma data mostraria turnos
+  // que já saíram de vigência — ou dois turnos para o mesmo horário.
+  const hojeStr = dayKey(new Date());
+
   // Semana: 3 turnos (linhas) × 5 dias (colunas). Horário/duração vêm do turno de segunda;
-  // a única exceção é a Noite de sexta (até 24:00) — sinalizada com asterisco.
+  // se algum dia divergir da referência, a linha é sinalizada com asterisco.
   const weekdayRows = useMemo(() => {
-    const base = WEEKDAY_SHIFTS[1]; // Madrugada, Manhã, Noite
+    const base = blocosAtivos(WEEKDAY_SHIFTS, 1, hojeStr); // Madrugada, Manhã, Noite
     return base.map((ref, i) => ({
       period: ref.period,
       time: ref.time,
       dur: ref.dur,
+      // Dias cujo horário difere da referência de segunda (hoje: nenhum; antes de
+      // 2026-08-01, a Noite de sexta ia até 24:00).
+      excecoes: WEEKDAY_COLS
+        .map(c => ({ c, s: blocosAtivos(WEEKDAY_SHIFTS, c.dow, hojeStr)[i] }))
+        .filter(({ s }) => s && s.time !== ref.time)
+        .map(({ c, s }) => `${c.label} vai até ${s.time.split(/[–—-]/)[1].trim()} (${s.dur})`),
       cells: WEEKDAY_COLS.map(c => {
-        const shift = WEEKDAY_SHIFTS[c.dow][i];
+        const shift = blocosAtivos(WEEKDAY_SHIFTS, c.dow, hojeStr)[i];
         const override = WEEKDAY_DISPLAY_OVERRIDES[c.dow]?.[i];
         return override ? { ...shift, person: override } : shift;
       }),
     }));
-  }, []);
+  }, [hojeStr]);
 
   // Fim de semana: escada de 6 semanas gerada do roster (vigente a partir de WEEKEND_CHANGE).
   const weekendRows = useMemo(() => {
@@ -97,7 +108,7 @@ export default function EstruturaEscala({ dark }) {
                     <tr key={i}>
                       <th scope="row" style={{ ...td, textAlign: 'left' }}>
                         <div className="font-semibold" style={{ color: T.textPrimary }}>{row.period}</div>
-                        <div className="font-mono text-xs" style={{ color: T.textMuted }}>{row.time} · {row.dur}{row.period === 'Noite' ? ' *' : ''}</div>
+                        <div className="font-mono text-xs" style={{ color: T.textMuted }}>{row.time} · {row.dur}{row.excecoes.length ? ' *' : ''}</div>
                       </th>
                       {row.cells.map((shift, ci) => (
                         <td key={ci} style={td}>
@@ -110,7 +121,11 @@ export default function EstruturaEscala({ dark }) {
               </table>
             </div>
           </div>
-          <p className="text-xs mt-2" style={{ color: T.textMuted }}>* Noite de sexta vai até 24:00 (6h); nos demais dias, até 23:00 (5h).</p>
+          {weekdayRows.some(r => r.excecoes.length) && (
+            <p className="text-xs mt-2" style={{ color: T.textMuted }}>
+              * {weekdayRows.flatMap(r => r.excecoes).join('; ')}.
+            </p>
+          )}
         </section>
 
         {/* FIM DE SEMANA */}

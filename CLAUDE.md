@@ -30,7 +30,8 @@ src/
   index.css                 Tailwind directives
   lib/
     api.js                  Hook useApi() — fetch autenticado com JWT Clerk
-    schedule.js             Toda a lógica de geração da escala (leia seção Escala abaixo)
+    schedule.js             Motor genérico da escala — buildSchedule(team, overrides, labels), buildOnCallSegments(schedule, dayStart) (leia seção Escala abaixo)
+    teams.js                Registry de equipes (MEMBERS, TEAMS) — Fase 0 da spec multi-equipe: só a sustentação (ver docs/specs/multi-equipe.md, ADR-0001)
     theme.js                Tema unificado getTheme(dark) — tokens de cor AA usados pelos dois views (não criar temas locais)
   components/
     ui.jsx                  Kit compartilhado: Icon (SVGs), SaveStatus, Snackbar (undo), ConfirmDialog, Skeleton, friendlyError()
@@ -41,17 +42,18 @@ src/
 api/
   _allowlist.js             EDITAR AQUI: mapeamento email→{memberId, role}; resolveAccess()
   _auth.js                  requireUser(req) — verifica JWT + busca email via Clerk API + resolve role
-  _redis.js                 kvGet / kvSet / kvScanAll — helpers JSON sobre ioredis
+  _redis.js                 kvGet / kvSet / kvScanAll / kvGetWithFallback — helpers JSON sobre ioredis; kvGetWithFallback lê a chave por equipe, cai para a global antiga se ausente
   _backup-crypto.js         encrypt/decrypt AES-256-GCM dos dumps de backup (BACKUP_ENCRYPTION_KEY)
   profile.js                GET/POST preferências do usuário (dark, filter, monthKey); role/memberId vêm da allowlist
-  substitutions.js          GET/POST/DELETE substituições; controle de acesso por role no backend
+  substitutions.js          GET/POST/DELETE substituições (chave team:sustentacao:substitutions, leitura dupla); controle de acesso por role no backend
   ch.js                     GET/POST lançamentos e parâmetros CH; admin acessa qualquer membro
   ch-close.js               Fechamento mensal do CH: GET fechamentos; POST fecha mês (admin); DELETE reabre (admin)
-  schedule.js               GET {overrides,labels} (público); POST overrides+labels (admin), carimba editedAt
+  schedule.js               GET {overrides,labels} (público, chaves team:sustentacao:schedule_*, leitura dupla); POST overrides+labels (admin), carimba editedAt
   backup.js                 Cron diário: dump do Redis → cifra → Vercel Blob; poda >30 dias (ver Backup abaixo)
 
 scripts/
   restore-backup.mjs        Restauração de um dump para o Redis (dry-run por padrão; --commit aplica)
+  migrate-team-keys.mjs     One-shot da Fase 0 multi-equipe: copia schedule_overrides/schedule_labels/substitutions → team:sustentacao:* (dry-run por padrão; --commit aplica; não sobrescreve destino existente)
 
 _arquivo/planejamento/db/
   schema.sql                Schema PostgreSQL — planejamento; desatualizado vs. estado atual (ver Migração futura)
@@ -64,7 +66,7 @@ public/
 CONTEXT.md                  Glossário do domínio — linguagem canônica (Equipe, Turno, Atribuição, Slot vago…)
 docs/adr/                   Decisões estruturais e por que foram tomadas
 docs/specs/
-  multi-equipe.md           Spec aprovada e NÃO implementada: suporte a três equipes
+  multi-equipe.md           Spec de suporte a três equipes — Fase 0 (motor genérico) implementada; Fases 1–2 pendentes
 ```
 
 ---
@@ -116,12 +118,44 @@ Escrita (POST/DELETE) sempre requer auth; CH (`/api/ch`) sempre requer auth.
 
 ## Regras de Negócio — Escala
 
-### Equipe (`src/lib/schedule.js`)
+### Motor genérico (`src/lib/schedule.js`) e registry de equipes (`src/lib/teams.js`)
+
+Desde a Fase 0 da spec de múltiplas equipes (`docs/specs/multi-equipe.md`), o motor que gera a
+escala não conhece mais "a sustentação" diretamente — ele recebe uma **equipe** como parâmetro:
+
+```js
+buildSchedule(team, overrides = {}, labels = {})
+buildOnCallSegments(schedule, dayStart = "00:00")
+```
+
+- `team` vem de `TEAMS` em `src/lib/teams.js` — hoje só contém `TEAMS.sustentacao` (Fase 1
+  adiciona infraestrutura e desenvolvimento). Formato: `{ id, nome, dayStart, startsOn, endsOn,
+  roster, blocos, rotacao }`. `blocos[dow]` são os turnos de dono fixo por dia da semana;
+  `rotacao` (quando existe) gera os turnos de dias sem `blocos` — hoje só o fim de semana da
+  sustentação, via escada (ver abaixo). `startsOn`/`endsOn` recortam a vigência da equipe contra
+  `RANGE_START`/`RANGE_END` (globais, inalterados).
+- `dayStart` substitui a antiga heurística posicional (`idx === 0 && crosses && startMin >=
+  12*60`) por um dado explícito por equipe (ADR-0002): um turno cujo horário de início é
+  `>= dayStart` (quando `dayStart > "00:00"`) pertence ao dia anterior no calendário — é
+  pernoite. Na sustentação `dayStart = "23:00"`, então a Madrugada (23:00–04:00) e o Dia do FDS
+  (23:00–11:00) pernoitam; os demais turnos ficam no próprio dia. Efeito colateral esperado
+  (canto, não bug): um turno **extra** (feriado) com início após as 23:00 agora pernoita também,
+  o que a heurística antiga (restrita a `idx === 0`) não fazia.
+- `currentOnCall`/`adjacentOnCall` mantêm a assinatura antiga (`now, schedule, subs`) com um
+  quarto parâmetro opcional `dayStart` (default `"23:00"`, o da sustentação) — únicos
+  consumidores hoje são as telas que só conhecem essa equipe; passam a receber a equipe ativa
+  na Fase 1.
+- `PEOPLE`/`CH_NAMES`/`WEEKDAY_SHIFTS`/`WEEKEND_ROSTER`/`WEEKEND_CYCLE`/`ANCHOR`/
+  `WEEKEND_CHANGE`/`RANGE_START`/`RANGE_END` continuam exportados de `schedule.js` sem mudança —
+  são a fonte de dados que `teams.js` empacota em `TEAMS.sustentacao` (não duplica). `EstruturaEscala.jsx`,
+  `EscalaSobreaviso.jsx` e `ControleDeHoras.jsx` continuam importando esses nomes normalmente;
+  só as duas chamadas a `buildSchedule` ganharam `TEAMS.sustentacao` como primeiro argumento.
 
 ```js
 PEOPLE    = { Emanoel, "Marcus Túlio", Ricardo, Carlos, Raul, Alice }
 CH_NAMES  = ["Raul", "Emanoel", "Marcus Túlio", "Ricardo", "Carlos", "Alice"]
 // Todos os membros participam do Controle de Horas (Alice incluída em jul/2026)
+// MEMBERS em teams.js espelha os mesmos 6 (mais teamId) — ainda não é a fonte que a UI usa.
 ```
 
 ### Turnos de semana (seg–sex) — `WEEKDAY_SHIFTS`
@@ -132,7 +166,11 @@ Cada dia da semana tem 3 turnos fixos:
 |-------|---------|---------|
 | Madrugada | 23:00 – 04:00 | 5h |
 | Manhã | 04:00 – 09:00 | 5h |
-| Noite | 18:00 – 23:00 (sexta: 24:00) | 5h / 6h |
+| Noite | 18:00 – 23:00 | 5h |
+
+⚠ **Vigência por entrada de turno**: uma entrada de `WEEKDAY_SHIFTS[dow]` pode declarar `from`/`until` (`YYYY-MM-DD`, inclusivos) e só vale nesse intervalo — é assim que a estrutura é corrigida sem reescrever o passado. Hoje há um único caso: a **Noite de sexta** ia até **24:00 (6h)** e sobrepunha 1h ao `Dia` de sábado (que começa 23:00 de sexta), fazendo duas pessoas receberem sobreaviso pela mesma hora; foi corrigida para `18:00 – 23:00` (5h) a partir de `FRIDAY_NIGHT_CHANGE = "2026-08-01"`, com a entrada antiga preservada (`until: "2026-07-31"`) para não alterar a folha de junho/julho de 2026.
+
+`blocosAtivos(blocos, dow, dateStr)` resolve quais entradas valem numa data. A filtragem acontece **antes** da atribuição de `idx`, então os índices permanecem estáveis e os overrides já gravados continuam apontando para o turno certo. Os campos `from`/`until` não vazam para o turno retornado. Todo leitor de `WEEKDAY_SHIFTS` deve passar por essa função — `EstruturaEscala.jsx` resolve com a data de hoje.
 
 ### Fins de semana — rotação com vigência por data
 
@@ -142,24 +180,25 @@ Noite (sáb/dom): 11:00 – 23:00 (12h)
 ```
 Handoff fixo às 23:00/11:00: Sex→Sáb→Dom→Seg conectam sem exceção (a Madrugada de
 segunda começa 23:00 do domingo). Durações seguem 12h → **sem impacto financeiro**,
-por isso a mudança de horário vale para toda a faixa. `buildOnCallSegments` trata
-`idx 0` que começa à noite e cruza a meia-noite (Madrugada útil E Dia do FDS) como
-pernoite que pertence à véspera.
+por isso a mudança de horário vale para toda a faixa. `buildOnCallSegments(schedule,
+dayStart)` trata todo turno cujo início é `>= dayStart` (23:00 na sustentação) como
+pernoite que pertence à véspera — Madrugada útil e Dia do FDS caem nessa regra (ver
+ADR-0002; substitui a antiga heurística restrita a `idx === 0`).
 
-`weekendAssignment(saturday)` escolhe a rotação pela data do sábado e sempre retorna `folga` como **array**:
+`weekendAssignment(saturday)` escolhe a rotação pela data do sábado e sempre retorna `folga` como **array**. Internamente delega para a função genérica `resolveRotation(rotacao, saturday)`, que é o que `buildSchedule(team, …)` chama de fato usando `team.rotacao` — `weekendAssignment` é mantida só para compatibilidade com `EstruturaEscala.jsx`, que ainda só conhece a sustentação:
 
 - **FDS antes de `WEEKEND_CHANGE` (2026-07-18)** → `WEEKEND_CYCLE` antigo: 5 semanas, 5 pessoas, **1 folga** (Alice não faz FDS). `ANCHOR = 2026-06-13`, `cycleIndex` via `((diff % 5)+5)%5`. Mantido para preservar histórico/folha.
 - **FDS a partir de `WEEKEND_CHANGE`** → **escada de 6 semanas** GERADA de `WEEKEND_ROSTER = [Alice, Emanoel, Ricardo, Raul, Marcus Túlio, Carlos]`: cada pessoa avança uma estação por semana nas estações `[Sáb Dia, Sáb Noite, Dom Dia, Dom Noite, Folga, Folga]` → 4 trabalham + **2 folgam**. Fórmula: `estação s na semana w = roster[(s-w) mod 6]`. A ordem foi derivada por **continuidade** com o ciclo antigo (último FDS 11–12/07): quem folgou continua folgando na virada, Alice entra no Sáb Dia, os demais só avançam.
 
 ⚠️ Mover `WEEKEND_CHANGE`, `ANCHOR` ou `WEEKEND_ROSTER` recalcula a escala (histórico e futuro). Meses de CH fechados ficam protegidos pelos snapshots; meses abertos recalculam.
 
-**`RANGE_START = 2026-06-08`** / **`RANGE_END = 2027-06-30`** — período gerado por `buildSchedule()`. Para estender: atualizar apenas `RANGE_END`.
+**`RANGE_START = 2026-06-08`** / **`RANGE_END = 2027-06-30`** — período global; `buildSchedule(team, …)` recorta isso contra `team.startsOn`/`team.endsOn` (na sustentação, idênticos a `RANGE_START`/sem fim, então não há recorte hoje). Para estender: atualizar apenas `RANGE_END`.
 
 `day.folga` é **sempre array** (vazio em dia útil; 1 nome no ciclo antigo; 2 na escada nova) — a UI usa `d.folga.includes(...)` / `d.folga.join(', ')`.
 
 ### Overrides de escala (admin)
 
-`buildSchedule(overrides = {}, labels = {})` aceita overrides por dia/índice e rótulos por dia:
+`buildSchedule(team, overrides = {}, labels = {})` aceita overrides por dia/índice e rótulos por dia (chamadas atuais passam `TEAMS.sustentacao` como `team`):
 ```js
 // overrides: { 'YYYY-MM-DD': { '0': { persons:['Ricardo'], period, time, dur }, '1': null } }
 //   null = revert para base (num índice extra, remove o turno)
@@ -170,16 +209,16 @@ pernoite que pertence à véspera.
 
 Cada turno retornado carrega um `idx` **estável** (a chave do override), usado pela UI para seleção/edição/remoção — não confie na posição no array. Use `shiftPeople(shift)` (não `shift.person`) para ler as pessoas de um turno em qualquer lugar.
 
-Overrides e labels ficam em chaves globais no Redis (`schedule_overrides`, `schedule_labels`). O admin edita no modo de edição do calendário: seleciona turnos + form (multi-seleção de pessoas), **"+ Adicionar turno"** por dia (feriados), reset (remove turno extra) e um input de **rótulo do dia**. POST `/api/schedule` com `{ overrides?, labels? }`.
+Overrides e labels ficam em `team:sustentacao:schedule_overrides` / `team:sustentacao:schedule_labels` (chaves por equipe, Fase 0 — ver "Redis — Todas as Chaves" abaixo). O admin edita no modo de edição do calendário: seleciona turnos + form (multi-seleção de pessoas), **"+ Adicionar turno"** por dia (feriados), reset (remove turno extra) e um input de **rótulo do dia**. POST `/api/schedule` com `{ overrides?, labels? }`.
 
 **Carimbo de edição**: ao aplicar o patch, `api/schedule.js` adiciona `editedAt` (ISO) a cada override não-nulo (só data, sem autor). O cliente usa isso para um marcador **"alterado dd/mm" que expira após 14 dias** (`EDIT_RECENT_MS` em `EscalaSobreaviso.jsx`). No modo de edição, todos os overrides ficam destacados (gerenciamento).
 
-O widget "Agora" usa `currentOnCall(now, schedule, subs)` e `adjacentOnCall(now, schedule, subs)` — ambos derivam de `buildOnCallSegments(schedule)`, que calcula os blocos de plantão a partir do **`shift.time` real** (não de janelas fixas), preservando a convenção de atribuição de dia (Madrugada pernoita na véspera; segunda começa 00:00; sexta até 24:00). Assim, edições de horário e turnos de feriado são refletidos, e o "Agora" mostra **todas** as pessoas quando o turno é multi-pessoa.
+O widget "Agora" usa `currentOnCall(now, schedule, subs)` e `adjacentOnCall(now, schedule, subs)` — ambos derivam de `buildOnCallSegments(schedule, dayStart)` (chamado internamente com o `dayStart` da sustentação por padrão), que calcula os blocos de plantão a partir do **`shift.time` real** (não de janelas fixas), preservando a convenção de atribuição de dia (derivada de `dayStart`: na sustentação, todo turno que começa às 23:00 ou depois pertence ao dia seguinte no calendário). Assim, edições de horário e turnos de feriado são refletidos, e o "Agora" mostra **todas** as pessoas quando o turno é multi-pessoa.
 
 ### Substituições
 
 `getActiveSub(person, dateStr, subs)` → busca substituição ativa onde `titular === person` e `dateStr` está no período.
-Lista `subs` é compartilhada (todos veem as mesmas substituições via chave global Redis).
+Lista `subs` é compartilhada (todos veem as mesmas substituições via `team:sustentacao:substitutions` — chave por equipe, Fase 0).
 
 **Resolução de quem aparece no turno — fonte única `resolveShiftPeople(shift, dateStr, subs)`** → retorna `[{ person, coveringFor, titular }]` aplicando as substituições. Usada pelo calendário, filtro, widget "Agora" (via `buildOnCallSegments`/`currentOnCall`/`adjacentOnCall`, que carregam `personsOverridden` no segmento) **e** pelo cálculo do CH (`scheduleEntries`) — todos compartilham a mesma regra, então calendário e folha nunca divergem.
 
@@ -216,7 +255,7 @@ valorComp       = (valorHora / 3)   × horasComp ← mesmo fator do SA; abate da
 valorNF         = remuneracao + valorSobreaviso + valorHoraExtra − valorComp
 ```
 
-SA vem de `buildSchedule(overrides, labels)` — reflete edições do admin no cálculo e no CSV. O `scheduleEntries` resolve a pessoa via `resolveShiftPeople(shift, dk, subs)` (mesma regra do calendário, incluindo "edição vence substituição"), então em turno multi-pessoa (feriado) **cada** pessoa ganha seu próprio SA pelas horas do turno, e substituições redirecionam o SA exatamente como no calendário.
+SA vem de `buildSchedule(TEAMS.sustentacao, overrides, labels)` — reflete edições do admin no cálculo e no CSV. O `scheduleEntries` resolve a pessoa via `resolveShiftPeople(shift, dk, subs)` (mesma regra do calendário, incluindo "edição vence substituição"), então em turno multi-pessoa (feriado) **cada** pessoa ganha seu próprio SA pelas horas do turno, e substituições redirecionam o SA exatamente como no calendário.
 
 **Valor da NF**: card no Relatório do mês com remuneração + SA + HE − Compensação. Protegido igual à remuneração mensal (oculto por padrão, "R$ ••••••", olho revela — sem edição, é derivado). Estado (`nfVisible`) reseta ao trocar de pessoa. Entra também no CSV (`Valor compensação` e `VALOR DA NF`). Em meses fechados, usa `closedSnap.params.remuneracao` e `closedSnap.totals` (snapshots anteriores a esta feature não têm `valorComp` — tratado como 0).
 
@@ -282,9 +321,18 @@ Handler usa role para controle de acesso, memberId para isolar dados
 | `member:{memberId}:ch_entries` | `[{ id, person, tipo, data, inicio, fim, projeto, atividade }]` | Por membro |
 | `member:{memberId}:ch_params` | `{ [memberId]: { remuneracao, jornada } }` | Por membro |
 | `member:{memberId}:ch_closed` | `{ 'YYYY-MM': { closedAt, closedBy, params, totals, entries[] } }` | Por membro |
-| `substitutions` | `[{ id, titular, substituto, from, until }]` | Compartilhado |
-| `schedule_overrides` | `{ [dayKey]: { [idx]: { persons[]?|person?, period, time, dur, editedAt } } }` (idx extra = turno novo) | Compartilhado |
-| `schedule_labels` | `{ [dayKey]: string }` — rótulo do dia (ex.: "Feriado") | Compartilhado |
+| `team:sustentacao:substitutions` | `[{ id, titular, substituto, from, until }]` | Compartilhado (por equipe) |
+| `team:sustentacao:schedule_overrides` | `{ [dayKey]: { [idx]: { persons[]?|person?, period, time, dur, editedAt } } }` (idx extra = turno novo) | Compartilhado (por equipe) |
+| `team:sustentacao:schedule_labels` | `{ [dayKey]: string }` — rótulo do dia (ex.: "Feriado") | Compartilhado (por equipe) |
+
+⚠️ **Migração em andamento (Fase 0 multi-equipe)**: as três chaves acima trocaram o nome global
+(`substitutions`, `schedule_overrides`, `schedule_labels`) pelo prefixo `team:sustentacao:`.
+Leitura tem fallback automático (`kvGetWithFallback` em `api/_redis.js`): lê a chave nova, cai
+para a global antiga se ausente. Escrita vai sempre para a chave nova. Rode
+`scripts/migrate-team-keys.mjs --commit` para copiar os dados existentes das chaves antigas
+(dry-run por padrão; não sobrescreve destino já populado). Só depois de confirmar a migração e
+remover a leitura dupla (deploy futuro) as chaves antigas devem ser apagadas — ver §2 "Migração"
+em `docs/specs/multi-equipe.md`.
 
 O backup faz `SCAN` de **todas** as chaves (não depende desta lista) — chaves novas entram no dump automaticamente.
 

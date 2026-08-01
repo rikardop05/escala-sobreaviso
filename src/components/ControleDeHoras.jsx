@@ -4,6 +4,7 @@ import {
   PEOPLE, CH_NAMES, MONTHS, durationHours, mergedHours, fmtHM, brl,
   buildSchedule, dayKey, resolveShiftPeople,
 } from '../lib/schedule';
+import { TEAMS } from '../lib/teams';
 import { getTheme, DANGER, WARN } from '../lib/theme';
 import { Icon, SaveStatus, Snackbar, ConfirmDialog, friendlyError } from './ui';
 
@@ -192,7 +193,7 @@ export default function ControleDeHoras({ dark, profile }) {
   };
 
   // ─── ENTRADAS DA ESCALA (SA automático, com overrides) ─────────────────────
-  const schedule = useMemo(() => buildSchedule(overrides), [overrides]);
+  const schedule = useMemo(() => buildSchedule(TEAMS.sustentacao, overrides), [overrides]);
 
   const scheduleEntries = useMemo(() => {
     if (!person) return [];

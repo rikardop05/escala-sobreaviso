@@ -37,9 +37,18 @@ export const WEEKDAY_SHIFTS = {
   5: [
     { period: "Madrugada", time: "23:00 – 04:00", dur: "5h", person: "Emanoel" },
     { period: "Manhã",     time: "04:00 – 09:00", dur: "5h", person: "Raul" },
-    { period: "Noite",     time: "18:00 – 24:00", dur: "6h", person: "Ricardo" },
+    // A Noite de sexta ia até 24:00, sobrepondo 1h ao "Dia" de sábado, que começa às
+    // 23:00 de sexta — as duas pessoas ficavam de sobreaviso na mesma hora e ambas
+    // recebiam por ela. Corrigida para 23:00 a partir de FRIDAY_NIGHT_CHANGE; a entrada
+    // antiga permanece com vigência fechada para preservar o histórico e a folha já
+    // paga de junho/julho de 2026. ⚠ Mover essas datas recalcula a escala.
+    { period: "Noite",     time: "18:00 – 24:00", dur: "6h", person: "Ricardo", until: "2026-07-31" },
+    { period: "Noite",     time: "18:00 – 23:00", dur: "5h", person: "Ricardo", from:  "2026-08-01" },
   ],
 };
+
+// Data em que a Noite de sexta passou a terminar às 23:00 (ver WEEKDAY_SHIFTS[5]).
+export const FRIDAY_NIGHT_CHANGE = "2026-08-01";
 
 // Rotação de FDS ANTIGA (5 semanas, 5 pessoas, 1 folga) — vale para os fins de
 // semana ANTES de WEEKEND_CHANGE. Mantida para preservar o histórico/folha.
@@ -147,30 +156,73 @@ export function cycleIndex(saturday) {
   return ((diff % 5) + 5) % 5;
 }
 
-// Atribuição de FDS para um dado sábado. Escolhe a rotação pela data:
-//   • sábado < WEEKEND_CHANGE → ciclo antigo (5 semanas, 1 folga) — preserva histórico.
-//   • sábado >= WEEKEND_CHANGE → escada nova (6 semanas), GERADA do WEEKEND_ROSTER:
+// Atribuição de FDS para um dado sábado, a partir de uma config de rotação genérica
+// (team.rotacao — ver src/lib/teams.js): escolhe a rotação pela data:
+//   • sábado < rotacao.change → ciclo legado (N semanas, 1 folga) — preserva histórico.
+//   • sábado >= rotacao.change → escada, GERADA do rotacao.roster:
 //     estação s na semana w = roster[(s - w) mod N]; cada pessoa avança 1 estação/semana.
 // Retorna sempre { cycleWeek, sabDia, sabNoite, domDia, domNoite, folga: string[] }.
-export function weekendAssignment(saturday) {
-  if (saturday.getTime() >= WEEKEND_CHANGE.getTime()) {
-    const N = WEEKEND_ROSTER.length; // 6
-    const diff = Math.round((saturday.getTime() - WEEKEND_CHANGE.getTime()) / (7 * MS_DAY));
+function resolveRotation(rotacao, saturday) {
+  if (saturday.getTime() >= rotacao.change.getTime()) {
+    const roster = rotacao.roster;
+    const N = roster.length;
+    const diff = Math.round((saturday.getTime() - rotacao.change.getTime()) / (7 * MS_DAY));
     const w = ((diff % N) + N) % N;
-    const cell = (s) => WEEKEND_ROSTER[(((s - w) % N) + N) % N];
+    const cell = (s) => roster[(((s - w) % N) + N) % N];
     return {
       cycleWeek: w + 1,
       sabDia: cell(0), sabNoite: cell(1), domDia: cell(2), domNoite: cell(3),
       folga: [cell(4), cell(5)],
     };
   }
-  const idx = cycleIndex(saturday);
-  const rot = WEEKEND_CYCLE[idx];
+  const { anchor, ciclos } = rotacao.legado;
+  const diff = Math.round((saturday.getTime() - anchor.getTime()) / (7 * MS_DAY));
+  const idx = ((diff % ciclos.length) + ciclos.length) % ciclos.length;
+  const rot = ciclos[idx];
   return {
     cycleWeek: idx + 1,
     sabDia: rot.sabDia, sabNoite: rot.sabNoite, domDia: rot.domDia, domNoite: rot.domNoite,
     folga: [rot.folga],
   };
+}
+
+// Config de rotação da sustentação, montada a partir das constantes acima — mantida
+// aqui (e não em teams.js) para que weekendAssignment() siga funcionando sem mudança
+// de assinatura para quem já a importa (EstruturaEscala.jsx). src/lib/teams.js expõe
+// a mesma config como TEAMS.sustentacao.rotacao para o motor genérico.
+const SUSTENTACAO_ROTACAO = {
+  dows: [0, 6],
+  tipo: "escada",
+  roster: WEEKEND_ROSTER,
+  change: WEEKEND_CHANGE,
+  turnos: {
+    dia:   { period: "Dia",   time: "23:00 – 11:00", dur: "12h" },
+    noite: { period: "Noite", time: "11:00 – 23:00", dur: "12h" },
+  },
+  legado: { tipo: "ciclo", anchor: ANCHOR, ciclos: WEEKEND_CYCLE },
+};
+
+// Mantido para compatibilidade com a aba Estrutura (EstruturaEscala.jsx), que só
+// conhece a sustentação. buildSchedule() usa resolveRotation() diretamente com a
+// config da equipe recebida — não passa por aqui.
+export function weekendAssignment(saturday) {
+  return resolveRotation(SUSTENTACAO_ROTACAO, saturday);
+}
+
+// Turnos de um dia-da-semana vigentes numa data. Uma entrada de `blocos` pode declarar
+// vigência (`from`/`until`, YYYY-MM-DD inclusivos) — é como a estrutura é corrigida sem
+// reescrever o passado. Dois pontos importantes:
+//   • os campos de vigência não vazam para o turno retornado;
+//   • a filtragem acontece ANTES da atribuição de `idx`, então dias com entradas de
+//     vigências diferentes continuam produzindo os mesmos índices — os overrides já
+//     gravados apontam para eles.
+// Retorna null quando a equipe não tem cobertura naquele dia-da-semana.
+export function blocosAtivos(blocos, dow, dateStr) {
+  const lista = blocos?.[dow];
+  if (!lista) return null;
+  return lista
+    .filter(s => (!s.from || dateStr >= s.from) && (!s.until || dateStr <= s.until))
+    .map(({ from, until, ...s }) => s);
 }
 
 // Pessoas de um turno — normaliza `person` (string legada) e `persons[]` (multi).
@@ -191,36 +243,45 @@ export function parseTimeRange(timeStr) {
   return { sh, sm, eh, em };
 }
 
+// team: definição da equipe (ver src/lib/teams.js) — obrigatório.
+//   team.blocos:  { [dow]: [{ period, time, dur, person? }] } — turnos fixos por dia da
+//                 semana; equipe sem cobertura naquele dow simplesmente não tem entrada.
+//   team.rotacao: { dows, roster, change, turnos:{dia,noite}, legado:{anchor,ciclos} } | null
+//                 — gera os turnos de fim de semana da sustentação (ver resolveRotation).
+//   team.startsOn/endsOn: vigência ('YYYY-MM-DD' | null) — recorta contra RANGE_START/END.
 // overrides: { [dayKey]: { [idx]: { person?|persons?, period, time, dur, editedAt } | null } }
 //   - idx além dos turnos base vira um turno NOVO (feriados/dias custom).
 //   - null reverte o slot base ao padrão (e remove um turno extra).
 // labels: { [dayKey]: string } — rótulo opcional do dia (ex.: "Feriado").
 // Cada turno retornado carrega um `idx` estável (a chave do override), usado pela UI
 // para seleção/edição/remoção — não confie na posição no array.
-export function buildSchedule(overrides = {}, labels = {}) {
+export function buildSchedule(team, overrides = {}, labels = {}) {
   const days = [];
-  for (let t = RANGE_START.getTime(); t <= RANGE_END.getTime(); t += MS_DAY) {
+  const startsOn = team.startsOn ? new Date(`${team.startsOn}T00:00:00`) : RANGE_START;
+  const endsOn   = team.endsOn   ? new Date(`${team.endsOn}T00:00:00`)   : RANGE_END;
+  const rangeStart = Math.max(RANGE_START.getTime(), startsOn.getTime());
+  const rangeEnd   = Math.min(RANGE_END.getTime(), endsOn.getTime());
+  for (let t = rangeStart; t <= rangeEnd; t += MS_DAY) {
     const d = new Date(t);
     d.setHours(12, 0, 0, 0);
     const dow = d.getDay();
+    const dk = dayKey(d);
     let base = [], folga = [], cycleWeek = null; // folga sempre array (vazio em dia útil)
-    if (dow >= 1 && dow <= 5) {
-      base = WEEKDAY_SHIFTS[dow].map(s => ({ ...s }));
-    } else {
+    const bloco = blocosAtivos(team.blocos, dow, dk);
+    if (bloco) {
+      base = bloco;
+    } else if (team.rotacao?.dows?.includes(dow)) {
       const sat = dow === 6 ? d : new Date(d.getTime() - MS_DAY);
-      const rot = weekendAssignment(sat);
+      const rot = resolveRotation(team.rotacao, sat);
       cycleWeek = rot.cycleWeek;
-      folga = rot.folga; // array (1 pessoa no ciclo antigo, 2 na escada nova)
+      folga = rot.folga; // array (1 pessoa no ciclo legado, 2 na escada nova)
       // Handoff fixo às 23:00/11:00 — alinha o FDS ao mesmo horário de virada
       // dos dias úteis (23:00), então Sex→Sáb→Dom→Seg conectam sem exceção.
-      // "Dia" começa 23:00 da véspera e vai até 11:00; "Noite" 11:00–23:00. Ambos 12h.
+      const { dia, noite } = team.rotacao.turnos;
       base = dow === 6
-        ? [{ period:"Dia",  time:"23:00 – 11:00", dur:"12h", person: rot.sabDia   },
-           { period:"Noite",time:"11:00 – 23:00", dur:"12h", person: rot.sabNoite }]
-        : [{ period:"Dia",  time:"23:00 – 11:00", dur:"12h", person: rot.domDia   },
-           { period:"Noite",time:"11:00 – 23:00", dur:"12h", person: rot.domNoite }];
+        ? [{ ...dia, person: rot.sabDia }, { ...noite, person: rot.sabNoite }]
+        : [{ ...dia, person: rot.domDia }, { ...noite, person: rot.domNoite }];
     }
-    const dk = dayKey(d);
     const ovDay = overrides[dk] || {};
     const ovIdxs = Object.keys(ovDay).map(Number).filter(Number.isInteger);
     const maxIdx = Math.max(base.length - 1, ...ovIdxs, -1);
@@ -248,15 +309,19 @@ export function buildSchedule(overrides = {}, labels = {}) {
 
 // Sequência ordenada de blocos de plantão com início/fim absolutos (ms), derivada
 // do shift.time REAL (não de janelas fixas) — então edições de horário e turnos
-// custom de feriado são refletidos. Convenção de atribuição de dia:
-//   • idx 0 que começa à noite e cruza a meia-noite (Madrugada dos dias úteis 23:00→,
-//     Dia do FDS 23:00→) é PERNOITE que termina em D → começa 23:00 da véspera.
-//   • Demais turnos: começam em D no horário parseado; terminam em D (ou D+1 se cruzam
-//     a meia-noite). Turnos extras (idx ≥ base) seguem a mesma regra.
+// custom de feriado são refletidos. Convenção de atribuição de dia (ADR-0002):
+//   • dayStart declara a hora em que o dia da equipe começa (ex.: "23:00" na
+//     sustentação). Um turno cujo horário de início é >= dayStart (quando
+//     dayStart > 00:00) é PERNOITE: pertence ao dia anterior no calendário.
+//   • Demais turnos: começam em D no horário parseado; terminam em D (ou D+1 se
+//     cruzam a meia-noite). Turnos extras (idx ≥ base) seguem a mesma regra —
+//     não há mais tratamento especial por idx.
 // Com o handoff do FDS às 23:00, domingo à noite termina 23:00 e a Madrugada de
 // segunda começa 23:00 do domingo — sem o antigo caso especial de segunda.
 // Cada segmento carrega `people` (array) — turno multi-pessoa é um único bloco.
-export function buildOnCallSegments(schedule) {
+export function buildOnCallSegments(schedule, dayStart = "00:00") {
+  const [dsH, dsM] = String(dayStart).split(":").map(Number);
+  const dayStartMin = (dsH || 0) * 60 + (dsM || 0);
   const dayMs = (D, off, h, m) => {
     const d = new Date(D); d.setHours(0, 0, 0, 0);
     return d.getTime() + off * MS_DAY + (h * 60 + m) * 60000;
@@ -270,10 +335,10 @@ export function buildOnCallSegments(schedule) {
       const startMin = tr.sh * 60 + tr.sm, endMin = tr.eh * 60 + tr.em;
       const crosses = endMin <= startMin; // termina no dia seguinte
       let start, end;
-      if (shift.idx === 0 && crosses && startMin >= 12 * 60) {
-        // pernoite (começa à noite, termina de manhã) → pertence à véspera
+      if (dayStartMin > 0 && startMin >= dayStartMin) {
+        // pernoite (começa depois do início do dia da equipe) → pertence à véspera
         start = dayMs(D, -1, tr.sh, tr.sm);
-        end   = dayMs(D, 0, tr.eh, tr.em);
+        end   = dayMs(D, crosses ? 0 : -1, tr.eh, tr.em);
       } else {
         start = dayMs(D, 0, tr.sh, tr.sm);
         end   = dayMs(D, crosses ? 1 : 0, tr.eh, tr.em);
@@ -284,11 +349,15 @@ export function buildOnCallSegments(schedule) {
   return segs.sort((a, b) => a.start - b.start);
 }
 
-// schedule: array de buildSchedule(overrides, labels). `subs` aplica substituições.
+// dayStart default = sustentação ("23:00") — única equipe que a UI consome até a
+// Fase 1 passar a informar a equipe ativa explicitamente.
+const DEFAULT_DAY_START = "23:00";
+
+// schedule: array de buildSchedule(team, overrides, labels). `subs` aplica substituições.
 // Retorna quem está de plantão AGORA (pode ser mais de uma pessoa em feriado/turno
 // multi-pessoa) ou null no vão sem plantão. `people` = [{ person, coveringFor }].
-export function currentOnCall(now, schedule, subs = []) {
-  const segs = buildOnCallSegments(schedule);
+export function currentOnCall(now, schedule, subs = [], dayStart = DEFAULT_DAY_START) {
+  const segs = buildOnCallSegments(schedule, dayStart);
   const t = now.getTime();
   const hits = segs.filter(s => t >= s.start && t < s.end);
   if (!hits.length) return null;
@@ -305,8 +374,8 @@ export function currentOnCall(now, schedule, subs = []) {
 // Plantonista anterior e próximo em relação a `now`, com substituições aplicadas.
 // Cada lado vem como { people: [nomes], hora }. `hora` formatada (HH:MM, com dia curto
 // se for outro dia). Retorna null quando não há vizinho (bordas da escala).
-export function adjacentOnCall(now, schedule, subs = []) {
-  const segs = buildOnCallSegments(schedule);
+export function adjacentOnCall(now, schedule, subs = [], dayStart = DEFAULT_DAY_START) {
+  const segs = buildOnCallSegments(schedule, dayStart);
   const t = now.getTime();
   const nowDay = dayKey(now);
 
