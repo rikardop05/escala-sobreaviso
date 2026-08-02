@@ -289,4 +289,11 @@ Dropdown escopado, sobreaviso gerado da equipe correta com corte por vigência, 
 **Verificado**: `buildSchedule` da sustentação comparado com dados reais de produção antes/depois do fechamento da Fase 2 — 78 células pessoa×mês, 6836h de sobreaviso idênticas nos dois lados, zero divergência; split de turno testado com corte de 9h em 4h+2h+3h (zero sobreposição, soma exata); 2026-07-09 idx2 corrigido de `5h` exibido para `6h` derivado (ver defeito §7.6).
 
 ### Futuro
-Rotação de infra e desenvolvimento quando as equipes definirem uma; estrutura editável na UI (exige vigência versionada — ver ADR-0001); identificador estável de pessoa na migração para PostgreSQL/Turso (ADR-0003).
+
+**Importação da escala do mês a partir de planilha — prioridade mais alta do que parece.** Sem rotação, infra e desenvolvimento exigem que o admin atribua turno a turno todo mês: ~62 atribuições em desenvolvimento e ~47 em infra, mensalmente. Isso contraria a proposta da ferramenta, que é eliminar trabalho manual, não transferi-lo do Excel para uma tela. Enquanto a importação não existir, o gargalo é o admin.
+
+O formato de entrada já existe e já é mantido pelas equipes: a grade hora × dia de `Sobreaviso(Jul-26).csv` (linhas de hora, um par de colunas por dia, uma coluna por equipe). Ela mapeia diretamente no modelo atual — cada faixa contígua de horas com o mesmo nome é uma atribuição; uma troca no meio de um bloco é exatamente o que "Dividir turno" passou a gerar. Importar não é gambiarra: é atender o fluxo que já roda.
+
+Pontos a decidir quando for desenhada: como o import se comporta diante de mês fechado (deve recusar); se grava atribuições sobre a estrutura declarada ou também propõe estrutura nova quando os horários divergem; e se mostra um diff para conferência antes de escrever, em vez de aplicar direto — dado que o resultado vira dinheiro. A importação escreve **atribuições** (overrides), nunca estrutura, então não conflita com ADR-0001.
+
+Outros itens: rotação de infra e desenvolvimento quando as equipes definirem uma; estrutura editável na UI (exige vigência versionada — ver ADR-0001); identificador estável de pessoa na migração para PostgreSQL/Turso (ADR-0003); remoção da leitura dupla das chaves antigas, depois de confirmado que `team:sustentacao:*` está populado.
