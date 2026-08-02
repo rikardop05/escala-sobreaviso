@@ -26,7 +26,7 @@ export const ALLOWLIST = {
   'ricardo.correa@mtpagamentos.com.br':    { memberId: 'Ricardo',      teamId: 'sustentacao', adminOf: '*' }, // ⚠ admin de TODAS as equipes — para testes da migração multi-equipe; reduzir para ['sustentacao'] quando terminarem
   'carlos.beda@mtpagamentos.com.br':       { memberId: 'Carlos',       teamId: 'sustentacao', adminOf: ['sustentacao'] },
   'cbeda.de@gmail.com':                    { memberId: 'Carlos',       teamId: 'sustentacao', adminOf: [] }, // segundo e-mail do Carlos — sem admin aqui (mantido do formato anterior)
-  'alessandra.lisboa@mtpagamentos.com.br': { memberId: null,          teamId: null,           adminOf: '*' }, // admin de todas as equipes, fora de qualquer escala
+  'alessandra.lisboa@mtpagamentos.com.br': { memberId: null,          teamId: null,           adminOf: ['sustentacao'] }, // administra só a sustentação; fora de qualquer escala (sem CH próprio)
 
   // ─── Infraestrutura ─────────────────────────────────────────────────────────
   'alberth.teixeira@mtpagamentos.com.br':  { memberId: 'Alberth', teamId: 'infra', adminOf: ['infra'] }, // administra E faz plantão
