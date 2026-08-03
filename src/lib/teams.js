@@ -17,31 +17,41 @@ import {
 // é o que TODA a UI usa (ControleDeHoras.jsx incluído). A chave é o identificador —
 // primeiro nome; primeiro + sobrenome só quando há colisão entre equipes (Leonardo
 // Matheus / Leonardo Menegon) — e precisa ser única entre TODAS as equipes (ADR-0003).
+// `fullName` é o nome completo — usado só pelo relatório consolidado do CH (o resto do
+// app continua mostrando o identificador curto, mais estável e mais curto na tela).
+const SUSTENTACAO_FULL_NAMES = {
+  Emanoel: "Emanoel Rosa",
+  "Marcus Túlio": "Marcus Túlio",
+  Ricardo: "Ricardo Corrêa",
+  Carlos: "Carlos Beda",
+  Raul: "Raul Vitti",
+  Alice: "Alice Santos",
+};
 const SUSTENTACAO_MEMBERS = Object.fromEntries(
   Object.entries(PEOPLE).map(([name, p]) => [
     name,
-    { displayName: name, teamId: "sustentacao", color: p.color, bg: p.bg },
+    { fullName: SUSTENTACAO_FULL_NAMES[name] || name, teamId: "sustentacao", color: p.color, bg: p.bg },
   ])
 );
 
 // Roster derivado da planilha operacional Sobreaviso(Jul-26).csv — ver docs/specs/multi-equipe.md §1.
 const DESENVOLVIMENTO_MEMBERS = {
-  "Luis":              { displayName: "Luis Gustavo",       teamId: "desenvolvimento", color: "#00695C", bg: "#E0F2F1" },
-  "Adalberto":         { displayName: "Adalberto Teshima",  teamId: "desenvolvimento", color: "#0277BD", bg: "#E1F5FE" },
-  "Pedro":             { displayName: "Pedro Wesley",       teamId: "desenvolvimento", color: "#283593", bg: "#E8EAF6" },
-  "Dante":             { displayName: "Dante Escame",       teamId: "desenvolvimento", color: "#C62828", bg: "#FFEBEE" },
-  "Leonardo Matheus":  { displayName: "Leonardo Matheus",   teamId: "desenvolvimento", color: "#4E342E", bg: "#EFEBE9" },
-  "Leonardo Menegon":  { displayName: "Leonardo Menegon",   teamId: "desenvolvimento", color: "#558B2F", bg: "#F1F8E9" },
-  "Jonata":            { displayName: "Jonata Crepaldi",    teamId: "desenvolvimento", color: "#827717", bg: "#F9FBE7" },
-  "Ícaro":             { displayName: "Ícaro Gomes",        teamId: "desenvolvimento", color: "#00838F", bg: "#E0F7FA" },
+  "Luis":              { fullName: "Luis Gustavo",       teamId: "desenvolvimento", color: "#00695C", bg: "#E0F2F1" },
+  "Adalberto":         { fullName: "Adalberto Teshima",  teamId: "desenvolvimento", color: "#0277BD", bg: "#E1F5FE" },
+  "Pedro":             { fullName: "Pedro Wesley",       teamId: "desenvolvimento", color: "#283593", bg: "#E8EAF6" },
+  "Dante":             { fullName: "Dante Escame",       teamId: "desenvolvimento", color: "#C62828", bg: "#FFEBEE" },
+  "Leonardo Matheus":  { fullName: "Leonardo Matheus",   teamId: "desenvolvimento", color: "#4E342E", bg: "#EFEBE9" },
+  "Leonardo Menegon":  { fullName: "Leonardo Menegon",   teamId: "desenvolvimento", color: "#558B2F", bg: "#F1F8E9" },
+  "Jonata":            { fullName: "Jonata Crepaldi",    teamId: "desenvolvimento", color: "#827717", bg: "#F9FBE7" },
+  "Ícaro":             { fullName: "Ícaro Gomes",        teamId: "desenvolvimento", color: "#00838F", bg: "#E0F7FA" },
 };
 
 const INFRA_MEMBERS = {
-  "Alberth": { displayName: "Alberth Souza",     teamId: "infra", color: "#4527A0", bg: "#EDE7F6" },
-  "Gabriel": { displayName: "Gabriel Pavanelli", teamId: "infra", color: "#BF360C", bg: "#FBE9E7" },
-  "Antonio": { displayName: "Antonio Carlos",    teamId: "infra", color: "#424242", bg: "#F5F5F5" },
-  "Diogo":   { displayName: "Diogo de Moraes",   teamId: "infra", color: "#880E4F", bg: "#FCE4EC" },
-  "Caio":    { displayName: "Caio Ribeiro",      teamId: "infra", color: "#B71C1C", bg: "#FFEBEE" },
+  "Alberth": { fullName: "Alberth Souza",     teamId: "infra", color: "#4527A0", bg: "#EDE7F6" },
+  "Gabriel": { fullName: "Gabriel Pavanelli", teamId: "infra", color: "#BF360C", bg: "#FBE9E7" },
+  "Antonio": { fullName: "Antonio Carlos",    teamId: "infra", color: "#424242", bg: "#F5F5F5" },
+  "Diogo":   { fullName: "Diogo de Moraes",   teamId: "infra", color: "#880E4F", bg: "#FCE4EC" },
+  "Caio":    { fullName: "Caio Ribeiro",      teamId: "infra", color: "#B71C1C", bg: "#FFEBEE" },
 };
 
 export const MEMBERS = { ...SUSTENTACAO_MEMBERS, ...DESENVOLVIMENTO_MEMBERS, ...INFRA_MEMBERS };
@@ -121,3 +131,16 @@ export const TEAMS = {
     rotacao: null,
   },
 };
+
+// Equipes que uma pessoa com este `adminOf` pode ver/editar no Controle de Horas,
+// cada uma com seu roster (docs/specs/multi-equipe.md §5 — Fase 2). `'*'` vê as três;
+// um array vê só as equipes ali; member (sem adminOf) não usa isto, fica travado no
+// próprio painel. Fonte única para o dropdown "Responsável" (ControleDeHoras.jsx) e
+// para o relatório consolidado (RelatorioConsolidado.jsx) — um admin de uma equipe
+// nunca pode ver valores de outra em nenhum dos dois porque nenhum dos dois pede.
+export function chGroupsFor(adminOf) {
+  const teamIds = adminOf === '*' ? Object.keys(TEAMS)
+    : Array.isArray(adminOf) ? adminOf.filter(id => TEAMS[id])
+    : [];
+  return teamIds.map(teamId => ({ teamId, nome: TEAMS[teamId].nome, people: TEAMS[teamId].roster }));
+}
