@@ -33,12 +33,14 @@ src/
   lib/
     api.js                  Hook useApi() — fetch autenticado com JWT Clerk
     schedule.js             Motor genérico da escala — buildSchedule(team, overrides, labels), buildOnCallSegments(schedule, dayStart), shiftDuration(timeStr), sortShiftsByStart(shifts, dayStart) (leia seção Escala abaixo)
-    teams.js                Registry de equipes (MEMBERS, TEAMS) — sustentação, infraestrutura e desenvolvimento (Fase 1 da spec multi-equipe; ver docs/specs/multi-equipe.md, ADR-0001, ADR-0003). Importável de api/* (plain JS, sem JSX/Vite)
+    teams.js                Registry de equipes (MEMBERS, TEAMS) — sustentação, infraestrutura e desenvolvimento (Fase 1 da spec multi-equipe; ver docs/specs/multi-equipe.md, ADR-0001, ADR-0003); chGroupsFor(adminOf) agrupa pessoas por equipe (dropdown do CH e relatório consolidado). MEMBERS[x].fullName = nome completo (só o relatório consolidado usa; resto do app usa o identificador curto). Importável de api/* (plain JS, sem JSX/Vite)
+    chCalc.js               Cálculo financeiro do CH — parseShiftTime, scheduleEntriesFor, monthTotals (fórmula de SA/HE/Comp) — extraído de ControleDeHoras.jsx para o relatório consolidado reusar a mesma implementação (ver seção Controle de Horas)
     theme.js                Tema unificado getTheme(dark) — tokens de cor AA usados pelos dois views (não criar temas locais)
   components/
     ui.jsx                  Kit compartilhado: Icon (SVGs), SaveStatus, Snackbar (undo), ConfirmDialog, Skeleton, friendlyError()
     EscalaSobreaviso.jsx    Calendário mensal com seletor de equipe (#escala/<id>), filtro por responsável (roster da equipe), substituições, edição de escala (admin), "Dividir turno" (admin), widget "Agora" multi-equipe, slot vago, detector de sobreposição
-    ControleDeHoras.jsx     CH multi-equipe desde a Fase 2: parâmetros, lançamentos HE/Comp, relatório, exportação CSV; "Responsável" vem de MEMBERS (agrupado por equipe no dropdown do admin); admin só vê/edita membros das equipes em adminOf
+    ControleDeHoras.jsx     CH multi-equipe desde a Fase 2: parâmetros, lançamentos HE/Comp, relatório, exportação CSV; "Responsável" vem de MEMBERS (agrupado por equipe no dropdown do admin); admin só vê/edita membros das equipes em adminOf; botão "Relatório consolidado" (admin) troca para RelatorioConsolidado.jsx
+    RelatorioConsolidado.jsx Relatório de fechamento (admin): uma linha por pessoa das equipes em adminOf, agrupada por equipe — Horas/Valor SA, Horas/Valor HE, Compensação, Valor Total. Mês fechado usa o snapshot; ajustes manuais não persistidos; exporta CSV (ver seção Controle de Horas)
     EstruturaEscala.jsx     Aba "Estrutura" (#estrutura, some para quem não administra nenhuma equipe): tabelas read-only, com seletor limitado às equipes em adminOf. Sustentação mostra semana (WEEKDAY_SHIFTS) + escada de FDS; infra/desenvolvimento mostram blocos por dia-da-semana, faixas sem cobertura e aviso "sem rodízio definido". Edição versionada é fase futura
 
 api/
@@ -411,7 +413,9 @@ valorComp       = (valorHora / 3)   × horasComp ← mesmo fator do SA; abate da
 valorNF         = remuneracao + valorSobreaviso + valorHoraExtra − valorComp
 ```
 
-SA vem de `buildSchedule(TEAMS.sustentacao, overrides, labels)` — reflete edições do admin no cálculo e no CSV. O `scheduleEntries` resolve a pessoa via `resolveShiftPeople(shift, dk, subs)` (mesma regra do calendário, incluindo "edição vence substituição"), então em turno multi-pessoa (feriado) **cada** pessoa ganha seu próprio SA pelas horas do turno, e substituições redirecionam o SA exatamente como no calendário.
+SA vem de `buildSchedule(team, overrides)` — `team` é sempre a equipe da pessoa selecionada (`MEMBERS[person].teamId`), nunca fixo na sustentação — e reflete edições do admin no cálculo e no CSV. `scheduleEntriesFor(schedule, subs, person, monthIdx, year)` resolve a pessoa via `resolveShiftPeople(shift, dk, subs)` (mesma regra do calendário, incluindo "edição vence substituição"), então em turno multi-pessoa (feriado) **cada** pessoa ganha seu próprio SA pelas horas do turno, e substituições redirecionam o SA exatamente como no calendário.
+
+**`src/lib/chCalc.js`** — `parseShiftTime`, `scheduleEntriesFor` e `monthTotals` (a fórmula acima) vivem aqui, extraídos de `ControleDeHoras.jsx` para que o relatório consolidado (`RelatorioConsolidado.jsx`, abaixo) use exatamente a mesma implementação — não uma cópia que pode divergir. Nenhuma fórmula mudou nessa extração, só o lugar onde o código mora.
 
 **Valor da NF**: card no Relatório do mês com remuneração + SA + HE − Compensação. Protegido igual à remuneração mensal (oculto por padrão, "R$ ••••••", olho revela — sem edição, é derivado). Estado (`nfVisible`) reseta ao trocar de pessoa. Entra também no CSV (`Valor compensação` e `VALOR DA NF`). Em meses fechados, usa `closedSnap.params.remuneracao` e `closedSnap.totals` (snapshots anteriores a esta feature não têm `valorComp` — tratado como 0).
 
@@ -424,6 +428,52 @@ Sem fechamento, os valores são recalculados a cada render — editar remuneraç
 - **Reabrir** (só admin): descarta o snapshot; valores voltam a ser recalculados.
 - Totais são calculados no cliente. **Não é uma restrição técnica** — `api/*.js` importa módulos de `src/lib/` normalmente desde a Fase 1 (`api/_validate.js`, `api/ch.js` e `api/ch-close.js` importam `TEAMS`/`MEMBERS` de `src/lib/teams.js`; são módulos ESM simples, sem JSX nem nada específico de Vite, e o bundler do Vercel rastreia o import sem problema). A escolha é não duplicar a lógica financeira do CH em dois runtimes: o snapshot é validado por schema e a ação é exclusiva de admin — congela o que o admin viu e aprovou na tela, sem reimplementar `buildSchedule`/cálculo de horas no servidor para conferir.
 - ⚠ O bloqueio de lançamento em mês fechado é client-side; `api/ch.js` não valida contra `ch_closed` (aceitável para ferramenta interna; endurecer na migração Postgres).
+
+### Relatório consolidado (admin)
+
+`RelatorioConsolidado.jsx` — botão "Relatório consolidado" no topo do CH (`isAdmin` só), troca a
+vista de uma pessoa por vez pela tabela de **todas** as pessoas das equipes em `adminOf` no mês
+selecionado (`monthIdx`/`year` compartilhados com o painel individual — trocar de mês/ano
+também atualiza o relatório). Formato: `Colaborador | Horas SA | Valor SA | Horas HE | Valor HE |
+Compensação | Valor Total`, agrupado por equipe (linha de cabeçalho por grupo, não uma coluna).
+
+- **Escopo**: pessoas vêm de `chGroupsFor(profile.adminOf)` — mesma fonte que o dropdown
+  "Responsável" do painel individual. Um admin de uma equipe só monta grupos para as equipes do
+  próprio `adminOf`; nunca pede dados de fora disso (defesa em profundidade: mesmo que pedisse,
+  `api/ch.js`/`api/ch-close.js` recusariam com 403 — Sistema de Acesso acima).
+  Uma requisição de `schedule`/`substitutions` por equipe presente (não por pessoa — a escala é
+  da equipe, compartilhada por todo mundo nela) mais duas requisições (`ch`, `ch-close`) por
+  pessoa.
+- **Mês fechado usa o snapshot, nunca recalcula**: se `ch_closed[YYYY-MM]` existe para a pessoa,
+  a linha vem de `closedSnap.totals` direto — os mesmos números que o fechamento congelou,
+  mesmo que a escala ou a remuneração tenham mudado depois. Linha marcada com um badge "mês
+  fechado". Isso é o motivo de existir o fechamento: um relatório que recalcula divergiria do
+  que já foi pago.
+- **Valor Total ≠ Valor da NF**: aqui é `Valor SA + Valor HE − Compensação` (o variável a pagar,
+  sem a remuneração fixa) — deliberadamente diferente do card "Valor da NF" do painel individual
+  (que soma a remuneração). Não reutiliza o campo `totals.valorTotal` de `monthTotals()` porque
+  esse campo não desconta Compensação (é usado em outro contexto); o relatório calcula
+  `valorSA + valorHE − valorComp` explicitamente por linha.
+- **Arredondamento por linha, não no total**: cada valor monetário é arredondado a centavos (e
+  cada duração ao minuto) **no momento em que a linha é construída** (`buildRow()`), antes de
+  entrar no estado — nunca só no fim. Isso garante que "soma da coluna Valor Total" e "total
+  geral exibido" sejam sempre o mesmo número, centavo a centavo; somar valores crus e arredondar
+  só o total pode divergir por centavos quando há várias linhas (insumo de pagamento não pode
+  ter essa dúvida).
+- **Nota de fórmula fixa, não removível**: como o SA aqui é sempre a ⅓ sobre as horas **íntegras**
+  da escala (sem descontar HE — mesma fórmula de sempre, `chCalc.js`), e as planilhas que a
+  equipe já usa descontam HE/Comp do SA antes do ⅓, os valores deste relatório são **maiores**
+  que os da planilha. Isso é decisão conhecida, não bug — por isso a nota aparece sempre visível
+  na tela (não é um alerta dispensável) e como linhas próprias no CSV.
+- **Pessoa sem plantão e sem lançamento no mês**: ainda aparece, com todas as colunas zeradas —
+  nunca desaparece da lista (a lista vem do roster da equipe, não dos dados que a pessoa tem).
+- **Ajustes manuais**: linhas de descrição + valor que o admin acrescenta na tela (ex.:
+  "Diferença de reajuste"), somadas ao total geral num segundo total ("Total geral com
+  ajustes"). ⚠ **Não são persistidas** — vivem só no estado do componente, somem ao trocar de
+  mês/ano ou recarregar a página. Limitação conhecida desta versão; documentado na própria tela.
+- **CSV**: mesmo padrão do CSV por pessoa (BOM UTF-8, `;` como separador, tudo entre aspas) —
+  cabeçalho, uma linha por equipe (marcador) + suas pessoas, total geral, ajustes (se houver) e a
+  nota de fórmula como linhas finais.
 
 ---
 

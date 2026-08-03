@@ -1,12 +1,11 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useApi } from '../lib/api';
-import {
-  MONTHS, durationHours, mergedHours, fmtHM, brl,
-  buildSchedule, dayKey, resolveShiftPeople,
-} from '../lib/schedule';
-import { TEAMS, MEMBERS } from '../lib/teams';
+import { MONTHS, durationHours, fmtHM, brl, buildSchedule } from '../lib/schedule';
+import { parseShiftTime, scheduleEntriesFor, monthTotals } from '../lib/chCalc';
+import { TEAMS, MEMBERS, chGroupsFor } from '../lib/teams';
 import { getTheme, DANGER, WARN } from '../lib/theme';
 import { Icon, SaveStatus, Snackbar, ConfirmDialog, friendlyError } from './ui';
+import RelatorioConsolidado from './RelatorioConsolidado';
 
 const TYPES = ["Hora Extra", "Compensação"];
 const TYPE_META = {
@@ -14,26 +13,6 @@ const TYPE_META = {
   "Hora Extra": { color: "#F472B6", bg: "#4A1025", lightColor: "#C2185B", lightBg: "#FCE4EC" },
   Compensação:  { color: "#FCD34D", bg: "#431407", lightColor: "#854D0E", lightBg: "#FEF9C3" },
 };
-
-// Extrai HH:MM de uma string de turno ex: "23:00 – 04:00".
-// Aceita en-dash (–), em-dash (—) e hífen (-) — o admin pode digitar qualquer um
-// ao editar a escala; sem isso o split falharia e a duração viraria 0h silenciosamente.
-function parseShiftTime(timeStr) {
-  const parts = String(timeStr).split(/[–—-]/).map(t => t.trim());
-  return { inicio: parts[0], fim: parts[1] };
-}
-
-// Pessoas que o admin pode ver/editar no CH, agrupadas por equipe (Fase 2 —
-// docs/specs/multi-equipe.md §5): adminOf === '*' vê as três; um array vê só as
-// equipes ali. Member nunca usa isto — fica travado no próprio painel. A ordem de
-// TEAMS (sustentação, desenvolvimento, infra) decide a ordem dos grupos no dropdown.
-function chGroupsFor(profile) {
-  const adminOf = profile?.adminOf;
-  const teamIds = adminOf === '*' ? Object.keys(TEAMS)
-    : Array.isArray(adminOf) ? adminOf.filter(id => TEAMS[id])
-    : [];
-  return teamIds.map(teamId => ({ teamId, nome: TEAMS[teamId].nome, people: TEAMS[teamId].roster }));
-}
 
 export default function ControleDeHoras({ dark, profile }) {
   const api = useApi();
@@ -77,7 +56,10 @@ export default function ControleDeHoras({ dark, profile }) {
   // equipe no dropdown — ver chGroupsFor); member trava no próprio painel. Admin
   // fora da escala (sem memberId) cai no primeiro membro do primeiro grupo por
   // padrão — assim o painel já abre com dados em vez de um dropdown "fantasma".
-  const chGroups = useMemo(() => chGroupsFor(profile), [profile]);
+  const chGroups = useMemo(() => chGroupsFor(profile?.adminOf), [profile]);
+  // Relatório consolidado (admin): substitui a vista de uma pessoa por vez pela
+  // tabela de todas as pessoas das equipes em adminOf no mês selecionado.
+  const [showReport, setShowReport] = useState(false);
   const chPeopleFlat = useMemo(() => chGroups.flatMap(g => g.people), [chGroups]);
   const [viewPerson, setViewPerson] = useState(profile?.memberId ?? (isAdmin ? (chPeopleFlat[0] ?? null) : null));
   const person = isAdmin ? (viewPerson ?? profile?.memberId) : profile?.memberId;
@@ -220,35 +202,10 @@ export default function ControleDeHoras({ dark, profile }) {
   // sobreaviso é gerado antes disso, sem precisar de nenhuma lógica extra aqui.
   const schedule = useMemo(() => (team ? buildSchedule(team, overrides) : []), [team, overrides]);
 
-  const scheduleEntries = useMemo(() => {
-    if (!person) return [];
-    return schedule
-      .filter(day => day.date.getMonth() === monthIdx && day.date.getFullYear() === year)
-      .flatMap(day => {
-        const dk = dayKey(day.date);
-        return day.shifts.flatMap(shift => {
-          const { inicio, fim } = parseShiftTime(shift.time);
-          // Cada pessoa do turno (multi-pessoa em feriados) gera seu próprio SA.
-          // resolveShiftPeople aplica a mesma regra do calendário: turno com pessoas
-          // travadas por override não é redirecionado por substituição (edição vence).
-          return resolveShiftPeople(shift, dk, subs).flatMap(({ person: effective, coveringFor: coveredTitular, titular }) => {
-            if (effective !== person) return [];
-            const coveringFor = coveredTitular;
-            return [{
-              id: `sched-${dk}-${shift.period}-${titular}`,
-              person,
-              tipo: 'Sobreaviso',
-              data: dk,
-              inicio,
-              fim,
-              projeto: '',
-              atividade: coveringFor ? `${shift.period} · cobre ${coveringFor}` : shift.period,
-              _fromSchedule: true,
-            }];
-          });
-        });
-      });
-  }, [schedule, person, monthIdx, year, subs]);
+  const scheduleEntries = useMemo(
+    () => scheduleEntriesFor(schedule, subs, person, monthIdx, year),
+    [schedule, person, monthIdx, year, subs]
+  );
 
   // ─── ENTRADAS MANUAIS DO MÊS ───────────────────────────────────────────────
   const manualMonthEntries = useMemo(() => {
@@ -274,25 +231,7 @@ export default function ControleDeHoras({ dark, profile }) {
   }, [scheduleEntries, manualMonthEntries]);
 
   // ─── TOTAIS (SA da escala + manuais) ───────────────────────────────────────
-  const totals = useMemo(() => {
-    const byType = { Sobreaviso: [], 'Hora Extra': [], 'Compensação': [] };
-    allMonthEntries.forEach(e => { if (byType[e.tipo]) byType[e.tipo].push(e); });
-    const sumRaw = (list) => list.reduce((a, e) => a + durationHours(e.inicio, e.fim), 0);
-
-    // SA vem da escala (turnos sequenciais, não se sobrepõem) → soma direta.
-    // HE e Comp são manuais e podem colidir → mescla a união pra não contar em dobro.
-    const sobreaviso = sumRaw(byType['Sobreaviso']);
-    const extra = mergedHours(byType['Hora Extra']);
-    const comp  = mergedHours(byType['Compensação']);
-    // Tempo "economizado" pela mescla — só para avisar o usuário (total ≠ soma das linhas).
-    const overlapMin = Math.round(((sumRaw(byType['Hora Extra']) - extra) + (sumRaw(byType['Compensação']) - comp)) * 60);
-
-    const valorSobreaviso = (valorHora / 3) * sobreaviso;
-    const valorExtra = valorHora * 1.5 * extra;
-    // Compensação abate da NF pelo mesmo valor do sobreaviso (÷3) — não tem multiplicador próprio.
-    const valorComp = (valorHora / 3) * comp;
-    return { sobreaviso, extra, comp, totalHoras: sobreaviso + extra + comp, valorSobreaviso, valorExtra, valorComp, valorTotal: valorSobreaviso + valorExtra, overlapMin };
-  }, [allMonthEntries, valorHora]);
+  const totals = useMemo(() => monthTotals(allMonthEntries, valorHora), [allMonthEntries, valorHora]);
 
   // ─── FECHAMENTO MENSAL ─────────────────────────────────────────────────────
   // Mês fechado = snapshot imutável (params + totais + line items) gravado pelo admin.
@@ -470,23 +409,25 @@ export default function ControleDeHoras({ dark, profile }) {
 
   return (
     <div style={{ minHeight:"100vh", background:T.pageBg, fontFamily:"'Segoe UI',system-ui,sans-serif", color:T.textPrimary, transition:"background 0.2s,color 0.2s" }}>
-      <div className="max-w-3xl mx-auto px-4 py-6">
+      <div className={showReport ? "max-w-6xl mx-auto px-4 py-6" : "max-w-3xl mx-auto px-4 py-6"}>
 
         {/* CABEÇALHO */}
         <header className="rounded-2xl p-5 mb-5 text-white" style={{ background:T.headerGrad }}>
           <h1 className="text-sm font-semibold opacity-80 mb-1" style={{ letterSpacing:"0.01em" }}>Controle de Horas</h1>
           <div className="flex items-center gap-2 flex-wrap">
             <div className="text-2xl font-bold">{MONTHS[monthIdx]} de {year}</div>
-            {isClosed && (
+            {!showReport && isClosed && (
               <span className="inline-flex items-center gap-1 text-xs font-bold rounded-full px-2.5 py-1" style={{ background:"rgba(34,197,94,0.18)", color:"#4ADE80", border:"1px solid rgba(74,222,128,0.4)" }}>
                 <Icon name="check" size={12} /> Mês fechado
               </span>
             )}
           </div>
-          <div className="text-sm opacity-80 mt-1">Sobreaviso (escala automática) + horas extra e compensação</div>
+          <div className="text-sm opacity-80 mt-1">
+            {showReport ? "Relatório consolidado — todas as pessoas das suas equipes" : "Sobreaviso (escala automática) + horas extra e compensação"}
+          </div>
         </header>
 
-        {dataLoading && (
+        {!showReport && dataLoading && (
           <div role="status" className="rounded-2xl p-4 mb-4 text-center text-sm" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}`, color:T.textMuted }}>
             Carregando lançamentos e parâmetros…
           </div>
@@ -494,24 +435,26 @@ export default function ControleDeHoras({ dark, profile }) {
 
         {/* SELETORES */}
         <div className="flex flex-wrap gap-3 mb-4 items-end">
-          <div>
-            <label style={labelStyle} htmlFor="ch-person">Responsável</label>
-            {isAdmin ? (
-              <select id="ch-person" style={{ ...inputStyle, width:'auto' }} value={viewPerson || ''} onChange={e => { setViewPerson(e.target.value); setEditId(null); setForm(blank); }}>
-                {chGroups.map(g => (
-                  <optgroup key={g.teamId} label={g.nome}>
-                    {g.people.map(name => <option key={name} value={name}>{name}</option>)}
-                  </optgroup>
-                ))}
-              </select>
-            ) : (
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-bold"
-                style={{ background: p.color, color: "#fff", minHeight:"2.5rem" }}>
-                <span className="w-2 h-2 rounded-full bg-white opacity-70" />
-                {person}
-              </div>
-            )}
-          </div>
+          {!showReport && (
+            <div>
+              <label style={labelStyle} htmlFor="ch-person">Responsável</label>
+              {isAdmin ? (
+                <select id="ch-person" style={{ ...inputStyle, width:'auto' }} value={viewPerson || ''} onChange={e => { setViewPerson(e.target.value); setEditId(null); setForm(blank); }}>
+                  {chGroups.map(g => (
+                    <optgroup key={g.teamId} label={g.nome}>
+                      {g.people.map(name => <option key={name} value={name}>{name}</option>)}
+                    </optgroup>
+                  ))}
+                </select>
+              ) : (
+                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-bold"
+                  style={{ background: p.color, color: "#fff", minHeight:"2.5rem" }}>
+                  <span className="w-2 h-2 rounded-full bg-white opacity-70" />
+                  {person}
+                </div>
+              )}
+            </div>
+          )}
           <div>
             <label style={labelStyle} htmlFor="ch-month">Mês</label>
             <select id="ch-month" style={inputStyle} value={monthIdx} onChange={e => setMonthIdx(Number(e.target.value))}>
@@ -524,8 +467,20 @@ export default function ControleDeHoras({ dark, profile }) {
               {years.map(y => <option key={y} value={y}>{y}</option>)}
             </select>
           </div>
+          {isAdmin && (
+            <button type="button" onClick={() => setShowReport(s => !s)}
+              className="ml-auto inline-flex items-center gap-2"
+              style={{ background: showReport ? T.cancelBg : T.exportBg, color: showReport ? T.cancelColor : "#fff", border: showReport ? `1px solid ${T.cancelBorder}` : "none", borderRadius:"0.5rem", padding:"0.5rem 1rem", minHeight:"2.75rem", fontWeight:"700", fontSize:"0.875rem", cursor:"pointer" }}>
+              <Icon name={showReport ? "x" : "calendar"} size={15} />
+              {showReport ? "Voltar ao painel individual" : "Relatório consolidado"}
+            </button>
+          )}
         </div>
 
+        {showReport ? (
+          <RelatorioConsolidado dark={dark} profile={profile} monthIdx={monthIdx} year={year} />
+        ) : (
+        <>
         {/* PARÂMETROS */}
         <section className="rounded-2xl p-4 mb-4" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}` }}>
           <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
@@ -825,6 +780,8 @@ export default function ControleDeHoras({ dark, profile }) {
         <footer className="mt-6 text-center text-xs" style={{ color:T.footerText }}>
           SA preenchido automaticamente pela escala · HE e compensação lançados manualmente · Dados salvos na nuvem
         </footer>
+        </>
+        )}
       </div>
 
       <Snackbar
