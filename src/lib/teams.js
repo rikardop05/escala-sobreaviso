@@ -144,3 +144,12 @@ export function chGroupsFor(adminOf) {
     : [];
   return teamIds.map(teamId => ({ teamId, nome: TEAMS[teamId].nome, people: TEAMS[teamId].roster }));
 }
+
+// true se `scope` (array de teamIds, ou '*') cobre `teamId`. Fonte única do teste de
+// escopo por equipe — reusada por api/_allowlist.js (adminCovers/scheduleCovers, para
+// autorização de escrita) e pelo frontend (EscalaSobreaviso.jsx, para decidir se
+// mostra "Editar Escala" na equipe atualmente selecionada). Nunca reimplementar este
+// teste num terceiro lugar — os dois runtimes precisam concordar sempre.
+export function teamScopeCovers(scope, teamId) {
+  return scope === '*' || (Array.isArray(scope) && scope.includes(teamId));
+}

@@ -2,15 +2,15 @@ import { kvGet, kvSet } from './_redis.js';
 import { requireUser } from './_auth.js';
 
 // Only user preferences are stored in Redis (dark, filter, monthKey, teamView).
-// memberId/teamId/adminOf/role are always derived from the allowlist — never from
-// stored data. teamView (Fase 1 — docs/specs/multi-equipe.md §5) é a equipe que a
-// pessoa deixou selecionada na aba Escala; o cliente usa como fallback quando não
-// há equipe no hash da URL.
+// memberId/teamId/adminOf/scheduleEditOf/role are always derived from the allowlist
+// — never from stored data. teamView (Fase 1 — docs/specs/multi-equipe.md §5) é a
+// equipe que a pessoa deixou selecionada na aba Escala; o cliente usa como fallback
+// quando não há equipe no hash da URL.
 
 export default async function handler(req, res) {
-  let userId, memberId, teamId, adminOf, role;
+  let userId, memberId, teamId, adminOf, scheduleEditOf, role;
   try {
-    ({ userId, memberId, teamId, adminOf, role } = await requireUser(req));
+    ({ userId, memberId, teamId, adminOf, scheduleEditOf, role } = await requireUser(req));
   } catch (e) {
     return res.status(e.status || 401).json({ error: 'Unauthorized' });
   }
@@ -19,7 +19,7 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       const stored = await kvGet(`user:${userId}:profile`) ?? {};
       return res.status(200).json({
-        memberId, teamId, adminOf, role,
+        memberId, teamId, adminOf, scheduleEditOf, role,
         dark:     stored.dark     ?? false,
         filter:   stored.filter   ?? null,
         monthKey: stored.monthKey ?? null,
@@ -36,7 +36,7 @@ export default async function handler(req, res) {
       if (teamView !== undefined)    stored.teamView = teamView;
       await kvSet(`user:${userId}:profile`, stored);
       return res.status(200).json({
-        memberId, teamId, adminOf, role,
+        memberId, teamId, adminOf, scheduleEditOf, role,
         dark:     stored.dark     ?? false,
         filter:   stored.filter   ?? null,
         monthKey: stored.monthKey ?? null,
