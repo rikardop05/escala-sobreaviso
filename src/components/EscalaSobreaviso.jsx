@@ -7,7 +7,7 @@ import {
   getActiveSub, getCoverSuggestions, shiftPeople, resolveShiftPeople, parseTimeRange,
   shiftDuration, sortShiftsByStart,
 } from '../lib/schedule';
-import { TEAMS, MEMBERS } from '../lib/teams';
+import { TEAMS, MEMBERS, teamScopeCovers } from '../lib/teams';
 import { getTheme, ACCENT, DANGER, WARN } from '../lib/theme';
 import { Icon, Snackbar, ConfirmDialog, Skeleton, friendlyError } from './ui';
 
@@ -145,6 +145,13 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     return defaultTeamId(profile);
   });
   const team = TEAMS[activeTeam];
+
+  // Quem pode editar a escala da equipe ATIVA — admin da equipe (adminOf) ou alguém
+  // com só o direito de editar a escala dela (scheduleEditOf), sem ganhar CH de
+  // outra pessoa, fechamento de mês ou relatório consolidado (isso continua
+  // exclusivo de adminOf — ver api/_allowlist.js). Recalculado a cada troca de
+  // equipe: a mesma pessoa pode editar uma e não outra.
+  const canEditActiveTeam = teamScopeCovers(profile?.adminOf, activeTeam) || teamScopeCovers(profile?.scheduleEditOf, activeTeam);
 
   const [now,      setNow]      = useState(new Date());
   const [filter,   setFilter]   = useState(profile?.filter ?? null);
@@ -979,7 +986,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
               ))}
             </div>
           </div>
-          {isAdmin && (
+          {canEditActiveTeam && (
             <button
               onClick={toggleEditMode}
               style={{ flexShrink:0, display:"inline-flex", alignItems:"center", gap:"0.35rem", background: editMode ? ACCENT : T.cardBg, color: editMode ? '#fff' : T.textSecondary, border:`1px solid ${editMode ? ACCENT : T.cardBorder}`, borderRadius:"0.75rem", padding:"0.5rem 0.85rem", minHeight:"2.75rem", fontSize:"0.75rem", fontWeight:"700", cursor:"pointer", whiteSpace:"nowrap" }}
@@ -1030,7 +1037,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                     {isToday && <div className="mt-1 text-[9px] font-bold text-white bg-slate-800 rounded px-1.5 py-0.5">HOJE</div>}
                   </div>
                   <div className="flex-1 px-3 py-2">
-                    {(d.label || (editMode && isAdmin) || overlap.samePerson || overlap.partial || overlap.identical) && (
+                    {(d.label || (editMode && canEditActiveTeam) || overlap.samePerson || overlap.partial || overlap.identical) && (
                       <div className="flex flex-wrap items-center gap-2 mb-1.5">
                         {d.label && !editMode && (
                           <span className="inline-flex items-center gap-1 text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:"rgba(99,102,241,0.15)", color:"#A5B4FC" }}>
@@ -1055,7 +1062,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                             cobertura dupla
                           </span>
                         )}
-                        {editMode && isAdmin && (
+                        {editMode && canEditActiveTeam && (
                           <input
                             key={`${dk}-${d.label || ''}`}
                             defaultValue={d.label || ''}
@@ -1128,7 +1135,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                             <span className="inline-flex flex-wrap items-center gap-1">
                               {people.length > 0 ? (
                                 people.map((p, pi) => <PersonTag key={pi} name={p.person} subOf={p.subOf} />)
-                              ) : isAdmin && !editMode ? (
+                              ) : canEditActiveTeam && !editMode ? (
                                 <button type="button"
                                   onClick={() => { setEditMode(true); setSelectedShifts(new Set([shiftKey])); }}
                                   style={{ fontSize:'0.7rem', fontWeight:700, color:WARN, background:'rgba(245,158,11,0.1)', border:`1px dashed ${WARN}`, borderRadius:'0.4rem', padding:'0.15rem 0.55rem', cursor:'pointer' }}>
@@ -1145,7 +1152,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                             ) : (editMode && hasOverride) ? (
                               <span style={{ fontSize:'0.6rem', color:T.textMuted, fontWeight:'700', background:'rgba(148,163,184,0.12)', borderRadius:'3px', padding:'0 4px' }}>editado</span>
                             ) : null}
-                            {editMode && isAdmin && (
+                            {editMode && canEditActiveTeam && (
                               <button type="button"
                                 onClick={(e) => { e.stopPropagation(); openSplitForm(dk, i, s); }}
                                 title="Dividir este turno em partes"
@@ -1158,8 +1165,8 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                       })}
                     </div>
 
-                    {/* Adicionar turno ao dia (admin, modo edição) */}
-                    {editMode && isAdmin && (addDay === dk ? (
+                    {/* Adicionar turno ao dia (modo edição) */}
+                    {editMode && canEditActiveTeam && (addDay === dk ? (
                       <div className="mt-2 pt-2" style={{ borderTop:`1px dashed ${T.cardBorder}` }}>
                         <div className="grid gap-2 mb-2" style={{ gridTemplateColumns:'repeat(auto-fit, minmax(120px, 1fr))' }}>
                           <input value={addForm.period} onChange={e => setAddForm(f => ({ ...f, period:e.target.value }))} placeholder="Período (ex: Tarde)" style={{ ...selStyle, marginTop:0 }} />
@@ -1185,8 +1192,8 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                       </button>
                     ))}
 
-                    {/* Dividir turno (admin, modo edição) — docs/specs/multi-equipe.md §6 */}
-                    {editMode && isAdmin && splitForm?.dk === dk && (
+                    {/* Dividir turno (modo edição) — docs/specs/multi-equipe.md §6 */}
+                    {editMode && canEditActiveTeam && splitForm?.dk === dk && (
                       <div className="mt-2 pt-2" style={{ borderTop:`1px dashed ${T.cardBorder}` }}>
                         <div className="text-xs font-semibold mb-1" style={{ color:T.textSecondary }}>
                           Dividir turno · {splitForm.originalPeriod} · {splitForm.originalTime}
@@ -1376,8 +1383,8 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
           )}
         </section>
 
-        {/* PAINEL DE EDIÇÃO (admin, sticky na parte inferior) */}
-        {isAdmin && editMode && (
+        {/* PAINEL DE EDIÇÃO (sticky na parte inferior) */}
+        {canEditActiveTeam && editMode && (
           <div style={{ position:'sticky', bottom:'1rem', marginTop:'1rem', background:T.cardBg, border:`1.5px solid ${selectedShifts.size ? ACCENT : T.cardBorder}`, borderRadius:'1rem', padding:'1rem', boxShadow:'0 8px 32px rgba(0,0,0,0.35)', zIndex:40 }}>
             <div className="flex items-center justify-between mb-3">
               <span style={{ fontWeight:700, fontSize:'0.875rem', color:T.textPrimary }} role="status">

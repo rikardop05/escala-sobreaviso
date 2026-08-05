@@ -33,27 +33,27 @@ src/
   lib/
     api.js                  Hook useApi() — fetch autenticado com JWT Clerk
     schedule.js             Motor genérico da escala — buildSchedule(team, overrides, labels), buildOnCallSegments(schedule, dayStart), shiftDuration(timeStr), sortShiftsByStart(shifts, dayStart) (leia seção Escala abaixo)
-    teams.js                Registry de equipes (MEMBERS, TEAMS) — sustentação, infraestrutura e desenvolvimento (Fase 1 da spec multi-equipe; ver docs/specs/multi-equipe.md, ADR-0001, ADR-0003); chGroupsFor(adminOf) agrupa pessoas por equipe (dropdown do CH e relatório consolidado). MEMBERS[x].fullName = nome completo (só o relatório consolidado usa; resto do app usa o identificador curto). Importável de api/* (plain JS, sem JSX/Vite)
+    teams.js                Registry de equipes (MEMBERS, TEAMS) — sustentação, infraestrutura e desenvolvimento (Fase 1 da spec multi-equipe; ver docs/specs/multi-equipe.md, ADR-0001, ADR-0003); chGroupsFor(adminOf) agrupa pessoas por equipe (dropdown do CH e relatório consolidado); teamScopeCovers(scope, teamId) é o teste genérico "scope cobre esta equipe?" compartilhado por api/_allowlist.js e EscalaSobreaviso.jsx. MEMBERS[x].fullName = nome completo (só o relatório consolidado usa; resto do app usa o identificador curto). Importável de api/* (plain JS, sem JSX/Vite)
     chCalc.js               Cálculo financeiro do CH — parseShiftTime, scheduleEntriesFor, monthTotals (fórmula de SA/HE/Comp) — extraído de ControleDeHoras.jsx para o relatório consolidado reusar a mesma implementação (ver seção Controle de Horas)
     theme.js                Tema unificado getTheme(dark) — tokens de cor AA usados pelos dois views (não criar temas locais)
   components/
     ui.jsx                  Kit compartilhado: Icon (SVGs), SaveStatus, Snackbar (undo), ConfirmDialog, Skeleton, friendlyError()
-    EscalaSobreaviso.jsx    Calendário mensal com seletor de equipe (#escala/<id>), filtro por responsável (roster da equipe), substituições, edição de escala (admin), "Dividir turno" (admin), widget "Agora" multi-equipe, slot vago, detector de sobreposição
+    EscalaSobreaviso.jsx    Calendário mensal com seletor de equipe (#escala/<id>), filtro por responsável (roster da equipe), substituições, edição de escala + "Dividir turno" (admin da equipe OU scheduleEditOf cobrindo a equipe ativa — canEditActiveTeam), widget "Agora" multi-equipe, slot vago, detector de sobreposição
     ControleDeHoras.jsx     CH multi-equipe desde a Fase 2: parâmetros, lançamentos HE/Comp, relatório, exportação CSV; "Responsável" vem de MEMBERS (agrupado por equipe no dropdown do admin); admin só vê/edita membros das equipes em adminOf; botão "Relatório consolidado" (admin) troca para RelatorioConsolidado.jsx
     RelatorioConsolidado.jsx Relatório de fechamento (admin): uma linha por pessoa das equipes em adminOf, agrupada por equipe — Horas/Valor SA, Horas/Valor HE, Compensação, Valor Total. Mês fechado usa o snapshot; ajustes manuais não persistidos; exporta CSV (ver seção Controle de Horas)
     EstruturaEscala.jsx     Aba "Estrutura" (#estrutura, some para quem não administra nenhuma equipe): tabelas read-only, com seletor limitado às equipes em adminOf. Sustentação mostra semana (WEEKDAY_SHIFTS) + escada de FDS; infra/desenvolvimento mostram blocos por dia-da-semana, faixas sem cobertura e aviso "sem rodízio definido". Edição versionada é fase futura
 
 api/
-  _allowlist.js             EDITAR AQUI: mapeamento email→{memberId, teamId, adminOf}; resolveAccess(), adminCovers()
-  _auth.js                  requireUser(req) — verifica JWT + busca email via Clerk API + resolve { memberId, teamId, adminOf, role }
+  _allowlist.js             EDITAR AQUI: mapeamento email→{memberId, teamId, adminOf, scheduleEditOf}; resolveAccess(), adminCovers(), scheduleCovers()
+  _auth.js                  requireUser(req) — verifica JWT + busca email via Clerk API + resolve { memberId, teamId, adminOf, scheduleEditOf, role }
   _validate.js              Schemas Zod — TeamIdSchema, schedulePostSchemaFor(team)/subPostSchemaFor(team) validam contra TEAMS[team].roster (src/lib/teams.js); persons[] limita no tamanho do roster da própria equipe, não num número fixo
   _redis.js                 kvGet / kvSet / kvScanAll / kvGetWithFallback — helpers JSON sobre ioredis; kvGetWithFallback lê a chave por equipe, cai para a global antiga se ausente
   _backup-crypto.js         encrypt/decrypt AES-256-GCM dos dumps de backup (BACKUP_ENCRYPTION_KEY)
-  profile.js                GET/POST preferências do usuário (dark, filter, monthKey, teamView); memberId/teamId/adminOf/role vêm da allowlist (somente-leitura)
-  substitutions.js          GET/POST/DELETE substituições, escopadas por equipe (?team= / body.team; chave team:{team}:substitutions, leitura dupla só na sustentação)
+  profile.js                GET/POST preferências do usuário (dark, filter, monthKey, teamView); memberId/teamId/adminOf/scheduleEditOf/role vêm da allowlist (somente-leitura)
+  substitutions.js          GET/POST/DELETE substituições, escopadas por equipe (?team= / body.team; chave team:{team}:substitutions, leitura dupla só na sustentação); só adminCovers, scheduleEditOf não conta aqui
   ch.js                     GET/POST lançamentos e parâmetros CH; acesso: a própria pessoa, ou admin da equipe dela (MEMBERS[pessoa].teamId)
   ch-close.js               Fechamento mensal do CH: GET fechamentos; POST fecha mês; DELETE reabre — sempre admin da equipe da pessoa-alvo
-  schedule.js               GET {overrides,labels} escopado por equipe (?team=, default sustentacao); POST exige team no body + adminCovers(adminOf, team), carimba editedAt
+  schedule.js               GET {overrides,labels} escopado por equipe (?team=, default sustentacao); POST exige team no body + scheduleCovers(adminOf, scheduleEditOf, team), carimba editedAt
   backup.js                 Cron diário: dump do Redis → cifra → Vercel Blob; poda >30 dias (ver Backup abaixo)
 
 scripts/
@@ -90,6 +90,7 @@ Edite `api/_allowlist.js` — é o único arquivo que precisa ser alterado para 
 ```js
 export const ALLOWLIST = {
   'membro@dominio.com.br':      { memberId: 'Fulano', teamId: 'sustentacao', adminOf: [] },
+  'edita-escala@dominio.com.br':{ memberId: 'Fulano', teamId: 'sustentacao', adminOf: [], scheduleEditOf: ['sustentacao'] },
   'admin-equipe@dominio.com.br':{ memberId: 'Fulano', teamId: 'sustentacao', adminOf: ['sustentacao'] },
   'admin-tudo@dominio.com.br':  { memberId: null,      teamId: null,          adminOf: '*' },
 };
@@ -100,38 +101,62 @@ Regras:
   (exceção: admin que não faz plantão em equipe nenhuma usa `memberId: null`, `teamId: null` —
   ex.: `Alessandra`, `Anselmo`)
 - `teamId`: a equipe a que a pessoa pertence (roster/CH); `null` se `memberId` for `null`
-- `adminOf`: array de `teamId`s que a pessoa administra (escala + substituições + CH daquelas
-  equipes), ou `'*'` para administrar todas. `[]` = não administra nenhuma
+- `adminOf`: array de `teamId`s que a pessoa administra (escala + substituições + CH de
+  qualquer pessoa da equipe + fechamento de mês + relatório consolidado), ou `'*'` para
+  administrar todas. `[]` = não administra nenhuma
+- `scheduleEditOf`: array de `teamId`s cuja **escala** a pessoa pode editar por completo (mesmo
+  modo de edição do admin — qualquer turno, qualquer pessoa do roster, "Adicionar turno",
+  "Dividir turno", rótulo do dia), **sem** ganhar nada do que `adminOf` dá: não vê CH de outra
+  pessoa, não fecha/reabre mês, não vê o relatório consolidado, `role` continua `'member'`.
+  Existe para "todo mundo edita a própria escala, mas só quem administra mexe em dinheiro de
+  outra pessoa" (caso de uso: Desenvolvimento, onde os 9 membros têm
+  `scheduleEditOf: ['desenvolvimento']`). Omitir = `[]`. Quem já cobre a equipe em `adminOf`
+  não precisa repetir aqui — `adminOf` já inclui edição de escala
 - E-mails são comparados em lowercase (case-insensitive)
 - Qualquer e-mail fora da lista → `role: 'viewer'` automático (sem CH, sem edição)
 - **Adicionar uma pessoa nova**: primeiro cadastrá-la em `MEMBERS`/`TEAMS[teamId].roster` em
   `src/lib/teams.js`, só depois referenciar o `memberId` aqui — a validação de input (Zod) lê o
   roster de `teams.js` diretamente, não há mais uma lista separada para manter em sincronia
 
-### `resolveAccess(email)` e `adminCovers(adminOf, teamId)`
+### `resolveAccess(email)`, `adminCovers(adminOf, teamId)` e `scheduleCovers(adminOf, scheduleEditOf, teamId)`
 
 ```js
-resolveAccess(email) → { memberId, teamId, adminOf, role }
-// role = 'admin' se adminOf === '*' ou array não-vazio; senão 'member' se há memberId; senão 'viewer'.
+resolveAccess(email) → { memberId, teamId, adminOf, scheduleEditOf, role }
+// role = 'admin' se adminOf === '*' ou array não-vazio; senão 'member' se há memberId; senão
+// 'viewer'. scheduleEditOf NUNCA entra nessa conta — não eleva a role, de propósito.
 
 adminCovers(adminOf, teamId) → boolean
 // true se adminOf === '*' ou adminOf.includes(teamId) — usado por todo endpoint que
-// precisa checar "esta pessoa administra ESTA equipe", não só "é admin de algo".
+// precisa checar "esta pessoa administra ESTA equipe" (CH, fechamento, substituições),
+// não só "é admin de algo".
+
+scheduleCovers(adminOf, scheduleEditOf, teamId) → boolean
+// adminCovers(adminOf, teamId) || teamScopeCovers(scheduleEditOf, teamId) — usado SÓ pela
+// escrita de /api/schedule. teamScopeCovers (o teste genérico "scope cobre teamId?") vive em
+// src/lib/teams.js para o frontend reusar a mesma regra (ver EscalaSobreaviso.jsx abaixo) —
+// os dois runtimes nunca podem divergir sobre quem pode editar o quê.
 ```
 
 `role` continua útil para decisões que não dependem de qual equipe (`canAccessCH`, mostrar a aba
-Controle de Horas, etc.); `adminOf` é o que decide escopo por equipe (edição de escala,
-substituições, CH de um membro específico — ver tabela abaixo).
+Controle de Horas, Estrutura, o botão "Relatório consolidado", fechar/reabrir mês); `adminOf` é o
+que decide escopo por equipe para tudo que `role` não resolve sozinho (CH de um membro
+específico — ver tabela abaixo); `scheduleEditOf` só decide edição de escala, isoladamente de
+tudo isso.
 
 ### Escopo por ação
 
 | Ação | Regra |
 |---|---|
 | Ler escala e substituições de qualquer equipe | Livre, inclusive sem login |
-| Editar escala / rótulos de uma equipe | `adminCovers(adminOf, team)` |
-| Criar/remover substituição | Admin da equipe, **ou** member que é titular ou substituto |
+| Editar escala / rótulos de uma equipe | `scheduleCovers(adminOf, scheduleEditOf, team)` — admin da equipe **ou** `scheduleEditOf` cobrindo ela |
+| Criar/remover substituição | Admin da equipe, **ou** member que é titular ou substituto (`scheduleEditOf` não entra aqui — ver nota abaixo) |
 | Ver/editar CH de uma pessoa | A própria pessoa, ou admin da equipe dela (`MEMBERS[pessoa].teamId`) |
-| Fechar/reabrir mês do CH | Admin da equipe da pessoa |
+| Fechar/reabrir mês do CH · Relatório consolidado | Admin da equipe da pessoa — `scheduleEditOf` nunca dá acesso a isto |
+
+⚠ `scheduleEditOf` cobre só a edição de escala (`api/schedule.js`) — deliberadamente não se
+estende a substituições, que continuam seguindo a regra de sempre (admin da equipe, ou a
+própria pessoa como titular/substituto). "Editar a escala" e "criar substituição" são conceitos
+distintos em [CONTEXT.md](CONTEXT.md); só o primeiro foi aberto para todo mundo.
 
 **GET `/api/schedule` e GET `/api/substitutions` são públicos** — retornam dados sem autenticação
 para suportar a visualização pública. Ambos aceitam `?team=` (default `sustentacao`, para não
@@ -300,7 +325,7 @@ nunca intencional); pessoas diferentes em janelas **idênticas** é cobertura du
 (indicador passivo, cinza); pessoas diferentes com sobreposição **parcial** é aviso discreto
 (âmbar — assinatura de "esqueci de encurtar o turno original").
 
-### Overrides de escala (admin)
+### Overrides de escala (admin, ou scheduleEditOf)
 
 `buildSchedule(team, overrides = {}, labels = {})` aceita overrides por dia/índice e rótulos por dia (`EscalaSobreaviso.jsx` passa `TEAMS[activeTeam]`, a equipe selecionada no momento):
 ```js
@@ -316,7 +341,9 @@ nunca intencional); pessoas diferentes em janelas **idênticas** é cobertura du
 
 Cada turno retornado carrega um `idx` **estável** (a chave do override), usado pela UI para seleção/edição/remoção — não confie na posição no array. Use `shiftPeople(shift)` (não `shift.person`) para ler as pessoas de um turno em qualquer lugar.
 
-Overrides e labels ficam em `team:{teamId}:schedule_overrides` / `team:{teamId}:schedule_labels` (chaves por equipe — ver "Redis — Todas as Chaves" abaixo; só a sustentação tem fallback pra chave global, Fase 0). O admin edita no modo de edição do calendário: seleciona turnos + form (multi-seleção de pessoas, restrita ao roster da equipe ativa), **"+ Adicionar turno"** por dia (feriados), reset (remove turno extra) e um input de **rótulo do dia**. POST `/api/schedule` com `{ team, overrides?, labels? }` — **toda escrita** (edição, turno novo, rótulo) envia `team` explicitamente; sem ele o backend responde 400 (ver `adminCovers` em Sistema de Acesso).
+Overrides e labels ficam em `team:{teamId}:schedule_overrides` / `team:{teamId}:schedule_labels` (chaves por equipe — ver "Redis — Todas as Chaves" abaixo; só a sustentação tem fallback pra chave global, Fase 0). Edita-se no modo de edição do calendário: seleciona turnos + form (multi-seleção de pessoas, restrita ao roster da equipe ativa), **"+ Adicionar turno"** por dia (feriados), reset (remove turno extra) e um input de **rótulo do dia**. POST `/api/schedule` com `{ team, overrides?, labels? }` — **toda escrita** (edição, turno novo, rótulo) envia `team` explicitamente; sem ele o backend responde 400 (ver `scheduleCovers` em Sistema de Acesso).
+
+**Quem vê o modo de edição não é mais só `role === 'admin'`**: `EscalaSobreaviso.jsx` calcula `canEditActiveTeam = teamScopeCovers(profile.adminOf, activeTeam) || teamScopeCovers(profile.scheduleEditOf, activeTeam)` e usa isso (não `isAdmin`) em todo botão/painel de edição — "Editar Escala", rótulo do dia, "sem plantonista — atribuir", "Dividir", "Adicionar turno", o painel sticky. Recalculado a cada troca de equipe (`activeTeam`): a mesma pessoa pode editar uma e não outra. `canDelete` de substituições continua em `isAdmin` (inalterado — ver nota em Sistema de Acesso sobre `scheduleEditOf` não cobrir substituições).
 
 **Envio em lotes** (defeito §7.2): "aplicar a todos os meses seguintes" pode gerar um patch de ~365 dias (~30 KB, perto do limite de 50 KB do corpo — `MAX_BODY_BYTES` em `api/_validate.js`). `postPatch`/`chunkPatchByDays` dividem em lotes de até `PATCH_BATCH_DAYS` (150) dias, uma requisição por lote, mostrando progresso ("Salvando lote X de Y…"). Uma falha no meio recarrega do servidor (`loadOverrides`) em vez de deixar o estado local divergir do que foi de fato salvo.
 
@@ -324,10 +351,10 @@ Overrides e labels ficam em `team:{teamId}:schedule_overrides` / `team:{teamId}:
 
 **Carimbo de edição**: ao aplicar o patch, `api/schedule.js` adiciona `editedAt` (ISO) a cada override não-nulo (só data, sem autor). O cliente usa isso para um marcador **"alterado dd/mm" que expira após 14 dias** (`EDIT_RECENT_MS` em `EscalaSobreaviso.jsx`). No modo de edição, todos os overrides ficam destacados (gerenciamento).
 
-### Dividir turno (admin, Fase 2 — docs/specs/multi-equipe.md §6)
+### Dividir turno (admin ou scheduleEditOf, Fase 2 — docs/specs/multi-equipe.md §6)
 
 No modo de edição, cada turno tem um botão **"Dividir"** que abre um painel abaixo dos turnos do
-dia (`splitForm` em `EscalaSobreaviso.jsx`). O admin declara **cortes** (horários dentro do
+dia (`splitForm` em `EscalaSobreaviso.jsx`). Quem edita declara **cortes** (horários dentro do
 intervalo do turno original) — N cortes geram N+1 partes contíguas, cada uma com seu próprio
 período e pessoas.
 

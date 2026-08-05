@@ -1,6 +1,6 @@
 import { kvGet, kvSet, kvGetWithFallback } from './_redis.js';
 import { requireUser } from './_auth.js';
-import { adminCovers } from './_allowlist.js';
+import { scheduleCovers } from './_allowlist.js';
 import { validate, checkBodySize, TeamIdSchema, schedulePostSchemaFor } from './_validate.js';
 import { TEAMS } from '../src/lib/teams.js';
 
@@ -8,7 +8,9 @@ import { TEAMS } from '../src/lib/teams.js';
 //
 // Fase 1 da spec de múltiplas equipes (docs/specs/multi-equipe.md §3/§4): a equipe é
 // explícita — GET aceita ?team= (default sustentacao, para não quebrar o cliente
-// antes do seletor de equipe existir); POST exige `team` no body e checa adminOf.
+// antes do seletor de equipe existir); POST exige `team` no body e checa
+// scheduleCovers(adminOf, scheduleEditOf, team) — admin da equipe OU alguém com
+// scheduleEditOf cobrindo ela (edição completa da escala sem virar admin de CH).
 // A chave da sustentação migrou de nome na Fase 0; leitura cai para a chave global
 // antiga quando a nova ainda não existe (ver kvGetWithFallback). Infra e
 // desenvolvimento nunca tiveram chave antiga — leitura direta.
@@ -50,9 +52,9 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'POST') {
-      let adminOf;
+      let adminOf, scheduleEditOf;
       try {
-        ({ adminOf } = await requireUser(req));
+        ({ adminOf, scheduleEditOf } = await requireUser(req));
       } catch (e) {
         return res.status(e.status || 401).json({ error: 'Unauthorized' });
       }
@@ -63,7 +65,10 @@ export default async function handler(req, res) {
       if (!teamCheck.success) return res.status(400).json({ error: 'Bad request' });
       const teamId = teamCheck.data;
 
-      if (!adminCovers(adminOf, teamId)) return res.status(403).json({ error: 'Forbidden' });
+      // adminOf cobre edição de escala normalmente; scheduleEditOf dá esse mesmo
+      // direito, só para a escala, a quem não deve ganhar o resto de adminOf (CH de
+      // outra pessoa, fechamento, relatório consolidado) — ver api/_allowlist.js.
+      if (!scheduleCovers(adminOf, scheduleEditOf, teamId)) return res.status(403).json({ error: 'Forbidden' });
 
       // Aceita o shape novo { overrides, labels } ou um patch cru (cliente antigo).
       const wrapped = req.body && (('overrides' in req.body) || ('labels' in req.body));

@@ -1,3 +1,5 @@
+import { teamScopeCovers } from '../src/lib/teams.js';
+
 // ─── ALLOWLIST DE ACESSO ──────────────────────────────────────────────────────
 //
 // Edite este arquivo para adicionar/remover membros e definir quem administra o quê.
@@ -8,10 +10,19 @@
 //      teamId: null — não tem painel de CH próprio, mas pode ver/editar o de
 //      qualquer membro das equipes que administra, via dropdown)
 //   - teamId: a equipe a que a pessoa pertence (null se memberId for null)
-//   - adminOf: array de teamIds que a pessoa administra (escala + CH), ou '*'
-//     para administrar todas as equipes. [] = não administra nenhuma.
+//   - adminOf: array de teamIds que a pessoa administra (escala + substituições +
+//     CH de qualquer pessoa da equipe + fechamento de mês + relatório consolidado),
+//     ou '*' para administrar todas as equipes. [] = não administra nenhuma.
+//   - scheduleEditOf: array de teamIds cuja ESCALA a pessoa pode editar por completo
+//     (mesmo modo de edição do admin — qualquer turno, qualquer pessoa do roster,
+//     "Adicionar turno", "Dividir turno", rótulo do dia), SEM ganhar nada do que
+//     adminOf dá: não vê CH de outras pessoas, não fecha/reabre mês, não vê o
+//     relatório consolidado. Pensado para "todos editam a própria escala, mas só
+//     quem administra mexe em dinheiro de outra pessoa". Omitir = []. Quem já tem a
+//     equipe em adminOf não precisa repetir aqui — adminOf já cobre edição de escala.
 //   - `role` NÃO é mais um campo — é derivado por resolveAccess() a partir de
-//     adminOf/memberId (ver abaixo)
+//     adminOf/memberId (ver abaixo); scheduleEditOf NÃO afeta role (continua
+//     'member') nem canAccessCH — só desbloqueia o modo de edição da Escala.
 //   - E-mails não listados aqui recebem role: 'viewer' e sem acesso ao CH
 //   - Comparação de e-mail é case-insensitive
 //
@@ -36,22 +47,29 @@ export const ALLOWLIST = {
   'caio.rodrigues@mtpagamentos.com.br':    { memberId: 'Caio',    teamId: 'infra', adminOf: [] },
 
   // ─── Desenvolvimento ────────────────────────────────────────────────────────
+  // Todos os 9 têm scheduleEditOf: ['desenvolvimento'] — editam a escala completa
+  // da própria equipe (qualquer turno, qualquer pessoa do roster), mas sem CH de
+  // outra pessoa, sem fechar/reabrir mês e sem relatório consolidado (isso continua
+  // exclusivo de adminOf). Anselmo e Leonardo Menegon já têm adminOf cobrindo a
+  // equipe, então já tinham (e continuam tendo) esse acesso — scheduleEditOf seria
+  // redundante para os dois.
   'anselmo.barreto@mtpagamentos.com.br':    { memberId: null,               teamId: null,              adminOf: ['desenvolvimento'] }, // admin puro, não faz plantão (ver docs/specs/multi-equipe.md §Fatos pendentes)
   'leonardo.rodrigues@mtpagamentos.com.br': { memberId: 'Leonardo Menegon', teamId: 'desenvolvimento', adminOf: ['desenvolvimento'] }, // ⚠ admin TEMPORÁRIO para testes — remover de adminOf quando terminarem
-  'luis.cunha@mtpagamentos.com.br':         { memberId: 'Luis',             teamId: 'desenvolvimento', adminOf: [] },
-  'adalberto.teshima@mtpagamentos.com.br':  { memberId: 'Adalberto',        teamId: 'desenvolvimento', adminOf: [] },
-  'pedro.soares@mtpagamentos.com.br':       { memberId: 'Pedro',            teamId: 'desenvolvimento', adminOf: [] },
-  'dante.escame@mtpagamentos.com.br':       { memberId: 'Dante',            teamId: 'desenvolvimento', adminOf: [] },
-  'leonardo.santos@mtpagamentos.com.br':    { memberId: 'Leonardo Matheus', teamId: 'desenvolvimento', adminOf: [] },
-  'jonata.gomes@mtpagamentos.com.br':       { memberId: 'Jonata',           teamId: 'desenvolvimento', adminOf: [] },
-  'icaro.motta@mtpagamentos.com.br':        { memberId: 'Ícaro',            teamId: 'desenvolvimento', adminOf: [] },
+  'luis.cunha@mtpagamentos.com.br':         { memberId: 'Luis',             teamId: 'desenvolvimento', adminOf: [], scheduleEditOf: ['desenvolvimento'] },
+  'adalberto.teshima@mtpagamentos.com.br':  { memberId: 'Adalberto',        teamId: 'desenvolvimento', adminOf: [], scheduleEditOf: ['desenvolvimento'] },
+  'pedro.soares@mtpagamentos.com.br':       { memberId: 'Pedro',            teamId: 'desenvolvimento', adminOf: [], scheduleEditOf: ['desenvolvimento'] },
+  'dante.escame@mtpagamentos.com.br':       { memberId: 'Dante',            teamId: 'desenvolvimento', adminOf: [], scheduleEditOf: ['desenvolvimento'] },
+  'leonardo.santos@mtpagamentos.com.br':    { memberId: 'Leonardo Matheus', teamId: 'desenvolvimento', adminOf: [], scheduleEditOf: ['desenvolvimento'] },
+  'jonata.gomes@mtpagamentos.com.br':       { memberId: 'Jonata',           teamId: 'desenvolvimento', adminOf: [], scheduleEditOf: ['desenvolvimento'] },
+  'icaro.motta@mtpagamentos.com.br':        { memberId: 'Ícaro',            teamId: 'desenvolvimento', adminOf: [], scheduleEditOf: ['desenvolvimento'] },
 };
 
-const emptyAccess = { memberId: null, teamId: null, adminOf: [], role: 'viewer' };
+const emptyAccess = { memberId: null, teamId: null, adminOf: [], scheduleEditOf: [], role: 'viewer' };
 
 /**
  * Resolve o acesso de um usuário a partir do e-mail verificado.
- * Retorna { memberId, teamId, adminOf, role }. `role` é derivado:
+ * Retorna { memberId, teamId, adminOf, scheduleEditOf, role }. `role` é derivado só de
+ * adminOf/memberId — scheduleEditOf nunca eleva a admin (ver comentário no topo do arquivo):
  *   - 'admin'  se adminOf === '*' ou é um array não-vazio
  *   - 'member' se há memberId (e não é admin)
  *   - 'viewer' caso contrário (inclusive e-mail não listado)
@@ -60,13 +78,24 @@ export function resolveAccess(email) {
   if (!email) return emptyAccess;
   const entry = ALLOWLIST[email.toLowerCase()];
   if (!entry) return emptyAccess;
-  const { memberId = null, teamId = null, adminOf = [] } = entry;
+  const { memberId = null, teamId = null, adminOf = [], scheduleEditOf = [] } = entry;
   const isAdmin = adminOf === '*' || (Array.isArray(adminOf) && adminOf.length > 0);
   const role = isAdmin ? 'admin' : memberId ? 'member' : 'viewer';
-  return { memberId, teamId, adminOf, role };
+  return { memberId, teamId, adminOf, scheduleEditOf, role };
 }
 
 /** true se `adminOf` cobre `teamId` (admin daquela equipe específica, ou de todas). */
 export function adminCovers(adminOf, teamId) {
-  return adminOf === '*' || (Array.isArray(adminOf) && adminOf.includes(teamId));
+  return teamScopeCovers(adminOf, teamId);
+}
+
+/**
+ * true se `adminOf` OU `scheduleEditOf` cobrem `teamId` — usado só pela autorização
+ * de escrita da ESCALA (api/schedule.js). Admin completo de uma equipe já cobre isso;
+ * scheduleEditOf existe para dar esse mesmo direito de edição a quem NÃO deve ganhar
+ * o resto de adminOf (CH de outra pessoa, fechamento de mês, relatório consolidado —
+ * ver comentário no topo do arquivo). Nunca usar para nada além de schedule.js.
+ */
+export function scheduleCovers(adminOf, scheduleEditOf, teamId) {
+  return teamScopeCovers(adminOf, teamId) || teamScopeCovers(scheduleEditOf, teamId);
 }
