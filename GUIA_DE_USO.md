@@ -9,12 +9,9 @@ tecnologia. Se você conseguir usar o WhatsApp, você consegue usar isto.
 
 1. Abra o link do sistema no navegador (Chrome, Edge, etc.).
 2. Clique no botão **Entrar**.
-3. Escolha sua conta do Google usando seu e-mail da empresa
+3. Crie sua conta usando seu e-mail da empresa
    (o que termina em `@mtpagamentos.com.br`).
 4. Pronto! Você já está dentro.
-
-Você não precisa criar senha nenhuma. É só entrar com o e-mail do trabalho,
-igual entrar no e-mail ou no Google Drive da empresa.
 
 ---
 
@@ -163,6 +160,3 @@ acesso já está certo do jeito que está.
   a internet voltar.
 
 ---
-
-Dúvidas que este guia não respondeu? Pergunte para quem administra a sua
-equipe.
