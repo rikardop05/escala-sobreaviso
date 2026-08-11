@@ -34,25 +34,28 @@ src/
     api.js                  Hook useApi() — fetch autenticado com JWT Clerk
     schedule.js             Motor genérico da escala — buildSchedule(team, overrides, labels), buildOnCallSegments(schedule, dayStart), shiftDuration(timeStr), sortShiftsByStart(shifts, dayStart) (leia seção Escala abaixo)
     teams.js                Registry de equipes (MEMBERS, TEAMS) — sustentação, infraestrutura e desenvolvimento (Fase 1 da spec multi-equipe; ver docs/specs/multi-equipe.md, ADR-0001, ADR-0003); chGroupsFor(adminOf) agrupa pessoas por equipe (dropdown do CH e relatório consolidado); teamScopeCovers(scope, teamId) é o teste genérico "scope cobre esta equipe?" compartilhado por api/_allowlist.js e EscalaSobreaviso.jsx. MEMBERS[x].fullName = nome completo (só o relatório consolidado usa; resto do app usa o identificador curto). Importável de api/* (plain JS, sem JSX/Vite)
-    chCalc.js               Cálculo financeiro do CH — parseShiftTime, scheduleEntriesFor, monthTotals (fórmula de SA/HE/Comp) — extraído de ControleDeHoras.jsx para o relatório consolidado reusar a mesma implementação (ver seção Controle de Horas)
+    chCalc.js               Cálculo financeiro do CH — parseShiftTime, scheduleEntriesFor, monthTotals (fórmula de SA/HE/Comp), isEntryCountable (filtra HE pendente/rejeitada), splitHoraExtra (aprovação de excedente — ver seção Controle de Horas abaixo). Importável de api/ch.js (mesma regra do frontend; ver comentário no topo do arquivo sobre a extensão .js obrigatória nos imports internos)
     theme.js                Tema unificado getTheme(dark) — tokens de cor AA usados pelos dois views (não criar temas locais)
   components/
     ui.jsx                  Kit compartilhado: Icon (SVGs), SaveStatus, Snackbar (undo), ConfirmDialog, Skeleton, friendlyError()
     EscalaSobreaviso.jsx    Calendário mensal com seletor de equipe (#escala/<id>), filtro por responsável (roster da equipe), substituições, edição de escala + "Dividir turno" (admin da equipe OU scheduleEditOf cobrindo a equipe ativa — canEditActiveTeam), widget "Agora" multi-equipe, slot vago, detector de sobreposição
-    ControleDeHoras.jsx     CH multi-equipe desde a Fase 2: parâmetros, lançamentos HE/Comp, relatório, exportação CSV; "Responsável" vem de MEMBERS (agrupado por equipe no dropdown do admin); admin só vê/edita membros das equipes em adminOf; botão "Relatório consolidado" (admin) troca para RelatorioConsolidado.jsx
-    RelatorioConsolidado.jsx Relatório de fechamento (admin): uma linha por pessoa das equipes em adminOf, agrupada por equipe — Horas/Valor SA, Horas/Valor HE, Compensação, Valor Total. Mês fechado usa o snapshot; ajustes manuais não persistidos; exporta CSV (ver seção Controle de Horas)
+    ControleDeHoras.jsx     CH multi-equipe desde a Fase 2: parâmetros, lançamentos HE/Comp, relatório, exportação CSV; "Responsável" vem de MEMBERS (agrupado por equipe no dropdown do admin); admin só vê/edita membros das equipes em adminOf; botão "Relatório consolidado" (admin) troca para RelatorioConsolidado.jsx; cada lançamento de Hora Extra mostra status (aprovado/pendente/rejeitado) + motivo; prévia de aprovação no formulário (ver Aprovação de excedente)
+    AprovacaoPendencias.jsx Widget de admin embutido no CH: botão "Verificar pendências" + contador, checa ao abrir a aba, modal com aprovar/rejeitar por pendência (rejeitar exige motivo) — ver Aprovação de excedente
+    RelatorioConsolidado.jsx Relatório de fechamento (admin): uma linha por pessoa das equipes em adminOf, agrupada por equipe — Horas/Valor SA, Horas/Valor HE, Compensação, Valor Total. Mês fechado usa o snapshot; Hora Extra pendente/rejeitada não entra; ajustes manuais não persistidos; exporta CSV (ver seção Controle de Horas)
     EstruturaEscala.jsx     Aba "Estrutura" (#estrutura, some para quem não administra nenhuma equipe): tabelas read-only, com seletor limitado às equipes em adminOf. Sustentação mostra semana (WEEKDAY_SHIFTS) + escada de FDS; infra/desenvolvimento mostram blocos por dia-da-semana, faixas sem cobertura e aviso "sem rodízio definido". Edição versionada é fase futura
 
 api/
   _allowlist.js             EDITAR AQUI: mapeamento email→{memberId, teamId, adminOf, scheduleEditOf}; resolveAccess(), adminCovers(), scheduleCovers()
   _auth.js                  requireUser(req) — verifica JWT + busca email via Clerk API + resolve { memberId, teamId, adminOf, scheduleEditOf, role }
-  _validate.js              Schemas Zod — TeamIdSchema, schedulePostSchemaFor(team)/subPostSchemaFor(team) validam contra TEAMS[team].roster (src/lib/teams.js); persons[] limita no tamanho do roster da própria equipe, não num número fixo
+  _validate.js              Schemas Zod — TeamIdSchema, schedulePostSchemaFor(team)/subPostSchemaFor(team) validam contra TEAMS[team].roster (src/lib/teams.js); persons[] limita no tamanho do roster da própria equipe, não num número fixo; EntrySchema tem status/origemId/decididoPor/decididoEm/motivo (aprovação de excedente); ChApprovePostSchema exige motivo ao rejeitar
   _redis.js                 kvGet / kvSet / kvScanAll / kvGetWithFallback — helpers JSON sobre ioredis; kvGetWithFallback lê a chave por equipe, cai para a global antiga se ausente
   _backup-crypto.js         encrypt/decrypt AES-256-GCM dos dumps de backup (BACKUP_ENCRYPTION_KEY)
+  _scheduleData.js          readTeamOverrides(teamId)/readTeamSubs(teamId) — leitura das mesmas chaves que api/schedule.js e api/substitutions.js usam, duplicada aqui de propósito (ver comentário no arquivo) para api/ch.js montar a escala e classificar Hora Extra sem tocar naqueles dois arquivos
   profile.js                GET/POST preferências do usuário (dark, filter, monthKey, teamView); memberId/teamId/adminOf/scheduleEditOf/role vêm da allowlist (somente-leitura)
   substitutions.js          GET/POST/DELETE substituições, escopadas por equipe (?team= / body.team; chave team:{team}:substitutions, leitura dupla só na sustentação); só adminCovers, scheduleEditOf não conta aqui
-  ch.js                     GET/POST lançamentos e parâmetros CH; acesso: a própria pessoa, ou admin da equipe dela (MEMBERS[pessoa].teamId)
-  ch-close.js               Fechamento mensal do CH: GET fechamentos; POST fecha mês; DELETE reabre — sempre admin da equipe da pessoa-alvo
+  ch.js                     GET/POST lançamentos e parâmetros CH; acesso: a própria pessoa, ou admin da equipe dela (MEMBERS[pessoa].teamId). POST reclassifica Hora Extra no servidor (nunca confia no status que o cliente manda) e mantém o índice team:{teamId}:ch_pending — ver Aprovação de excedente
+  ch-approve.js             GET pendências das equipes em adminOf (self-heal do índice); POST { person, entryId, acao, motivo? } aprova/rejeita — admin da equipe da pessoa, motivo obrigatório ao rejeitar
+  ch-close.js               Fechamento mensal do CH: GET fechamentos; POST fecha mês (recusa se já fechado OU se houver Hora Extra pendente); DELETE reabre — sempre admin da equipe da pessoa-alvo
   schedule.js               GET {overrides,labels} escopado por equipe (?team=, default sustentacao); POST exige team no body + scheduleCovers(adminOf, scheduleEditOf, team), carimba editedAt
   backup.js                 Cron diário: dump do Redis → cifra → Vercel Blob; poda >30 dias (ver Backup abaixo)
 
@@ -502,6 +505,99 @@ Compensação | Valor Total`, agrupado por equipe (linha de cabeçalho por grupo
   cabeçalho, uma linha por equipe (marcador) + suas pessoas, total geral, ajustes (se houver) e a
   nota de fórmula como linhas finais.
 
+### Aprovação de excedente (Hora Extra)
+
+**Regra de negócio**: hoje toda Hora Extra lançada conta integralmente; a partir desta feature, o
+intervalo lançado é comparado com a **união dos turnos de sobreaviso efetivos** da pessoa naquela
+data — "efetivo" = com substituições aplicadas via `resolveShiftPeople` (quem cobre o plantão de
+outro conta como estando de SA; ver Substituições acima). A parte **dentro** dessa união é
+Excedente-zero e é aprovada automaticamente; a parte **fora** (Excedente, no vocabulário do
+[CONTEXT.md](CONTEXT.md)) vira lançamento(s) `pendente` que não entra em nenhum total até um
+admin decidir (Aprovação). Um único lançamento original pode virar N lançamentos (partes
+alternando aprovado/pendente) — ex.: SA 04:00–09:00 e 18:00–23:00 com HE 08:00–19:00 produz 1h +
+1h aprovadas (dois lançamentos, um por janela de SA) e 9h pendentes (um lançamento, o vão entre
+09:00 e 18:00). Vale **só** para Hora Extra — Sobreaviso e Compensação nunca passam por aprovação.
+
+**Congelamento**: a classificação é feita uma vez, no momento do lançamento (ou da edição de
+horário), e nunca é refeita — se a escala mudar depois, um lançamento já aprovado não volta a
+pendente e um pendente não desaparece sozinho. Isso é deliberado: sem isso, editar uma escala
+antiga mudaria retroativamente o que já foi decidido.
+
+**Cálculo no servidor, não negociável**: a divisão roda em `api/ch.js`, no POST
+(`reclassifyEntries`), nunca no cliente. `ControleDeHoras.jsx` mostra uma prévia (mesma função,
+`splitHoraExtra`, contra o `schedule`/`subs` já carregados) só para feedback visual — o servidor
+recomputa e é a autoridade. Um POST forjado marcando um lançamento novo como `aprovado` é
+ignorado: para cada Hora Extra recebida, o servidor busca o lançamento gravado pelo mesmo `id`;
+se `(data, inicio, fim, tipo)` batem exatamente, mantém os campos de decisão **gravados**
+(ignorando o que o cliente mandou); senão (lançamento novo, ou horário editado) reclassifica do
+zero via `splitHoraExtra`, descartando qualquer campo de decisão que tenha vindo do cliente. Para
+isso, `api/ch.js` carrega os overrides e substituições da equipe da pessoa
+(`api/_scheduleData.js` — `readTeamOverrides`/`readTeamSubs`, cópia deliberada da leitura que
+`api/schedule.js`/`api/substitutions.js` já fazem, para não precisar tocar nesses dois arquivos) e
+chama `buildSchedule` + `splitHoraExtra` (`src/lib/chCalc.js`) exatamente como o calendário faria.
+
+**`src/lib/chCalc.js`** — `splitHoraExtra(schedule, subs, dayStart, person, data, inicio, fim)` é
+a função pura que faz a partição: converte o intervalo da Hora Extra e a união das janelas de SA
+para minutos relativos à meia-noite de `data` (reusando `buildOnCallSegments`, que já resolve a
+atribuição de pernoite — ADR-0002 — sem reimplementar nada), corta pelas fronteiras, e devolve
+`[{ data, inicio, fim, aprovado }]` — uma parte por trecho contíguo dentro/fora. Trata virada de
+meia-noite com a mesma convenção de `durationHours` (fim ≤ início soma 24h). `isEntryCountable
+(entry)` é o filtro único (`entry.status === undefined || entry.status === 'aprovado'`) usado em
+**todo** lugar que soma Hora Extra — ver "Impacto nos totais" abaixo.
+
+**Modelo de dados** — `member:{memberId}:ch_entries` ganha 5 campos opcionais (ver "Redis — Todas
+as Chaves" acima): `status` (`aprovado`/`pendente`/`rejeitado`; **ausente = aprovado**, cobre todo
+o histórico sem migração), `origemId` (liga as partes ao lançamento original que gerou a
+divisão), `decididoPor`/`decididoEm`/`motivo` (preenchidos só na decisão — `motivo` é opcional na
+aprovação, obrigatório na rejeição, reforçado por `.refine()` no `ChApprovePostSchema` em
+`api/_validate.js`).
+
+**Fila de pendências** — `team:{teamId}:ch_pending` (`[{ memberId, entryId }]`) existe só para o
+admin montar a tela de aprovação sem varrer as 19 chaves de membro; é um **índice derivado**, a
+entrada em `ch_entries` é a verdade. `api/ch-approve.js` (GET) descarta silenciosamente itens cujo
+lançamento não existe mais ou já não está `pendente`, e reescreve a fila limpa. Toda escrita
+(`api/ch.js` e `api/ch-approve.js`) grava a entrada **primeiro** e a fila **depois** — sem
+transação no Redis, então a ordem importa: uma falha no meio deixa no máximo uma referência
+obsoleta na fila, que a leitura auto-corrige; nunca o inverso (fila referenciando algo que não
+foi de fato salvo).
+
+**`api/ch-approve.js`** — mesmo padrão de `api/ch-close.js`:
+- **GET**: pendências das equipes em `adminOf` do requisitante (`'*'` → todas; array → só essas).
+  403 se `adminOf` for vazio (não é admin de equipe nenhuma).
+- **POST** `{ person, entryId, acao: 'aprovar'|'rejeitar', motivo? }`: autorização é
+  `adminCovers(adminOf, MEMBERS[person].teamId)` — o mesmo teste usado por `ch.js`/`ch-close.js`,
+  não um admin geral. Um admin pode aprovar o próprio excedente (grava `decididoPor`/`decididoEm`
+  normalmente). 404 se o `entryId` não existe para a pessoa; 409 se já não está `pendente`
+  (decisão já tomada por outra aba/outro admin). Não existe hoje um admin permanente que cubra
+  todas as equipes — o único `adminOf: '*'` da allowlist é temporário e está marcado como tal em
+  `api/_allowlist.js`; nada aqui depende de ele existir.
+
+**Fechamento recusa pendência**: `api/ch-close.js` (POST), antes de gravar o snapshot, verifica se
+a pessoa tem alguma Hora Extra `pendente` com `data` no mês a fechar — se sim, responde `409 {
+error: 'Pending entries', pendentes: [...] }` com a lista (id/data/intervalo) em vez de fechar.
+Fechar existe para congelar um número que ninguém mais discute; congelar com excedente em aberto
+produzia exatamente a dúvida que o fechamento deveria eliminar. `ControleDeHoras.jsx` reconhece
+esse formato de erro e mostra as pendências específicas em vez do `friendlyError()` genérico.
+
+**UI**:
+- `AprovacaoPendencias.jsx` (admin): botão "Verificar pendências" sempre visível (contador
+  embutido), que faz GET `/api/ch-approve` sem recarregar a página; checa automaticamente ao
+  montar e abre um modal se houver alguma. Cada linha mostra pessoa/data/intervalo/duração com
+  Aprovar/Rejeitar — Rejeitar exige motivo (botão desabilitado até o campo ter texto).
+- `ControleDeHoras.jsx`: coluna "Status" na tabela de lançamentos (badge aprovado/pendente/
+  rejeitado + `motivo` quando houver, via `STATUS_META`) — sem isso a pessoa lança, some da conta
+  e não entende por quê. Lançamento pendente pode ser excluído pela própria pessoa; editar o
+  horário refaz a classificação do zero (novo `id`, descarta a decisão anterior). No formulário de
+  novo lançamento de Hora Extra, uma prévia (`splitPreview`/`splitSummary`) mostra o que o servidor
+  vai decidir antes de salvar.
+
+**Impacto nos totais** — lançamento `pendente` ou `rejeitado` nunca entra em: totais do mês
+(`totals`, via `isEntryCountable` antes de `monthTotals`), Valor da NF (deriva de `totals`), CSV
+por pessoa (`exportCSV`, coluna "Status" mostra o estado mas a soma já vem de `totals` filtrado),
+relatório consolidado (`RelatorioConsolidado.jsx`, filtro de `manualEntries`) e snapshot de
+fechamento (`closeMonth()`, `entries:` filtrado antes de gravar). Os cinco pontos usam o mesmo
+`isEntryCountable` — nunca uma cópia da condição.
+
 ---
 
 ## Autenticação
@@ -551,9 +647,10 @@ Handler usa role para controle de acesso, memberId para isolar dados
 | Chave | Formato | Proprietário |
 |-------|---------|--------------|
 | `user:{clerkId}:profile` | `{ dark, filter, monthKey, teamView }` | Por usuário |
-| `member:{memberId}:ch_entries` | `[{ id, person, tipo, data, inicio, fim, projeto, atividade }]` | Por membro |
+| `member:{memberId}:ch_entries` | `[{ id, person, tipo, data, inicio, fim, projeto, atividade, status?, origemId?, decididoPor?, decididoEm?, motivo? }]` — os 5 últimos campos só existem de fato em Hora Extra; `status` ausente = aprovado (legado) | Por membro |
 | `member:{memberId}:ch_params` | `{ [memberId]: { remuneracao, jornada } }` | Por membro |
 | `member:{memberId}:ch_closed` | `{ 'YYYY-MM': { closedAt, closedBy, params, totals, entries[] } }` | Por membro |
+| `team:{teamId}:ch_pending` | `[{ memberId, entryId }]` — índice da fila de Hora Extra pendente; derivado, a entrada em `ch_entries` é a verdade (ver Aprovação de excedente) | Compartilhado (por equipe) |
 | `team:{teamId}:substitutions` | `[{ id, titular, substituto, from, until }]` | Compartilhado (por equipe) |
 | `team:{teamId}:schedule_overrides` | `{ [dayKey]: { [idx]: { persons[]?|person?, period, time, editedAt } } }` (idx extra = turno novo; sem `dur` — derivado de `time` via `shiftDuration()`) | Compartilhado (por equipe) |
 | `team:{teamId}:schedule_labels` | `{ [dayKey]: string }` — rótulo do dia (ex.: "Feriado") | Compartilhado (por equipe) |
@@ -590,9 +687,11 @@ separado (`TEAM_MEMBERS`) para manter em sincronia manualmente.
 | `substitutions` GET | Público — `?team=` (default `sustentacao`). |
 | `substitutions` POST | `team` obrigatório no body → `subPostSchemaFor(team)` — `titular`/`substituto` do roster da equipe; `until >= from`; `titular ≠ substituto`. |
 | `substitutions` DELETE | `id` e `team` (query) obrigatórios, validados contra `TEAMS`. |
-| `ch` POST | `ChPostSchema` — `entries[]` (com `tipo` enum, `person` validado contra `MEMBERS` de **todas** as equipes), `params` record, `person` string. Todos opcionais. |
-| `ch-close` POST | `ChClosePostSchema` — `person` (qualquer `MEMBERS`, opcional), `month` YYYY-MM, `snapshot` { params, totals, entries[] ≤200 }. |
+| `ch` POST | `ChPostSchema` — `entries[]` (com `tipo` enum, `person` validado contra `MEMBERS` de **todas** as equipes, e os 5 campos de aprovação — `status`/`origemId`/`decididoPor`/`decididoEm`/`motivo` — todos opcionais e só de formato; `api/ch.js` reclassifica a Hora Extra no servidor e nunca confia nesses valores vindos do cliente, ver "Aprovação de excedente"), `params` record, `person` string. Todos opcionais. |
+| `ch-close` POST | `ChClosePostSchema` — `person` (qualquer `MEMBERS`, opcional), `month` YYYY-MM, `snapshot` { params, totals, entries[] ≤200 }. Recusa (409) se houver Hora Extra `pendente` da pessoa no mês — ver "Aprovação de excedente". |
 | `ch-close` DELETE | `month` validado como YYYY-MM (`ChCloseMonthQuery`). |
+| `ch-approve` GET | Sem body — autorização por `adminOf` do requisitante (403 se vazio). |
+| `ch-approve` POST | `ChApprovePostSchema` — `{ person (MEMBERS), entryId, acao: 'aprovar'\|'rejeitar', motivo? }`; `.refine()` exige `motivo` não-vazio quando `acao === 'rejeitar'`. |
 
 Ordem de execução: `requireUser` → validação de `team` → checagem de escopo (`adminCovers`) →
 `checkBodySize` (50 KB) → `validate(schema)` → Redis.

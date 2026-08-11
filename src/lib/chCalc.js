@@ -8,7 +8,10 @@
 //                                                          descontar horas de HE
 //   valorHoraExtra  = (valorHora × 1.5) × horasHE
 //   valorComp       = (valorHora / 3)   × horasComp    ← mesmo fator do SA, abate do total
-import { durationHours, mergedHours, resolveShiftPeople, dayKey } from './schedule';
+// Extensão .js explícita: este módulo agora também é importado por api/ch.js,
+// que roda em Node puro (Vercel) — sem bundler, extensão é obrigatória na
+// resolução de import relativo (Vite tolera a omissão; Node não).
+import { durationHours, mergedHours, resolveShiftPeople, buildOnCallSegments, getActiveSub, dayKey } from './schedule.js';
 
 // Extrai HH:MM de uma string de turno ex: "23:00 – 04:00".
 // Aceita en-dash (–), em-dash (—) e hífen (-) — o admin pode digitar qualquer um ao
@@ -73,4 +76,99 @@ export function monthTotals(allMonthEntries, valorHora) {
     valorTotal: valorSobreaviso + valorExtra, // não desconta compensação — ver "Valor da NF" em ControleDeHoras.jsx
     overlapMin,
   };
+}
+
+// ─── APROVAÇÃO DE EXCEDENTE (Hora Extra) ────────────────────────────────────
+// Um lançamento de Hora Extra é comparado com a união do sobreaviso EFETIVO da
+// pessoa naquela data — a parte dentro do sobreaviso é aprovada automaticamente;
+// a parte fora ("excedente") vira lançamento pendente até um admin decidir.
+// Sobreaviso e Compensação nunca passam por isto.
+
+// Um lançamento sujeito a aprovação só entra nos totais quando aprovado — ou é
+// legado, sem `status` (compatibilidade: dado gravado antes desta feature conta
+// como sempre contou, sem precisar de migração). Pendente e rejeitado ficam de
+// fora de TODOS os totais (mês, Valor da NF, CSV, relatório consolidado,
+// snapshot de fechamento) — nunca reclassifica, só filtra o que já foi decidido.
+export function isEntryCountable(entry) {
+  return entry.status === undefined || entry.status === 'aprovado';
+}
+
+function toMin(hhmm) {
+  const [h, m] = String(hhmm).split(':').map(Number);
+  return h * 60 + m;
+}
+
+function fmtMin(min) {
+  const m = ((min % 1440) + 1440) % 1440;
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}
+
+function addDays(dateStr, n) {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setDate(d.getDate() + n);
+  return dayKey(d);
+}
+
+// União (mesclada, ordenada) das janelas de sobreaviso EFETIVO de `person`, em
+// minutos relativos à meia-noite de `data` — pode ter valores negativos (turno
+// pernoite da véspera, ADR-0002) ou >= 1440 (turno que vira para o dia seguinte).
+// Usa buildOnCallSegments (que já resolve pernoite via dayStart) e getActiveSub
+// (substituição) — nunca reimplementa essas regras, só reaproveita.
+function saWindowsRelativeToDate(schedule, subs, dayStart, person, data) {
+  const segs = buildOnCallSegments(schedule, dayStart);
+  const anchorMs = new Date(`${data}T00:00:00`).getTime();
+  const windows = [];
+  for (const seg of segs) {
+    for (const titular of seg.people) {
+      // Turno travado por override não redireciona por substituição — mesma
+      // regra "edição vence substituição" do calendário (resolveShiftPeople).
+      const sub = seg.personsOverridden ? null : getActiveSub(titular, seg.dateStr, subs);
+      const effective = sub ? sub.substituto : titular;
+      if (effective !== person) continue;
+      windows.push([(seg.start - anchorMs) / 60000, (seg.end - anchorMs) / 60000]);
+    }
+  }
+  windows.sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const [s, e] of windows) {
+    const last = merged[merged.length - 1];
+    if (last && s <= last[1]) last[1] = Math.max(last[1], e);
+    else merged.push([s, e]);
+  }
+  return merged;
+}
+
+// Compara [inicio,fim) de uma Hora Extra em `data` com o sobreaviso efetivo de
+// `person` (resolvido a partir de `schedule`/`subs`/`dayStart` — a mesma escala
+// que o calendário e o CH já usam) e devolve as partes resultantes, em ordem
+// cronológica: [{ data, inicio, fim, aprovado }]. Um lançamento pode gerar N
+// partes (uma por trecho dentro/fora do sobreaviso). `data` de uma parte que cai
+// inteiramente no dia seguinte é ajustada (+1 dia) — mesma convenção de
+// durationHours (fim <= início soma 24h) para partes que só cruzam a virada.
+export function splitHoraExtra(schedule, subs, dayStart, person, data, inicio, fim) {
+  const heStart = toMin(inicio);
+  let heEnd = toMin(fim);
+  if (heEnd <= heStart) heEnd += 1440; // cruza a meia-noite — convenção existente
+
+  const saWindows = saWindowsRelativeToDate(schedule, subs, dayStart, person, data);
+  const clipped = saWindows
+    .map(([s, e]) => [Math.max(s, heStart), Math.min(e, heEnd)])
+    .filter(([s, e]) => e > s);
+
+  const parts = [];
+  let cursor = heStart;
+  for (const [s, e] of clipped) {
+    if (s > cursor) parts.push({ start: cursor, end: s, aprovado: false });
+    parts.push({ start: Math.max(s, cursor), end: e, aprovado: true });
+    cursor = Math.max(cursor, e);
+  }
+  if (cursor < heEnd) parts.push({ start: cursor, end: heEnd, aprovado: false });
+
+  return parts
+    .filter(p => p.end > p.start)
+    .map(p => (
+      p.start >= 1440
+        ? { data: addDays(data, 1), inicio: fmtMin(p.start), fim: fmtMin(p.end), aprovado: p.aprovado }
+        : { data, inicio: fmtMin(p.start), fim: fmtMin(p.end), aprovado: p.aprovado }
+    ));
 }

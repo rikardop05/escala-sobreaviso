@@ -1,17 +1,24 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useApi } from '../lib/api';
 import { MONTHS, durationHours, fmtHM, brl, buildSchedule } from '../lib/schedule';
-import { parseShiftTime, scheduleEntriesFor, monthTotals } from '../lib/chCalc';
+import { parseShiftTime, scheduleEntriesFor, monthTotals, isEntryCountable, splitHoraExtra } from '../lib/chCalc';
 import { TEAMS, MEMBERS, chGroupsFor } from '../lib/teams';
 import { getTheme, DANGER, WARN } from '../lib/theme';
 import { Icon, SaveStatus, Snackbar, ConfirmDialog, friendlyError } from './ui';
 import RelatorioConsolidado from './RelatorioConsolidado';
+import AprovacaoPendencias from './AprovacaoPendencias';
 
 const TYPES = ["Hora Extra", "Compensação"];
 const TYPE_META = {
   Sobreaviso:   { color: "#60A5FA", bg: "#1E3A5F", lightColor: "#1565C0", lightBg: "#E3F2FD" },
   "Hora Extra": { color: "#F472B6", bg: "#4A1025", lightColor: "#C2185B", lightBg: "#FCE4EC" },
   Compensação:  { color: "#FCD34D", bg: "#431407", lightColor: "#854D0E", lightBg: "#FEF9C3" },
+};
+// Só Hora Extra tem status — Sobreaviso e Compensação nunca passam por aprovação.
+const STATUS_META = {
+  aprovado:  { label: "Aprovado",  color: "#22C55E", bg: "rgba(34,197,94,0.15)" },
+  pendente:  { label: "Pendente",  color: WARN,       bg: "rgba(245,158,11,0.15)" },
+  rejeitado: { label: "Rejeitado", color: DANGER,      bg: "rgba(239,68,68,0.15)" },
 };
 
 export default function ControleDeHoras({ dark, profile }) {
@@ -231,7 +238,13 @@ export default function ControleDeHoras({ dark, profile }) {
   }, [scheduleEntries, manualMonthEntries]);
 
   // ─── TOTAIS (SA da escala + manuais) ───────────────────────────────────────
-  const totals = useMemo(() => monthTotals(allMonthEntries, valorHora), [allMonthEntries, valorHora]);
+  // Hora Extra pendente ou rejeitada NÃO entra no total — só aprovada (ou
+  // legada, sem status) conta. displayEntries continua mostrando TODAS pra
+  // pessoa entender o que está pendente; só o cálculo financeiro filtra.
+  const totals = useMemo(
+    () => monthTotals(allMonthEntries.filter(isEntryCountable), valorHora),
+    [allMonthEntries, valorHora]
+  );
 
   // ─── FECHAMENTO MENSAL ─────────────────────────────────────────────────────
   // Mês fechado = snapshot imutável (params + totais + line items) gravado pelo admin.
@@ -268,7 +281,10 @@ export default function ControleDeHoras({ dark, profile }) {
       const snapshot = {
         params: { remuneracao: params.remuneracao === '' ? 0 : params.remuneracao, jornada: params.jornada },
         totals: { ...totals, valorHora },
-        entries: allMonthEntries.map(e => ({
+        // Pendente/rejeitada não entra no snapshot — o fechamento já foi
+        // recusado pelo servidor se sobrasse alguma (api/ch-close.js), então na
+        // prática este filtro só tira Hora Extra rejeitada da fotografia final.
+        entries: allMonthEntries.filter(isEntryCountable).map(e => ({
           id: e.id, tipo: e.tipo, data: e.data, inicio: e.inicio, fim: e.fim,
           projeto: e.projeto || '', atividade: e.atividade || '',
           origem: e._fromSchedule ? 'Escala' : 'Manual',
@@ -277,7 +293,16 @@ export default function ControleDeHoras({ dark, profile }) {
       const updated = await api('/api/ch-close', { method: 'POST', body: { person, month: monthKeyStr, snapshot } });
       setClosedMonths(updated);
     } catch (e) {
-      setCloseError(/already closed|409/i.test(String(e.message)) ? 'Este mês já está fechado.' : friendlyError(e));
+      let parsed = null;
+      try { parsed = JSON.parse(e.message); } catch { /* não era JSON */ }
+      if (parsed?.error === 'Pending entries') {
+        const lista = parsed.pendentes.map(p => `${p.data.slice(8, 10)}/${p.data.slice(5, 7)} ${p.inicio}–${p.fim}`).join(', ');
+        setCloseError(`Há Hora Extra pendente de aprovação neste mês: ${lista}. Aprove ou rejeite antes de fechar.`);
+      } else if (/already closed|409/i.test(String(e.message))) {
+        setCloseError('Este mês já está fechado.');
+      } else {
+        setCloseError(friendlyError(e));
+      }
     } finally {
       setCloseBusy(false);
     }
@@ -358,11 +383,14 @@ export default function ControleDeHoras({ dark, profile }) {
     const sep = ";";
     // Mês fechado exporta o snapshot congelado — não o recálculo atual
     const csvParams = isClosed ? closedSnap.params : params;
-    const header = ["Data","Tipo","Origem","Início","Fim","Duração (h)","Duração (h:mm)","Projeto","Atividade / Descrição","Responsável"];
+    // Status entra na linha (transparência — inclui pendente/rejeitada, que não
+    // contam no RESUMO abaixo); só existe de fato para Hora Extra.
+    const header = ["Data","Tipo","Status","Origem","Início","Fim","Duração (h)","Duração (h:mm)","Projeto","Atividade / Descrição","Responsável"];
     const rows = displayEntries.map(e => {
       const h = durationHours(e.inicio, e.fim);
+      const statusLabel = e.tipo === "Hora Extra" ? (STATUS_META[e.status || "aprovado"]?.label || "") : "";
       return [
-        e.data, e.tipo,
+        e.data, e.tipo, statusLabel,
         e._fromSchedule ? "Escala" : "Manual",
         e.inicio, e.fim,
         h.toFixed(2).replace(".",","), fmtHM(h),
@@ -403,6 +431,24 @@ export default function ControleDeHoras({ dark, profile }) {
   const liveDuration = durationHours(form.inicio, form.fim);
   const crossesMidnight = form.inicio && form.fim && form.fim <= form.inicio;
   const formMonthClosed = !!(form.data && closedMonths[form.data.slice(0, 7)]);
+
+  // Prévia da aprovação automática — o cliente só MOSTRA, o servidor é quem de
+  // fato classifica no POST (ver api/ch.js). Mesma função dos dois lados
+  // (splitHoraExtra em src/lib/chCalc.js) para a prévia nunca prometer algo
+  // que o servidor depois não confirma.
+  const splitPreview = useMemo(() => {
+    if (form.tipo !== 'Hora Extra' || !form.data || !form.inicio || !form.fim || !team) return null;
+    return splitHoraExtra(schedule, subs, team.dayStart, person, form.data, form.inicio, form.fim);
+  }, [form.tipo, form.data, form.inicio, form.fim, schedule, subs, team, person]);
+
+  const splitSummary = useMemo(() => {
+    if (!splitPreview || !splitPreview.length) return null;
+    const pendentes = splitPreview.filter(p => !p.aprovado);
+    if (pendentes.length === 0) return { pending: false, text: 'Dentro do sobreaviso — será aprovada automaticamente.' };
+    if (pendentes.length === splitPreview.length) return { pending: true, text: 'Fora do sobreaviso — ficará pendente até um admin aprovar.' };
+    const partsTxt = splitPreview.map(p => `${fmtHM(durationHours(p.inicio, p.fim))} ${p.aprovado ? 'aprovada' : 'pendente'}`).join(' + ');
+    return { pending: true, text: `Vai gerar ${splitPreview.length} lançamentos: ${partsTxt}.` };
+  }, [splitPreview]);
   const canSubmit = !!(form.data && form.inicio && form.fim) && !submitting && !formMonthClosed;
 
   const thStyle = { textAlign: "left", fontSize: "0.68rem", fontWeight: 600, color: T.labelColor, padding: "0.5rem 0.5rem", whiteSpace: "nowrap" };
@@ -468,12 +514,15 @@ export default function ControleDeHoras({ dark, profile }) {
             </select>
           </div>
           {isAdmin && (
-            <button type="button" onClick={() => setShowReport(s => !s)}
-              className="ml-auto inline-flex items-center gap-2"
-              style={{ background: showReport ? T.cancelBg : T.exportBg, color: showReport ? T.cancelColor : "#fff", border: showReport ? `1px solid ${T.cancelBorder}` : "none", borderRadius:"0.5rem", padding:"0.5rem 1rem", minHeight:"2.75rem", fontWeight:"700", fontSize:"0.875rem", cursor:"pointer" }}>
-              <Icon name={showReport ? "x" : "calendar"} size={15} />
-              {showReport ? "Voltar ao painel individual" : "Relatório consolidado"}
-            </button>
+            <div className="ml-auto flex items-center gap-2 flex-wrap">
+              <AprovacaoPendencias dark={dark} profile={profile} />
+              <button type="button" onClick={() => setShowReport(s => !s)}
+                className="inline-flex items-center gap-2"
+                style={{ background: showReport ? T.cancelBg : T.exportBg, color: showReport ? T.cancelColor : "#fff", border: showReport ? `1px solid ${T.cancelBorder}` : "none", borderRadius:"0.5rem", padding:"0.5rem 1rem", minHeight:"2.75rem", fontWeight:"700", fontSize:"0.875rem", cursor:"pointer" }}>
+                <Icon name={showReport ? "x" : "calendar"} size={15} />
+                {showReport ? "Voltar ao painel individual" : "Relatório consolidado"}
+              </button>
+            </div>
           )}
         </div>
 
@@ -579,6 +628,12 @@ export default function ControleDeHoras({ dark, profile }) {
             <p className="flex items-center gap-1.5 text-xs font-semibold mb-3" style={{ color:WARN }}>
               <Icon name="alert" size={13} />
               Fim antes do início: será registrado como turno que atravessa a meia-noite ({fmtHM(liveDuration)} de duração). Confira antes de salvar.
+            </p>
+          )}
+          {splitSummary && (
+            <p className="flex items-center gap-1.5 text-xs font-semibold mb-3" style={{ color: splitSummary.pending ? WARN : T.textMuted }}>
+              <Icon name="alert" size={13} />
+              {splitSummary.text}
             </p>
           )}
           <div className="flex items-center gap-3 flex-wrap">
@@ -723,6 +778,7 @@ export default function ControleDeHoras({ dark, profile }) {
                     <th style={thStyle} scope="col">Tipo</th>
                     <th style={thStyle} scope="col">Horário</th>
                     <th style={thStyle} scope="col">Duração</th>
+                    <th style={thStyle} scope="col">Status</th>
                     <th style={{ ...thStyle, width:"100%" }} scope="col">Projeto / Atividade</th>
                     <th style={thStyle} scope="col"><span className="sr-only">Ações</span></th>
                   </tr>
@@ -736,6 +792,7 @@ export default function ControleDeHoras({ dark, profile }) {
                     const rowBg = e._fromSchedule
                       ? T.rowSchedBg
                       : editId === e.id ? T.rowEditBg : "transparent";
+                    const statusMeta = e.tipo === "Hora Extra" ? STATUS_META[e.status || "aprovado"] : null;
 
                     return (
                       <tr key={e.id} style={{ borderTop:`1px solid ${T.divider}`, background:rowBg }}>
@@ -749,6 +806,18 @@ export default function ControleDeHoras({ dark, profile }) {
                         </td>
                         <td className="font-mono text-xs whitespace-nowrap" style={{ color:T.textMuted, padding:"0.5rem" }}>{e.inicio}–{e.fim}</td>
                         <td className="font-mono text-xs font-bold whitespace-nowrap" style={{ color:T.textSecondary, padding:"0.5rem" }}>{fmtHM(h)}</td>
+                        <td style={{ padding:"0.5rem" }}>
+                          {statusMeta && (
+                            <>
+                              <span className="rounded-md px-2 py-0.5 text-xs font-bold whitespace-nowrap" style={{ background:statusMeta.bg, color:statusMeta.color }}>
+                                {statusMeta.label}
+                              </span>
+                              {e.motivo && (
+                                <div className="text-xs mt-0.5" style={{ color:T.textMuted, maxWidth:"10rem" }}>{e.motivo}</div>
+                              )}
+                            </>
+                          )}
+                        </td>
                         <td className="truncate" style={{ color:T.textSecondary, padding:"0.5rem", maxWidth:"1px", width:"100%" }}>
                           {e.projeto && <b style={{ color:T.textPrimary }}>{e.projeto}: </b>}{e.atividade}
                         </td>

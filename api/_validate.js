@@ -88,15 +88,27 @@ export function subPostSchemaFor(teamId) {
 
 // ─── CONTROLE DE HORAS ───────────────────────────────────────────────────────
 
+// status ausente = aprovado (compatibilidade — lançamento gravado antes da
+// aprovação de excedente, sem migração de dado). Os quatro campos de decisão
+// (status/origemId/decididoPor/decididoEm/motivo) só existem de fato para Hora
+// Extra; o schema só valida o FORMATO do que o cliente manda — api/ch.js NUNCA
+// confia nesses valores para uma entrada existente ou nova, sempre reclassifica
+// no servidor (ver src/lib/chCalc.js — splitHoraExtra). Aceitar aqui é só para
+// não rejeitar o round-trip do que o próprio servidor devolveu antes.
 const EntrySchema = z.object({
-  id:        z.string().min(1),
-  person:    AnyMember,
-  tipo:      z.enum(['Sobreaviso', 'Hora Extra', 'Compensação']),
-  data:      DateStr,
-  inicio:    z.string().max(10),
-  fim:       z.string().max(10),
-  projeto:   z.string().max(200).optional(),
-  atividade: z.string().max(500).optional(),
+  id:          z.string().min(1),
+  person:      AnyMember,
+  tipo:        z.enum(['Sobreaviso', 'Hora Extra', 'Compensação']),
+  data:        DateStr,
+  inicio:      z.string().max(10),
+  fim:         z.string().max(10),
+  projeto:     z.string().max(200).optional(),
+  atividade:   z.string().max(500).optional(),
+  status:      z.enum(['aprovado', 'pendente', 'rejeitado']).optional(),
+  origemId:    z.string().max(80).optional(),
+  decididoPor: z.string().max(160).optional(),
+  decididoEm:  z.string().max(40).optional(),
+  motivo:      z.string().max(500).optional(),
 });
 
 const ParamsValueSchema = z.object({
@@ -153,6 +165,17 @@ export const ChClosePostSchema = z.object({
 });
 
 export const ChCloseMonthQuery = MonthStr; // reuso na validação do DELETE
+
+// ─── APROVAÇÃO DE EXCEDENTE (Hora Extra) ────────────────────────────────────
+
+// motivo é opcional ao aprovar, OBRIGATÓRIO ao rejeitar (ver refine abaixo) —
+// quem decide sempre precisa dizer por que rejeitou, quem aprova não precisa.
+export const ChApprovePostSchema = z.object({
+  person:  AnyMember,
+  entryId: z.string().min(1).max(80),
+  acao:    z.enum(['aprovar', 'rejeitar']),
+  motivo:  z.string().min(1).max(500).optional(),
+}).refine(d => d.acao !== 'rejeitar' || !!d.motivo?.trim(), 'motivo é obrigatório ao rejeitar');
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
