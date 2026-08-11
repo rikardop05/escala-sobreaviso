@@ -138,6 +138,7 @@ export default async function handler(req, res) {
         return res.status(403).json({ error: 'Forbidden' });
       }
 
+      const response = { ok: true };
       if (entries !== undefined) {
         const teamId = MEMBERS[target].teamId;
         const team = TEAMS[teamId];
@@ -153,10 +154,16 @@ export default async function handler(req, res) {
         // fantasma que o GET de api/ch-approve.js já descarta ao ler.
         await kvSet(`member:${target}:ch_entries`, finalEntries);
         await syncPendingQueue(teamId, target, finalEntries);
+        // Devolve a versão reclassificada: o cliente enviou uma Hora Extra sem
+        // saber se ela cai dentro/fora do sobreaviso (pode até virar N partes) —
+        // sem isto, a tela ficava mostrando o lançamento otimista (sem `status`,
+        // portanto tratado como aprovado pela regra de compatibilidade) até a
+        // próxima recarga da página.
+        response.entries = finalEntries;
       }
       if (params !== undefined) await kvSet(`member:${target}:ch_params`, params);
 
-      return res.status(200).json({ ok: true });
+      return res.status(200).json(response);
     }
 
     res.setHeader('Allow', 'GET, POST');
