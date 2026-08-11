@@ -53,7 +53,7 @@ api/
   _scheduleData.js          readTeamOverrides(teamId)/readTeamSubs(teamId) — leitura das mesmas chaves que api/schedule.js e api/substitutions.js usam, duplicada aqui de propósito (ver comentário no arquivo) para api/ch.js montar a escala e classificar Hora Extra sem tocar naqueles dois arquivos
   profile.js                GET/POST preferências do usuário (dark, filter, monthKey, teamView); memberId/teamId/adminOf/scheduleEditOf/role vêm da allowlist (somente-leitura)
   substitutions.js          GET/POST/DELETE substituições, escopadas por equipe (?team= / body.team; chave team:{team}:substitutions, leitura dupla só na sustentação); só adminCovers, scheduleEditOf não conta aqui
-  ch.js                     GET/POST lançamentos e parâmetros CH; acesso: a própria pessoa, ou admin da equipe dela (MEMBERS[pessoa].teamId). POST reclassifica Hora Extra no servidor (nunca confia no status que o cliente manda) e mantém o índice team:{teamId}:ch_pending — ver Aprovação de excedente
+  ch.js                     GET/POST lançamentos e parâmetros CH; acesso: a própria pessoa, ou admin da equipe dela (MEMBERS[pessoa].teamId). POST reclassifica Hora Extra no servidor (nunca confia no status que o cliente manda) — ver Aprovação de excedente. Só escreve chaves member:{id}:* — nenhuma chave compartilhada
   ch-approve.js             GET pendências das equipes em adminOf (self-heal do índice); POST { person, entryId, acao, motivo? } aprova/rejeita — admin da equipe da pessoa, motivo obrigatório ao rejeitar
   ch-close.js               Fechamento mensal do CH: GET fechamentos; POST fecha mês (recusa se já fechado OU se houver Hora Extra pendente); DELETE reabre — sempre admin da equipe da pessoa-alvo
   schedule.js               GET {overrides,labels} escopado por equipe (?team=, default sustentacao); POST exige team no body + scheduleCovers(adminOf, scheduleEditOf, team), carimba editedAt
@@ -552,14 +552,21 @@ divisão), `decididoPor`/`decididoEm`/`motivo` (preenchidos só na decisão — 
 aprovação, obrigatório na rejeição, reforçado por `.refine()` no `ChApprovePostSchema` em
 `api/_validate.js`).
 
-**Fila de pendências** — `team:{teamId}:ch_pending` (`[{ memberId, entryId }]`) existe só para o
-admin montar a tela de aprovação sem varrer as 19 chaves de membro; é um **índice derivado**, a
-entrada em `ch_entries` é a verdade. `api/ch-approve.js` (GET) descarta silenciosamente itens cujo
-lançamento não existe mais ou já não está `pendente`, e reescreve a fila limpa. Toda escrita
-(`api/ch.js` e `api/ch-approve.js`) grava a entrada **primeiro** e a fila **depois** — sem
-transação no Redis, então a ordem importa: uma falha no meio deixa no máximo uma referência
-obsoleta na fila, que a leitura auto-corrige; nunca o inverso (fila referenciando algo que não
-foi de fato salvo).
+**Fila de pendências — sem índice, derivada dos lançamentos.** `api/ch-approve.js` (GET) monta a
+fila varrendo os membros das equipes em `adminOf` (`pendenciasDaEquipe`) e filtrando `tipo ===
+'Hora Extra' && status === 'pendente'`. São 5 a 8 leituras por equipe, feitas em paralelo, numa
+ação de admin — barato.
+
+⚠ Existiu um índice `team:{teamId}:ch_pending` e ele foi **removido** por ser incorreto: era uma
+chave compartilhada com read-modify-write por pessoa, então duas gravações simultâneas de membros
+da mesma equipe apagavam pendências uma da outra em silêncio. A leitura só sabia **remover** itens
+obsoletos, nunca redescobrir os perdidos — o resultado era uma pendência invisível para o admin,
+que só apareceria ao tentar fechar o mês (`api/ch-close.js` sempre leu os lançamentos, não a
+fila). Não reintroduza esse índice: nesta escala ele economiza pouquíssimo e o custo é uma classe
+inteira de bug. Chaves `team:*:ch_pending` que sobraram no Redis são dados órfãos, sem leitor.
+
+Como consequência, **nenhum endpoint do CH escreve em chave compartilhada** — só em
+`member:{memberId}:*`, que apenas a própria pessoa ou o admin dela grava. Não há corrida possível.
 
 **`api/ch-approve.js`** — mesmo padrão de `api/ch-close.js`:
 - **GET**: pendências das equipes em `adminOf` do requisitante (`'*'` → todas; array → só essas).
@@ -650,7 +657,7 @@ Handler usa role para controle de acesso, memberId para isolar dados
 | `member:{memberId}:ch_entries` | `[{ id, person, tipo, data, inicio, fim, projeto, atividade, status?, origemId?, decididoPor?, decididoEm?, motivo? }]` — os 5 últimos campos só existem de fato em Hora Extra; `status` ausente = aprovado (legado) | Por membro |
 | `member:{memberId}:ch_params` | `{ [memberId]: { remuneracao, jornada } }` | Por membro |
 | `member:{memberId}:ch_closed` | `{ 'YYYY-MM': { closedAt, closedBy, params, totals, entries[] } }` | Por membro |
-| `team:{teamId}:ch_pending` | `[{ memberId, entryId }]` — índice da fila de Hora Extra pendente; derivado, a entrada em `ch_entries` é a verdade (ver Aprovação de excedente) | Compartilhado (por equipe) |
+| ~~`team:{teamId}:ch_pending`~~ | **Removida.** Era o índice da fila de Hora Extra pendente; a fila passou a ser derivada dos lançamentos (ver Aprovação de excedente). Chaves remanescentes no Redis são órfãs | — |
 | `team:{teamId}:substitutions` | `[{ id, titular, substituto, from, until }]` | Compartilhado (por equipe) |
 | `team:{teamId}:schedule_overrides` | `{ [dayKey]: { [idx]: { persons[]?|person?, period, time, editedAt } } }` (idx extra = turno novo; sem `dur` — derivado de `time` via `shiftDuration()`) | Compartilhado (por equipe) |
 | `team:{teamId}:schedule_labels` | `{ [dayKey]: string }` — rótulo do dia (ex.: "Feriado") | Compartilhado (por equipe) |

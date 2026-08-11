@@ -84,20 +84,6 @@ function reclassifyEntries(incomingEntries, storedEntries, schedule, subs, team,
   return result;
 }
 
-// Reescreve o índice da fila (team:{teamId}:ch_pending) para `target`: remove
-// tudo que já estava lá para essa pessoa e insere de novo a partir do array
-// FINAL de entries — não importa se um item pendente era novo, editado ou
-// deixou de existir (deletado): o resultado final é sempre a verdade.
-async function syncPendingQueue(teamId, target, finalEntries) {
-  const queueKey = `team:${teamId}:ch_pending`;
-  const queue = (await kvGet(queueKey)) ?? [];
-  const others = queue.filter(item => item.memberId !== target);
-  const mine = finalEntries
-    .filter(e => e.tipo === 'Hora Extra' && e.status === 'pendente')
-    .map(e => ({ memberId: target, entryId: e.id }));
-  await kvSet(queueKey, [...others, ...mine]);
-}
-
 export default async function handler(req, res) {
   let memberId, adminOf;
   try {
@@ -149,11 +135,11 @@ export default async function handler(req, res) {
         ]);
         const schedule = buildSchedule(team, overrides);
         const finalEntries = reclassifyEntries(entries, storedEntries, schedule, subs, team, target);
-        // Entrada primeiro, índice da fila depois (sem transação — ver comentário
-        // de syncPendingQueue): se o índice falhar, o pior caso é uma pendência
-        // fantasma que o GET de api/ch-approve.js já descarta ao ler.
+        // Não há índice de pendências a manter: api/ch-approve.js deriva a fila
+        // direto dos lançamentos de cada membro da equipe. Um índice compartilhado
+        // por equipe exigiria read-modify-write da mesma chave por N pessoas, e
+        // duas gravações simultâneas apagariam pendências uma da outra em silêncio.
         await kvSet(`member:${target}:ch_entries`, finalEntries);
-        await syncPendingQueue(teamId, target, finalEntries);
         // Devolve a versão reclassificada: o cliente enviou uma Hora Extra sem
         // saber se ela cai dentro/fora do sobreaviso (pode até virar N partes) —
         // sem isto, a tela ficava mostrando o lançamento otimista (sem `status`,

@@ -14,35 +14,27 @@ import { MEMBERS, TEAMS } from '../src/lib/teams.js';
 //          aprovar o próprio excedente).
 //   POST — { person, entryId, acao: 'aprovar'|'rejeitar', motivo? }
 //
-// Índice da fila: team:{teamId}:ch_pending → [{ memberId, entryId }]. É
-// derivado — a entrada em member:{memberId}:ch_entries é a verdade. O GET
-// descarta silenciosamente itens cujo lançamento não existe mais ou já não
-// está pendente (decidido ou excluído em outra requisição) e reescreve o
-// índice limpo — não há transação, então o índice pode ficar temporariamente
-// desatualizado, e este é o mecanismo que corrige isso.
+// NÃO existe índice de fila. A pendência é derivada dos próprios lançamentos,
+// varrendo os membros da equipe. Um índice compartilhado (team:{id}:ch_pending)
+// existiu e foi removido: ele exigia read-modify-write da MESMA chave por N
+// pessoas, então duas gravações simultâneas apagavam pendências uma da outra em
+// silêncio — e a leitura só sabia remover itens obsoletos, nunca redescobrir os
+// perdidos. O resultado seria uma pendência invisível para o admin, que só
+// apareceria ao tentar fechar o mês (api/ch-close.js lê os lançamentos, não a
+// fila). Equipes têm 5 a 8 pessoas: varrer custa uma leitura por membro e não
+// tem como divergir da verdade.
 
 const isPrivileged = (adminOf) => adminOf === '*' || (Array.isArray(adminOf) && adminOf.length > 0);
 
-async function loadAndCleanQueue(teamId) {
-  const key = `team:${teamId}:ch_pending`;
-  const queue = (await kvGet(key)) ?? [];
-  if (!queue.length) return [];
-
-  const memberIds = [...new Set(queue.map(item => item.memberId))];
-  const entriesByMember = new Map(
-    await Promise.all(memberIds.map(async (memberId) => [memberId, (await kvGet(`member:${memberId}:ch_entries`)) ?? []]))
-  );
-
-  const stillValid = [];
-  const pendencias = [];
-  for (const item of queue) {
-    const entry = (entriesByMember.get(item.memberId) || []).find(e => e.id === item.entryId);
-    if (!entry || entry.status !== 'pendente') continue; // descarta silenciosamente
-    stillValid.push(item);
-    pendencias.push({ person: item.memberId, teamId, entryId: item.entryId, data: entry.data, inicio: entry.inicio, fim: entry.fim });
-  }
-  if (stillValid.length !== queue.length) await kvSet(key, stillValid);
-  return pendencias;
+async function pendenciasDaEquipe(teamId) {
+  const membros = Object.keys(MEMBERS).filter(id => MEMBERS[id].teamId === teamId);
+  const porMembro = await Promise.all(membros.map(async (memberId) => {
+    const entries = (await kvGet(`member:${memberId}:ch_entries`)) ?? [];
+    return entries
+      .filter(e => e.tipo === 'Hora Extra' && e.status === 'pendente')
+      .map(e => ({ person: memberId, teamId, entryId: e.id, data: e.data, inicio: e.inicio, fim: e.fim }));
+  }));
+  return porMembro.flat();
 }
 
 export default async function handler(req, res) {
@@ -57,7 +49,7 @@ export default async function handler(req, res) {
   try {
     if (req.method === 'GET') {
       const teamIds = adminOf === '*' ? Object.keys(TEAMS) : adminOf.filter(id => TEAMS[id]);
-      const perTeam = await Promise.all(teamIds.map(loadAndCleanQueue));
+      const perTeam = await Promise.all(teamIds.map(pendenciasDaEquipe));
       const pendencias = perTeam.flat().sort((a, b) => a.data.localeCompare(b.data) || a.inicio.localeCompare(b.inicio));
       return res.status(200).json(pendencias);
     }
@@ -85,13 +77,9 @@ export default async function handler(req, res) {
       if (motivo) updated.motivo = motivo.trim();
       entries[idx] = updated;
 
-      // Entrada primeiro, índice depois — mesma ordem de api/ch.js (sem
-      // transação, a ordem é o que garante que o índice nunca aponte para uma
-      // decisão que na verdade não foi gravada).
+      // Gravar o lançamento é a única escrita: a pendência deixa de existir no
+      // momento em que `status` muda, porque a fila é derivada dele.
       await kvSet(entriesKey, entries);
-      const queueKey = `team:${teamId}:ch_pending`;
-      const queue = (await kvGet(queueKey)) ?? [];
-      await kvSet(queueKey, queue.filter(item => !(item.memberId === person && item.entryId === entryId)));
 
       return res.status(200).json({ ok: true, entry: updated });
     }
