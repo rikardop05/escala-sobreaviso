@@ -142,7 +142,12 @@ export default function ControleDeHoras({ dark, profile }) {
     try {
       const body = { entries: newEntries };
       if (isAdmin && person !== profile?.memberId) body.person = person;
-      await api('/api/ch', { method: 'POST', body });
+      const res = await api('/api/ch', { method: 'POST', body });
+      // O servidor pode reclassificar Hora Extra (aprovar/pender, dividir em N
+      // partes com ids novos) — sincroniza com a versão gravada em vez de manter
+      // o lançamento otimista enviado, que nunca tem `status` e por isso cairia
+      // na regra de compatibilidade "ausente = aprovado" indevidamente.
+      if (Array.isArray(res?.entries)) setEntries(res.entries);
       pendingEntries.current = null;
       flashSaved(setEntriesStatus, entriesTimer);
       return true;
