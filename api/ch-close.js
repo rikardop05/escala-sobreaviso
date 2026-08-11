@@ -12,7 +12,8 @@ import { MEMBERS } from '../src/lib/teams.js';
 // quem administra a EQUIPE da pessoa-alvo (adminOf cobre MEMBERS[target].teamId) —
 // não mais "qualquer admin".
 //   GET    — member lê os próprios fechamentos; admin da equipe lê de qualquer membro dela (?person=)
-//   POST   — admin da equipe fecha um mês; recusa se já fechado (reabrir primeiro)
+//   POST   — admin da equipe fecha um mês; recusa se já fechado (reabrir primeiro) OU se
+//            houver Hora Extra pendente de aprovação naquele mês (ver api/ch-approve.js)
 //   DELETE — admin da equipe reabre (?person=&month=)
 //
 // Os totais são calculados no cliente (a lógica da escala vive em src/lib/schedule.js;
@@ -67,6 +68,18 @@ export default async function handler(req, res) {
       const key = `member:${target}:ch_closed`;
       const closed = (await kvGet(key)) ?? {};
       if (closed[body.month]) return res.status(409).json({ error: 'Month already closed' });
+
+      // Fechar congela um número que ninguém mais discute; congelar com uma
+      // Hora Extra ainda pendente produz exatamente a dúvida que o fechamento
+      // deveria eliminar — recusa até que todo mundo tenha sido decidido.
+      const entries = (await kvGet(`member:${target}:ch_entries`)) ?? [];
+      const pendentes = entries.filter(e => e.tipo === 'Hora Extra' && e.status === 'pendente' && e.data.slice(0, 7) === body.month);
+      if (pendentes.length) {
+        return res.status(409).json({
+          error: 'Pending entries',
+          pendentes: pendentes.map(e => ({ id: e.id, data: e.data, inicio: e.inicio, fim: e.fim })),
+        });
+      }
 
       closed[body.month] = {
         ...body.snapshot,

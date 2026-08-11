@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, Fragment } from 'react';
 import { useApi } from '../lib/api';
 import { MONTHS, fmtHM, brl, buildSchedule } from '../lib/schedule';
-import { scheduleEntriesFor, monthTotals } from '../lib/chCalc';
+import { scheduleEntriesFor, monthTotals, isEntryCountable } from '../lib/chCalc';
 import { TEAMS, MEMBERS, chGroupsFor } from '../lib/teams';
 import { getTheme, DANGER, WARN } from '../lib/theme';
 import { Icon, friendlyError } from './ui';
@@ -102,8 +102,11 @@ export default function RelatorioConsolidado({ dark, profile, monthIdx, year }) 
           const { subs, overrides } = teamData[teamId];
           const schedule = buildSchedule(team, overrides);
           const scheduleEntries = scheduleEntriesFor(schedule, subs, person, monthIdx, year);
+          // Hora Extra pendente ou rejeitada não entra no relatório — mesma
+          // regra do painel individual (ver src/lib/chCalc.js, isEntryCountable).
           const manualEntries = (chData.entries || []).filter(e => {
             if (e.person !== person) return false;
+            if (!isEntryCountable(e)) return false;
             const d = new Date(e.data + "T12:00:00");
             return d.getMonth() === monthIdx && d.getFullYear() === year;
           });

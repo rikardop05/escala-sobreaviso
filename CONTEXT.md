@@ -98,6 +98,20 @@ _Avoid_: Plantão, standby, on-call
 Tipo de remuneração pago a 150% do valor da hora pelo tempo efetivamente trabalhado.
 _Avoid_: HE em texto de usuário, overtime
 
+**Excedente**:
+A parte de uma Hora Extra que cai fora do sobreaviso efetivo da pessoa na data — o
+intervalo lançado é comparado com a união dos turnos de sobreaviso dela (substituições
+aplicadas); o que cai dentro é aprovado automaticamente, o que sobra é excedente e fica
+pendente até um admin decidir. Um único lançamento pode ter partes dentro e partes fora
+ao mesmo tempo.
+_Avoid_: Estouro, extra do extra, hora fora da escala
+
+**Aprovação**:
+Decisão de quem administra a equipe sobre um excedente pendente: aprovar (conta no
+total) ou rejeitar (não conta, exige motivo). Congelada no momento em que é tomada — se
+a escala mudar depois, a decisão não é refeita.
+_Avoid_: Validação, revisão, autorização
+
 **Compensação**:
 Tipo de lançamento que abate valor da nota — tempo já compensado de outra forma. Usa o mesmo fator do sobreaviso.
 _Avoid_: Banco de horas, desconto
