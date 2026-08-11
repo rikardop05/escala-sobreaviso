@@ -109,13 +109,35 @@ function addDays(dateStr, n) {
   return dayKey(d);
 }
 
+// buildOnCallSegments não depende de pessoa nem de substituição (a filtragem por
+// pessoa acontece em saWindowsRelativeToDate, depois) — só de (schedule, dayStart).
+// api/ch.js chama splitHoraExtra uma vez por Hora Extra reclassificada num mesmo
+// POST, sempre com a MESMA referência de `schedule` (construída uma vez por
+// requisição); sem isto, um lote reconstruiria os ~1050 segmentos da vigência a
+// cada lançamento. WeakMap com `schedule` como chave — nunca vaza memória entre
+// requisições, já que a referência do array some com o fim de cada uma.
+const segmentsCache = new WeakMap();
+function cachedSegments(schedule, dayStart) {
+  let byDayStart = segmentsCache.get(schedule);
+  if (!byDayStart) {
+    byDayStart = new Map();
+    segmentsCache.set(schedule, byDayStart);
+  }
+  let segs = byDayStart.get(dayStart);
+  if (!segs) {
+    segs = buildOnCallSegments(schedule, dayStart);
+    byDayStart.set(dayStart, segs);
+  }
+  return segs;
+}
+
 // União (mesclada, ordenada) das janelas de sobreaviso EFETIVO de `person`, em
 // minutos relativos à meia-noite de `data` — pode ter valores negativos (turno
 // pernoite da véspera, ADR-0002) ou >= 1440 (turno que vira para o dia seguinte).
 // Usa buildOnCallSegments (que já resolve pernoite via dayStart) e getActiveSub
 // (substituição) — nunca reimplementa essas regras, só reaproveita.
 function saWindowsRelativeToDate(schedule, subs, dayStart, person, data) {
-  const segs = buildOnCallSegments(schedule, dayStart);
+  const segs = cachedSegments(schedule, dayStart);
   const anchorMs = new Date(`${data}T00:00:00`).getTime();
   const windows = [];
   for (const seg of segs) {

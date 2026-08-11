@@ -47,7 +47,11 @@ function reclassifyEntries(incomingEntries, storedEntries, schedule, subs, team,
   for (const e of incomingEntries) {
     if (e.tipo !== 'Hora Extra') {
       const { status, origemId, decididoPor, decididoEm, motivo, ...clean } = e;
-      result.push(clean);
+      // person é sempre o target da chave member:{target}:ch_entries em que isto
+      // está sendo gravado — nunca o que o cliente mandou. Um person divergente
+      // não vaza dado (a chave já isola por pessoa), mas faz a linha sumir da
+      // tela sem sumir do banco: o filtro do mês compara e.person === person.
+      result.push({ ...clean, person: target });
       continue;
     }
     const stored = storedById.get(e.id);
@@ -56,6 +60,7 @@ function reclassifyEntries(incomingEntries, storedEntries, schedule, subs, team,
     if (unchanged) {
       result.push({
         ...e,
+        person: target,
         status: stored.status,
         origemId: stored.origemId,
         decididoPor: stored.decididoPor,
@@ -126,7 +131,11 @@ export default async function handler(req, res) {
 
       const response = { ok: true };
       if (entries !== undefined) {
-        const teamId = MEMBERS[target].teamId;
+        // memberId da allowlist sem par em MEMBERS (src/lib/teams.js) — a allowlist
+        // é editada à mão e o typo mais provável é justamente ao cadastrar alguém
+        // novo; sem esta guarda o acesso abaixo estoura e vira 500 genérico.
+        const teamId = MEMBERS[target]?.teamId;
+        if (!teamId) return res.status(400).json({ error: 'Bad request' });
         const team = TEAMS[teamId];
         const [storedEntries, overrides, subs] = await Promise.all([
           kvGet(`member:${target}:ch_entries`).then(v => v ?? []),

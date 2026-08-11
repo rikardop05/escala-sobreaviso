@@ -62,6 +62,7 @@ api/
 scripts/
   restore-backup.mjs        Restauração de um dump para o Redis (dry-run por padrão; --commit aplica)
   migrate-team-keys.mjs     One-shot da Fase 0 multi-equipe: copia schedule_overrides/schedule_labels/substitutions → team:sustentacao:* (dry-run por padrão; --commit aplica; não sobrescreve destino existente)
+  verify-aprovacao.mjs      Verificação da aprovação de excedente (splitHoraExtra/isEntryCountable): os exemplos do aceite, o caso de pernoite, a invariante de soma/contiguidade sobre 500 intervalos determinísticos e a substituição — Node puro, sem Redis; `node scripts/verify-aprovacao.mjs`, sai 0 se passar
 
 _arquivo/planejamento/db/
   schema.sql                Schema PostgreSQL — planejamento; desatualizado vs. estado atual (ver Migração futura)
