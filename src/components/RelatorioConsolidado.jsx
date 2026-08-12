@@ -3,8 +3,8 @@ import { useApi } from '../lib/api';
 import { MONTHS, fmtHM, brl, buildSchedule } from '../lib/schedule';
 import { scheduleEntriesFor, monthTotals, isEntryCountable } from '../lib/chCalc';
 import { TEAMS, MEMBERS, chGroupsFor } from '../lib/teams';
-import { getTheme, DANGER, WARN } from '../lib/theme';
-import { Icon, friendlyError } from './ui';
+import { getTheme, memberTone } from '../lib/theme';
+import { Icon, Badge, Button, Panel, SectionLabel, friendlyError } from './ui';
 
 // Relatório consolidado do Controle de Horas (admin) — uma linha por pessoa das
 // equipes em profile.adminOf, agrupada por equipe: o insumo que o admin usa para
@@ -19,6 +19,15 @@ import { Icon, friendlyError } from './ui';
 // aqui. As planilhas que a equipe usa hoje descontam HE/Comp do SA antes de multiplicar
 // por 1/3; os valores deste relatório são por isso MAIORES que os da planilha — decisão
 // conhecida (ver nota fixa na tela e no CSV), não é bug.
+//
+// Registro visual: esta é a tela de fechamento financeiro, o caso mais forte do
+// registro de console (PRODUCT.md — régua Grafana/Datadog). Por isso: numeral
+// tabular + fonte mono em TODA célula de hora ou dinheiro, colunas numéricas
+// alinhadas à direita, hairline de 1px separando as linhas (nunca card por
+// pessoa), cabeçalho de grupo calmo por equipe e linha de total visualmente mais
+// pesada. Nenhuma cor hardcoded — os avisos usam os tokens semânticos do tema
+// (antes a nota de fórmula tinha #FEF9C3 fixo, um amarelo de tema claro que era
+// renderizado também no escuro).
 
 function monthKeyOf(monthIdx, year) {
   return `${year}-${String(monthIdx + 1).padStart(2, '0')}`;
@@ -216,58 +225,79 @@ export default function RelatorioConsolidado({ dark, profile, monthIdx, year }) 
     URL.revokeObjectURL(url);
   };
 
+  // Input e células — tokens do sistema; raio de controle (5px), nunca 0.5rem solto.
   const inputStyle = {
     background: T.inputBg, color: T.textPrimary,
     border: `1px solid ${T.inputBorder}`,
-    borderRadius: "0.5rem", padding: "0.5rem 0.6rem", minHeight: "2.5rem",
-    fontSize: "0.875rem",
+    borderRadius: T.rControl, padding: "0.5rem 0.6rem", minHeight: "2.5rem",
+    fontSize: "0.85rem",
   };
-  const thStyle = { textAlign: "right", fontSize: "0.68rem", fontWeight: 600, color: T.labelColor, padding: "0.5rem 0.6rem", whiteSpace: "nowrap" };
+  const thStyle = {
+    textAlign: "right", fontSize: "0.66rem", fontWeight: 700, letterSpacing: "0.05em",
+    textTransform: "uppercase", color: T.textMuted, padding: "0.5rem 0.6rem", whiteSpace: "nowrap",
+  };
   const thStyleLeft = { ...thStyle, textAlign: "left" };
-  const tdNum = { textAlign: "right", padding: "0.45rem 0.6rem", whiteSpace: "nowrap", fontFamily: "monospace" };
+  // Toda célula numérica: mono + tabular-nums (className="tnum"). Sem largura fixa
+  // de dígito uma coluna de valores não alinha e o olho perde a comparação.
+  const tdNum = {
+    textAlign: "right", padding: "0.4rem 0.6rem", whiteSpace: "nowrap",
+    fontFamily: T.fontMono, fontSize: "0.8rem", color: T.textSecondary,
+  };
+  const tdNumTotal = { ...tdNum, fontWeight: 700, color: T.textPrimary };
+
+  const emptyStateStyle = {
+    background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rPanel,
+    color: T.textMuted, padding: "1.5rem", textAlign: "center", fontSize: "0.85rem",
+    marginBottom: "1rem",
+  };
 
   return (
     <div>
-      {/* NOTA DE FÓRMULA — fixa, não removível (insumo de pagamento, precisa estar sempre visível) */}
-      <div role="note" className="rounded-2xl p-4 mb-4 flex items-start gap-2.5" style={{ background: dark ? "rgba(245,158,11,0.1)" : "#FEF9C3", border: `1px solid ${WARN}` }}>
-        <Icon name="alert" size={16} style={{ color: WARN, flexShrink: 0, marginTop: '0.1rem' }} />
-        <div className="text-sm" style={{ color: T.textPrimary }}>
-          <b>{FORMULA_NOTE}</b>
-          <div className="text-xs mt-1" style={{ color: T.textSecondary }}>{FORMULA_NOTE_2}</div>
+      {/* NOTA DE FÓRMULA — fixa, não removível (insumo de pagamento, precisa estar
+          sempre visível). Tokens semânticos de aviso, um em cada tema. */}
+      <div role="note" className="flex items-start gap-2.5 mb-4"
+        style={{ background: T.warnQuiet, border: `1px solid ${T.warnBorder}`, borderRadius: T.rPanel, padding: "0.7rem 0.85rem" }}>
+        <Icon name="alert" size={15} style={{ color: T.warn, flexShrink: 0, marginTop: '0.15rem' }} />
+        <div style={{ fontSize: "0.82rem", lineHeight: 1.5 }}>
+          <b style={{ color: T.textPrimary }}>{FORMULA_NOTE}</b>
+          <div style={{ fontSize: "0.76rem", marginTop: "0.2rem", color: T.textSecondary }}>{FORMULA_NOTE_2}</div>
         </div>
       </div>
 
       {error && (
-        <p role="alert" className="flex items-center gap-1.5 text-sm font-semibold mb-3" style={{ color: DANGER }}>
+        <p role="alert" className="flex items-center gap-1.5 mb-3" style={{ color: T.danger, fontSize: "0.82rem", fontWeight: 600 }}>
           <Icon name="alert" size={14} /> {error}
         </p>
       )}
 
       {loading ? (
-        <div role="status" className="rounded-2xl p-6 mb-4 text-center text-sm" style={{ background: T.cardBg, border: `1px solid ${T.cardBorder}`, color: T.textMuted }}>
+        <div role="status" style={emptyStateStyle}>
           Carregando o relatório de {MONTHS[monthIdx]} de {year}…
         </div>
       ) : groups.length === 0 ? (
-        <div className="rounded-2xl p-6 mb-4 text-center text-sm" style={{ background: T.cardBg, border: `1px solid ${T.cardBorder}`, color: T.textMuted }}>
+        <div style={emptyStateStyle}>
           Você não administra nenhuma equipe.
         </div>
       ) : (
-        <section className="rounded-2xl overflow-hidden mb-4" style={{ border: `1px solid ${T.cardBorder}` }}>
-          <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2" style={{ background: T.cardBg, borderBottom: `1px solid ${T.cardBorder}` }}>
-            <h2 className="text-sm font-semibold" style={{ color: T.textSecondary }}>
-              {MONTHS[monthIdx]} de {year} · {rows.length} pessoa{rows.length !== 1 ? "s" : ""}
+        // Painel: borda, sem sombra (regra de elevação do sistema).
+        <div className="mb-4" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rPanel, overflow: "hidden" }}>
+          <div className="flex items-center justify-between flex-wrap gap-2"
+            style={{ padding: "0.7rem 0.8rem", borderBottom: `1px solid ${T.border}` }}>
+            <h2 style={{ fontSize: "0.9rem", fontWeight: 700, color: T.textPrimary, margin: 0, letterSpacing: "-0.01em" }}>
+              {MONTHS[monthIdx]} de {year}
+              <span style={{ fontWeight: 400, color: T.textMuted }}>
+                {' · '}<span className="tnum">{rows.length}</span> pessoa{rows.length !== 1 ? "s" : ""}
+              </span>
             </h2>
-            <button onClick={exportCSV} disabled={rows.length === 0}
-              className="inline-flex items-center gap-2"
-              style={{ background: rows.length > 0 ? T.exportBg : T.cardBorder, color: rows.length > 0 ? "#fff" : T.textMuted, border: "none", borderRadius: "0.5rem", padding: "0.5rem 0.9rem", minHeight: "2.75rem", fontWeight: "700", fontSize: "0.8rem", cursor: rows.length > 0 ? "pointer" : "not-allowed" }}>
+            <Button T={T} size="sm" variant="secondary" onClick={exportCSV} disabled={rows.length === 0}>
               <Icon name="download" size={14} /> Exportar CSV
-            </button>
+            </Button>
           </div>
 
-          <div style={{ background: T.cardBg, overflowX: "auto" }}>
-            <table className="w-full text-sm" style={{ borderCollapse: "collapse", minWidth: "760px" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table className="w-full" style={{ borderCollapse: "collapse", minWidth: "760px", fontSize: "0.82rem" }}>
               <thead>
-                <tr style={{ borderBottom: `1px solid ${T.divider}` }}>
+                <tr style={{ background: T.surfaceSunken, borderBottom: `1px solid ${T.border}` }}>
                   <th style={thStyleLeft} scope="col">Colaborador</th>
                   <th style={thStyle} scope="col">Horas SA</th>
                   <th style={thStyle} scope="col">Valor SA</th>
@@ -283,29 +313,33 @@ export default function RelatorioConsolidado({ dark, profile, monthIdx, year }) 
                   if (!teamRows.length) return null;
                   return (
                     <Fragment key={g.teamId}>
-                      <tr style={{ background: dark ? "rgba(148,163,184,0.08)" : "#F1F5F9" }}>
-                        <td colSpan={7} style={{ padding: "0.4rem 0.6rem", fontSize: "0.72rem", fontWeight: 700, color: T.labelColor, letterSpacing: "0.02em", textTransform: "uppercase" }}>
+                      {/* Cabeçalho de grupo: uma faixa calma por equipe, não uma
+                          coluna repetida em toda linha. */}
+                      <tr style={{ background: T.surfaceAlt, borderTop: `1px solid ${T.borderStrong}` }}>
+                        <td colSpan={7} style={{ padding: "0.35rem 0.6rem", fontSize: "0.66rem", fontWeight: 700, color: T.textSecondary, letterSpacing: "0.06em", textTransform: "uppercase" }}>
                           {g.nome}
                         </td>
                       </tr>
                       {teamRows.map(r => {
                         const fullName = MEMBERS[r.person]?.fullName || r.person;
+                        const tone = memberTone(r.person, dark);
                         return (
-                          <tr key={r.person} style={{ borderTop: `1px solid ${T.divider}` }}>
-                            <td style={{ padding: "0.45rem 0.6rem" }}>
-                              <span style={{ color: T.textPrimary, fontWeight: 600 }}>{fullName}</span>
-                              {r.closed && (
-                                <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-bold rounded-full px-2 py-0.5" style={{ background: "rgba(34,197,94,0.15)", color: "#22C55E" }}>
-                                  <Icon name="check" size={10} /> mês fechado
-                                </span>
-                              )}
+                          <tr key={r.person} style={{ borderTop: `1px solid ${T.border}` }}>
+                            <td style={{ padding: "0.4rem 0.6rem" }}>
+                              <span className="inline-flex items-center gap-2 flex-wrap">
+                                {/* Cor por pessoa (PRODUCT.md: intocável) — matiz em
+                                    OKLCH com lightness fixa, contraste uniforme. */}
+                                <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, background: tone.dot }} />
+                                <span style={{ color: T.textPrimary, fontWeight: 600 }}>{fullName}</span>
+                                {r.closed && <Badge T={T} tone="info" icon="check">mês fechado</Badge>}
+                              </span>
                             </td>
-                            <td style={tdNum}>{fmtHM(r.horasSA)}</td>
-                            <td style={tdNum}>{brl(r.valorSA)}</td>
-                            <td style={tdNum}>{fmtHM(r.horasHE)}</td>
-                            <td style={tdNum}>{brl(r.valorHE)}</td>
-                            <td style={{ ...tdNum, color: r.valorComp > 0 ? DANGER : T.textPrimary }}>{r.valorComp > 0 ? `− ${brl(r.valorComp)}` : brl(0)}</td>
-                            <td style={{ ...tdNum, fontWeight: 700, color: T.textPrimary }}>{brl(r.valorTotal)}</td>
+                            <td className="tnum" style={tdNum}>{fmtHM(r.horasSA)}</td>
+                            <td className="tnum" style={tdNum}>{brl(r.valorSA)}</td>
+                            <td className="tnum" style={tdNum}>{fmtHM(r.horasHE)}</td>
+                            <td className="tnum" style={tdNum}>{brl(r.valorHE)}</td>
+                            <td className="tnum" style={{ ...tdNum, color: r.valorComp > 0 ? T.danger : T.textMuted }}>{r.valorComp > 0 ? `− ${brl(r.valorComp)}` : brl(0)}</td>
+                            <td className="tnum" style={tdNumTotal}>{brl(r.valorTotal)}</td>
                           </tr>
                         );
                       })}
@@ -314,40 +348,44 @@ export default function RelatorioConsolidado({ dark, profile, monthIdx, year }) 
                 })}
               </tbody>
               <tfoot>
-                <tr style={{ borderTop: `2px solid ${T.cardBorder}`, background: dark ? "rgba(148,163,184,0.06)" : "#F8FAFC" }}>
+                {/* Linha de total: mais peso (borda superior de 2px e fundo próprio) —
+                    é o número que vai para a folha. */}
+                <tr style={{ borderTop: `2px solid ${T.borderStrong}`, background: T.surfaceAlt }}>
                   <td style={{ padding: "0.55rem 0.6rem", fontWeight: 700, color: T.textPrimary }}>Total geral</td>
-                  <td style={{ ...tdNum, fontWeight: 700 }}>{fmtHM(grandTotals.horasSA)}</td>
-                  <td style={{ ...tdNum, fontWeight: 700 }}>{brl(grandTotals.valorSA)}</td>
-                  <td style={{ ...tdNum, fontWeight: 700 }}>{fmtHM(grandTotals.horasHE)}</td>
-                  <td style={{ ...tdNum, fontWeight: 700 }}>{brl(grandTotals.valorHE)}</td>
-                  <td style={{ ...tdNum, fontWeight: 700, color: grandTotals.valorComp > 0 ? DANGER : T.textPrimary }}>{grandTotals.valorComp > 0 ? `− ${brl(grandTotals.valorComp)}` : brl(0)}</td>
-                  <td style={{ ...tdNum, fontWeight: 700, color: T.textPrimary }}>{brl(grandTotals.valorTotal)}</td>
+                  <td className="tnum" style={tdNumTotal}>{fmtHM(grandTotals.horasSA)}</td>
+                  <td className="tnum" style={tdNumTotal}>{brl(grandTotals.valorSA)}</td>
+                  <td className="tnum" style={tdNumTotal}>{fmtHM(grandTotals.horasHE)}</td>
+                  <td className="tnum" style={tdNumTotal}>{brl(grandTotals.valorHE)}</td>
+                  <td className="tnum" style={{ ...tdNumTotal, color: grandTotals.valorComp > 0 ? T.danger : T.textPrimary }}>{grandTotals.valorComp > 0 ? `− ${brl(grandTotals.valorComp)}` : brl(0)}</td>
+                  <td className="tnum" style={tdNumTotal}>{brl(grandTotals.valorTotal)}</td>
                 </tr>
               </tfoot>
             </table>
           </div>
-        </section>
+        </div>
       )}
 
-      {/* AJUSTES MANUAIS */}
-      <section className="rounded-2xl p-4" style={{ background: T.cardBg, border: `1px solid ${T.cardBorder}` }}>
-        <h2 className="text-sm font-semibold mb-1" style={{ color: T.textSecondary }}>Ajustes manuais</h2>
-        <p className="text-xs mb-3" style={{ color: T.textMuted }}>
+      {/* AJUSTES MANUAIS — não persistidos, e a tela diz isso. */}
+      <Panel T={T} style={{ padding: "0.85rem" }}>
+        <SectionLabel T={T}>Ajustes manuais</SectionLabel>
+        <p style={{ fontSize: "0.76rem", color: T.textMuted, margin: "0.35rem 0 0.75rem", lineHeight: 1.55 }}>
           Valores que não vêm de nenhum dado do app (ex.: diferença de reajuste). Somam ao total geral abaixo.
-          <b> Não são salvos</b> — anote antes de trocar de mês ou sair da tela.
+          <b style={{ color: T.warn }}> Não são salvos</b> — anote antes de trocar de mês ou sair da tela.
         </p>
 
         {adjustments.length > 0 && (
           <div className="mb-3">
             {adjustments.map(j => (
-              <div key={j.id} className="flex items-center justify-between py-1.5" style={{ borderTop: `1px solid ${T.divider}` }}>
-                <span className="text-sm" style={{ color: T.textPrimary }}>{j.desc}</span>
+              <div key={j.id} className="flex items-center justify-between gap-2"
+                style={{ borderTop: `1px solid ${T.border}`, padding: "0.35rem 0" }}>
+                <span style={{ fontSize: "0.82rem", color: T.textPrimary }}>{j.desc}</span>
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-mono font-bold" style={{ color: j.valor < 0 ? DANGER : T.textPrimary }}>{brl(j.valor)}</span>
-                  <button onClick={() => removeAdjustment(j.id)} aria-label={`Remover ajuste: ${j.desc}`}
-                    style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, display: "inline-flex", alignItems: "center", justifyContent: "center", width: "2.25rem", height: "2.25rem", borderRadius: "0.4rem" }}>
-                    <Icon name="x" size={13} />
-                  </button>
+                  <span className="tnum" style={{ fontFamily: T.fontMono, fontSize: "0.82rem", fontWeight: 700, color: j.valor < 0 ? T.danger : T.textPrimary }}>{brl(j.valor)}</span>
+                  <Button T={T} size="sm" variant="quiet" onClick={() => removeAdjustment(j.id)}
+                    aria-label={`Remover ajuste: ${j.desc}`}
+                    style={{ width: "2.25rem", minHeight: "2.25rem", padding: 0 }}>
+                    <Icon name="x" size={14} />
+                  </Button>
                 </div>
               </div>
             ))}
@@ -363,24 +401,26 @@ export default function RelatorioConsolidado({ dark, profile, monthIdx, year }) 
             <input type="number" value={adjForm.valor} onChange={e => setAdjForm(f => ({ ...f, valor: e.target.value }))}
               placeholder="Valor (R$)" style={{ ...inputStyle, width: "9rem" }} />
           </div>
-          <button type="button" onClick={addAdjustment}
-            className="inline-flex items-center gap-1.5"
-            style={{ background: T.saveBg, color: T.saveColor, border: "none", borderRadius: "0.5rem", padding: "0.5rem 0.9rem", minHeight: "2.5rem", fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}>
+          <Button T={T} variant="primary" onClick={addAdjustment}>
             <Icon name="plus" size={13} /> Adicionar
-          </button>
+          </Button>
         </div>
 
-        <div className="mt-3 pt-3 flex items-center justify-between flex-wrap gap-2" style={{ borderTop: `1px solid ${T.cardBorder}` }}>
-          <span className="text-sm" style={{ color: T.labelColor }}>
-            Total geral: <b style={{ color: T.textPrimary }}>{brl(grandTotals.valorTotal)}</b>
-            {adjustments.length > 0 && <> · Ajustes: <b style={{ color: T.textPrimary }}>{brl(adjustmentsTotal)}</b></>}
+        <div className="mt-3 pt-3 flex items-end justify-between flex-wrap gap-3" style={{ borderTop: `1px solid ${T.border}` }}>
+          <span style={{ fontSize: "0.8rem", color: T.textMuted }}>
+            Total geral: <b className="tnum" style={{ fontFamily: T.fontMono, color: T.textPrimary }}>{brl(grandTotals.valorTotal)}</b>
+            {adjustments.length > 0 && <> · Ajustes: <b className="tnum" style={{ fontFamily: T.fontMono, color: T.textPrimary }}>{brl(adjustmentsTotal)}</b></>}
           </span>
           <div className="text-right">
-            <div className="text-xs" style={{ color: T.labelColor }}>Total geral com ajustes</div>
-            <div className="text-2xl font-bold" style={{ color: T.textPrimary }}>{brl(grandTotalWithAdjustments)}</div>
+            <div style={{ fontSize: "0.7rem", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: T.textMuted }}>
+              Total geral com ajustes
+            </div>
+            <div className="tnum" style={{ fontFamily: T.fontMono, fontSize: "1.5rem", fontWeight: 700, letterSpacing: "-0.01em", color: T.textPrimary, lineHeight: 1.2 }}>
+              {brl(grandTotalWithAdjustments)}
+            </div>
           </div>
         </div>
-      </section>
+      </Panel>
     </div>
   );
 }

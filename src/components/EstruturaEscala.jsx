@@ -1,18 +1,29 @@
 import { useMemo, useState } from 'react';
 import {
-  PEOPLE, WEEKDAY_SHIFTS, WEEKEND_ROSTER, WEEKEND_CHANGE, MS_DAY,
+  WEEKDAY_SHIFTS, WEEKEND_ROSTER, WEEKEND_CHANGE, MS_DAY,
   weekendAssignment, shiftPeople, blocosAtivos, dayKey, parseTimeRange, shiftDuration,
 } from '../lib/schedule';
 import { TEAMS } from '../lib/teams';
-import { getTheme } from '../lib/theme';
-import { Icon } from './ui';
+import { getTheme, memberTone } from '../lib/theme';
+import { Icon, Panel, Segmented, SegmentedItem } from './ui';
 
-// Pilha visual de uma pessoa numa célula da tabela (mesmo visual dos badges do app).
-function Pessoa({ name, T }) {
-  const p = PEOPLE[name] || { color: '#64748B', bg: '#E2E8F0' };
+// Chip de pessoa numa célula da tabela — mesmo desenho do PersonTag da aba Escala
+// (rChip, tinta/tint da própria pessoa, ponto de 6px). A cor vem de
+// memberTone(name, dark), não mais do par { color, bg } de PEOPLE: aqueles valores
+// eram Material 2014 desenhados para fundo claro e falhavam contraste no tema
+// escuro. memberTone fixa a lightness por tema, então as 19 pessoas têm o mesmo
+// contraste contra a mesma superfície.
+function Pessoa({ name, T, dark }) {
+  const tone = memberTone(name, dark);
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-sm font-bold" style={{ color: p.color, background: p.bg }}>
-      <span className="w-2 h-2 rounded-full" style={{ background: p.color, flexShrink: 0 }} />
+    <span
+      className="inline-flex items-center gap-1.5"
+      style={{
+        color: tone.ink, background: tone.tint, fontWeight: 600, fontSize: '0.8rem',
+        borderRadius: T.rChip, padding: '0.1rem 0.4rem',
+      }}
+    >
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: tone.dot, flexShrink: 0 }} />
       {name}
     </span>
   );
@@ -38,6 +49,14 @@ const WEEKDAY_DISPLAY_OVERRIDES = {
   1: { 0: 'Alice' }, // Segunda · Madrugada
   4: { 1: 'Alice' }, // Quinta · Manhã
 };
+
+// Horários das estações do fim de semana, no cabeçalho da tabela da escada.
+const WEEKEND_COLS = [
+  { key: 'sabDia',   label: 'Sáb Dia',   time: '23:00–11:00' },
+  { key: 'sabNoite', label: 'Sáb Noite', time: '11:00–23:00' },
+  { key: 'domDia',   label: 'Dom Dia',   time: '23:00–11:00' },
+  { key: 'domNoite', label: 'Dom Noite', time: '11:00–23:00' },
+];
 
 const fmtMin = (m) => `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
@@ -123,158 +142,237 @@ export default function EstruturaEscala({ dark, profile }) {
     });
   }, [team, hojeStr]);
 
-  const th = { textAlign: 'left', fontSize: '0.72rem', fontWeight: 700, color: T.labelColor, padding: '0.6rem 0.75rem', whiteSpace: 'nowrap', borderBottom: `1px solid ${T.cardBorder}` };
-  const td = { padding: '0.55rem 0.75rem', borderTop: `1px solid ${T.divider}`, whiteSpace: 'nowrap' };
-  const cardStyle = { background: T.cardBg, border: `1px solid ${T.cardBorder}`, borderRadius: '1rem', overflow: 'hidden' };
+  // ─── Estilos de tabela ─────────────────────────────────────────────────────
+  // Esta tela é referência somente-leitura: tabelas de verdade, com hairline de 1px
+  // separando linhas, altura de linha contida, cabeçalho calmo em caixa alta e
+  // numeral tabular + mono em todo horário e duração (índices e horas alinham
+  // coluna a coluna). Nada de cards flutuantes nem sombra — painel tem borda.
+  const th = {
+    textAlign: 'left', fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.06em',
+    textTransform: 'uppercase', color: T.textMuted, padding: '0.5rem 0.7rem',
+    whiteSpace: 'nowrap', background: T.surfaceAlt, borderBottom: `1px solid ${T.border}`,
+  };
+  const thNum = { ...th, textAlign: 'right' };
+  const td = { padding: '0.4rem 0.7rem', whiteSpace: 'nowrap', fontSize: '0.82rem', verticalAlign: 'middle' };
+  const tdMono = { ...td, fontFamily: T.fontMono, fontSize: '0.76rem', color: T.textMuted };
+  const tdNum = { ...tdMono, textAlign: 'right' };
+  const rowLabel = { ...td, textAlign: 'left', fontWeight: 600, color: T.textPrimary };
+  const tableStyle = { width: '100%', borderCollapse: 'collapse' };
+  const sectionH2 = {
+    fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+    color: T.textMuted, margin: '0 0 0.4rem',
+  };
+  const noteStyle = { fontSize: '0.75rem', color: T.textMuted, margin: '0.5rem 0 0', lineHeight: 1.55 };
+  const hair = `1px solid ${T.border}`;
 
   const changeStr = `${String(WEEKEND_CHANGE.getDate()).padStart(2, '0')}/${String(WEEKEND_CHANGE.getMonth() + 1).padStart(2, '0')}/${WEEKEND_CHANGE.getFullYear()}`;
 
   return (
-    <div style={{ minHeight: '100vh', background: T.pageBg, fontFamily: "'Segoe UI',system-ui,sans-serif", color: T.textPrimary, transition: 'background 0.2s,color 0.2s' }}>
-      <div className="max-w-3xl mx-auto px-4 py-6">
+    <div style={{ minHeight: '100vh', background: T.pageBg, fontFamily: T.fontSans, color: T.textPrimary, transition: 'background 0.2s,color 0.2s' }}>
+      <div className="mx-auto px-3 sm:px-4 py-4" style={{ maxWidth: '1100px' }}>
 
-        {/* CABEÇALHO */}
-        <header className="rounded-2xl p-5 mb-5 text-white" style={{ background: T.headerGrad }}>
-          <h1 className="text-sm font-semibold opacity-80 mb-1" style={{ letterSpacing: '0.01em' }}>Estrutura da Escala</h1>
-          <div className="text-2xl font-bold">{team ? team.nome : 'Semana e fim de semana'}</div>
-          <div className="text-sm opacity-80 mt-1">Visão da estrutura vigente do rodízio · somente leitura</div>
-        </header>
-
-        {/* SELETOR DE EQUIPE — só as que a pessoa administra */}
+        {/* BARRA DE FERRAMENTAS — seletor de equipe (só as que a pessoa administra).
+            Era uma fileira de pílulas; agora é o controle segmentado do sistema. */}
         {allowed.length > 1 && (
-          <section className="mb-5" aria-label="Seletor de equipe">
-            <div className="flex flex-wrap gap-2">
-              {allowed.map(id => (
-                <button key={id} onClick={() => setSelectedTeamId(id)} aria-pressed={teamId === id}
-                  className="px-3.5 rounded-full text-sm font-bold transition-all"
-                  style={{ minHeight: '2.5rem', background: teamId === id ? T.filterAllBg : T.filterDefBg, color: teamId === id ? T.filterAllColor : T.filterDefColor, border: `1.5px solid ${teamId === id ? T.filterAllBorder : T.filterDefBorder}` }}>
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <Segmented T={T} role="group" aria-label="Equipe">
+              {allowed.map((id, i) => (
+                <SegmentedItem key={id} T={T} first={i === 0}
+                  active={teamId === id} onClick={() => setSelectedTeamId(id)}>
                   {TEAMS[id].nome}
-                </button>
+                </SegmentedItem>
               ))}
-            </div>
-          </section>
+            </Segmented>
+          </div>
         )}
 
-        <p className="flex items-start gap-1.5 text-xs mb-5" style={{ color: T.textMuted }}>
-          <Icon name="alert" size={13} style={{ flexShrink: 0, marginTop: '0.1rem' }} />
+        {/* TÍTULO — sem bloco colorido e sem eyebrow: o nome da equipe é o título,
+            e a natureza da tela vem na linha secundária (e na aba, em App.jsx). */}
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-2">
+          <h1 style={{ fontSize: '1.15rem', fontWeight: 700, letterSpacing: '-0.01em', color: T.textPrimary, margin: 0 }}>
+            {team ? team.nome : 'Semana e fim de semana'}
+          </h1>
+          <span style={{ fontSize: '0.78rem', color: T.textMuted }}>
+            Visão da estrutura vigente do rodízio · somente leitura
+          </span>
+        </div>
+
+        <p className="flex items-start gap-1.5" style={{ fontSize: '0.76rem', color: T.textMuted, lineHeight: 1.55, margin: '0 0 1rem' }}>
+          <Icon name="alert" size={13} style={{ flexShrink: 0, marginTop: '0.2rem' }} />
           <span>Esta tela mostra a <b style={{ color: T.textSecondary }}>estrutura base</b> do rodízio. Trocas eventuais, feriados e ajustes de um dia específico continuam na aba <b style={{ color: T.textSecondary }}>Escala</b>. A edição da estrutura aqui chega numa próxima etapa.</span>
         </p>
 
         {!team ? (
-          <div className="rounded-xl p-6 text-center text-sm" style={{ background: T.cardBg, border: `1px solid ${T.cardBorder}`, color: T.textMuted }}>
-            Nenhuma equipe disponível.
-          </div>
+          <Panel T={T} style={{ padding: '2rem 1rem', textAlign: 'center' }}>
+            <p style={{ fontSize: '0.85rem', color: T.textMuted, margin: 0 }}>Nenhuma equipe disponível.</p>
+          </Panel>
         ) : teamId === 'sustentacao' ? (
           <>
             {/* SEMANA */}
-            <section className="mb-6">
-              <h2 className="text-sm font-semibold mb-2" style={{ color: T.textSecondary }}>Semana (seg – sex)</h2>
-              <div style={cardStyle}>
+            <section className="mb-5">
+              <h2 style={sectionH2}>Semana (seg – sex)</h2>
+              <Panel T={T} style={{ overflow: 'hidden' }}>
                 <div style={{ overflowX: 'auto' }}>
-                  <table className="w-full" style={{ borderCollapse: 'collapse', minWidth: '560px' }}>
+                  <table style={{ ...tableStyle, minWidth: '720px' }}>
                     <thead>
                       <tr>
                         <th style={th} scope="col">Turno</th>
+                        <th style={th} scope="col">Horário</th>
+                        <th style={thNum} scope="col">Duração</th>
                         {WEEKDAY_COLS.map(c => <th key={c.dow} style={th} scope="col">{c.label}</th>)}
                       </tr>
                     </thead>
                     <tbody>
-                      {weekdayRows.map((row, i) => (
-                        <tr key={i}>
-                          <th scope="row" style={{ ...td, textAlign: 'left' }}>
-                            <div className="font-semibold" style={{ color: T.textPrimary }}>{row.period}</div>
-                            <div className="font-mono text-xs" style={{ color: T.textMuted }}>{row.time} · {row.dur}{row.excecoes.length ? ' *' : ''}</div>
-                          </th>
-                          {row.cells.map((shift, ci) => (
-                            <td key={ci} style={td}>
-                              {shiftPeople(shift).map((n, k) => <Pessoa key={k} name={n} T={T} />)}
+                      {weekdayRows.map((row, i) => {
+                        const top = i > 0 ? hair : 'none';
+                        return (
+                          <tr key={i}>
+                            <th scope="row" style={{ ...rowLabel, borderTop: top }}>{row.period}</th>
+                            <td className="tnum" style={{ ...tdMono, borderTop: top }}>{row.time}</td>
+                            <td className="tnum" style={{ ...tdNum, borderTop: top, borderRight: hair }}>
+                              {row.dur}{row.excecoes.length ? ' *' : ''}
                             </td>
-                          ))}
-                        </tr>
-                      ))}
+                            {row.cells.map((shift, ci) => (
+                              <td key={ci} style={{ ...td, borderTop: top }}>
+                                <span className="inline-flex flex-wrap items-center gap-1">
+                                  {shiftPeople(shift).map((n, k) => <Pessoa key={k} name={n} T={T} dark={dark} />)}
+                                </span>
+                              </td>
+                            ))}
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
-              </div>
+              </Panel>
               {weekdayRows.some(r => r.excecoes.length) && (
-                <p className="text-xs mt-2" style={{ color: T.textMuted }}>
-                  * {weekdayRows.flatMap(r => r.excecoes).join('; ')}.
-                </p>
+                <p style={noteStyle}>* {weekdayRows.flatMap(r => r.excecoes).join('; ')}.</p>
               )}
             </section>
 
             {/* FIM DE SEMANA */}
             <section>
-              <h2 className="text-sm font-semibold mb-2" style={{ color: T.textSecondary }}>Fim de semana — escada de 6 semanas</h2>
-              <div style={cardStyle}>
+              <h2 style={sectionH2}>Fim de semana — escada de 6 semanas</h2>
+              <Panel T={T} style={{ overflow: 'hidden' }}>
                 <div style={{ overflowX: 'auto' }}>
-                  <table className="w-full" style={{ borderCollapse: 'collapse', minWidth: '620px' }}>
+                  <table style={{ ...tableStyle, minWidth: '680px' }}>
                     <thead>
                       <tr>
-                        <th style={th} scope="col">Semana</th>
-                        <th style={th} scope="col">Sáb Dia<br /><span className="font-mono" style={{ fontWeight: 400 }}>23:00–11:00</span></th>
-                        <th style={th} scope="col">Sáb Noite<br /><span className="font-mono" style={{ fontWeight: 400 }}>11:00–23:00</span></th>
-                        <th style={th} scope="col">Dom Dia<br /><span className="font-mono" style={{ fontWeight: 400 }}>23:00–11:00</span></th>
-                        <th style={th} scope="col">Dom Noite<br /><span className="font-mono" style={{ fontWeight: 400 }}>11:00–23:00</span></th>
+                        <th style={thNum} scope="col">Semana</th>
+                        {WEEKEND_COLS.map(c => (
+                          <th key={c.key} style={th} scope="col">
+                            {c.label}<br />
+                            <span className="tnum" style={{ fontFamily: T.fontMono, fontWeight: 400, letterSpacing: 0, textTransform: 'none' }}>
+                              {c.time}
+                            </span>
+                          </th>
+                        ))}
                         <th style={th} scope="col">Folga</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {weekendRows.map((r, i) => (
-                        <tr key={i}>
-                          <th scope="row" style={{ ...td, textAlign: 'left', color: T.textMuted, fontWeight: 700 }}>{i + 1}</th>
-                          <td style={td}><Pessoa name={r.sabDia} T={T} /></td>
-                          <td style={td}><Pessoa name={r.sabNoite} T={T} /></td>
-                          <td style={td}><Pessoa name={r.domDia} T={T} /></td>
-                          <td style={td}><Pessoa name={r.domNoite} T={T} /></td>
-                          <td style={td}>
-                            <span className="inline-flex flex-wrap gap-1">
-                              {r.folga.map((n, k) => <Pessoa key={k} name={n} T={T} />)}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
+                      {weekendRows.map((r, i) => {
+                        const top = i > 0 ? hair : 'none';
+                        return (
+                          <tr key={i}>
+                            <th scope="row" className="tnum"
+                              style={{ ...tdNum, borderTop: top, borderRight: hair, fontWeight: 700, color: T.textSecondary }}>
+                              {i + 1}
+                            </th>
+                            {WEEKEND_COLS.map(c => (
+                              <td key={c.key} style={{ ...td, borderTop: top }}>
+                                <Pessoa name={r[c.key]} T={T} dark={dark} />
+                              </td>
+                            ))}
+                            <td style={{ ...td, borderTop: top, borderLeft: hair }}>
+                              <span className="inline-flex flex-wrap items-center gap-1">
+                                {r.folga.map((n, k) => <Pessoa key={k} name={n} T={T} dark={dark} />)}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
-              </div>
-              <p className="text-xs mt-2" style={{ color: T.textMuted }}>Cada pessoa avança uma coluna por semana (Sáb Dia → Sáb Noite → Dom Dia → Dom Noite → Folga → Folga). Vigente a partir de {changeStr}.</p>
+              </Panel>
+              <p style={noteStyle}>
+                Cada pessoa avança uma coluna por semana (Sáb Dia → Sáb Noite → Dom Dia → Dom Noite → Folga → Folga). Vigente a partir de <span className="tnum">{changeStr}</span>.
+              </p>
             </section>
           </>
         ) : (
           // Infra e desenvolvimento: sem rotação — blocos por dia-da-semana, faixas
           // sem cobertura e aviso de atribuição manual (docs/specs/multi-equipe.md §5).
           <section>
-            <p className="flex items-start gap-1.5 text-xs mb-4" style={{ color: '#F59E0B' }}>
-              <Icon name="alert" size={13} style={{ flexShrink: 0, marginTop: '0.1rem' }} />
-              <span><b>Sem rodízio definido — atribuição manual pelo admin.</b> Os blocos abaixo existem (têm horário e duração), mas ninguém é atribuído automaticamente; a atribuição é feita turno a turno na aba Escala.</span>
-            </p>
-            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
-              {genericWeek.map(c => (
-                <div key={c.dow} style={cardStyle} className="p-3">
-                  <div className="font-semibold text-sm mb-1.5" style={{ color: T.textPrimary }}>{c.label}</div>
-                  {c.shifts.length === 0 ? (
-                    <div className="text-xs" style={{ color: T.textMuted }}>Sem turnos</div>
-                  ) : (
-                    <div className="space-y-1 mb-2">
-                      {c.shifts.map((s, i) => (
-                        <div key={i} className="text-xs">
-                          <span className="font-semibold" style={{ color: T.textSecondary }}>{s.period}</span>{' '}
-                          <span className="font-mono" style={{ color: T.textMuted }}>{s.time} · {shiftDuration(s.time)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {c.gaps.length > 0 && (
-                    <div className="text-[10px] mt-1.5 pt-1.5" style={{ borderTop: `1px dashed ${T.cardBorder}`, color: T.textMuted }}>
-                      Sem cobertura: {c.gaps.join(', ')}
-                    </div>
-                  )}
-                </div>
-              ))}
+            {/* Informativo, não erro: a faixa é warn-quiet com hairline, não texto
+                âmbar solto num hex de tema claro (era '#F59E0B' fixo). */}
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start', background: T.warnQuiet, border: `1px solid ${T.warnBorder}`, borderRadius: T.rControl, padding: '0.55rem 0.7rem', margin: '0 0 0.9rem' }}>
+              <Icon name="alert" size={14} style={{ color: T.warn, flexShrink: 0, marginTop: '0.15rem' }} />
+              <div style={{ fontSize: '0.76rem', color: T.textSecondary, lineHeight: 1.55 }}>
+                <b style={{ color: T.warn }}>Sem rodízio definido — atribuição manual pelo admin.</b> Os blocos abaixo existem (têm horário e duração), mas ninguém é atribuído automaticamente; a atribuição é feita turno a turno na aba Escala.
+              </div>
             </div>
+
+            <Panel T={T} style={{ overflow: 'hidden' }}>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ ...tableStyle, minWidth: '620px' }}>
+                  <thead>
+                    <tr>
+                      <th style={th} scope="col">Dia</th>
+                      <th style={th} scope="col">Turno</th>
+                      <th style={th} scope="col">Horário</th>
+                      <th style={thNum} scope="col">Duração</th>
+                      <th style={th} scope="col">Sem cobertura</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {genericWeek.map((c, ci) => {
+                      // Uma linha por bloco; o dia e as faixas sem cobertura valem para
+                      // o grupo inteiro (rowSpan). Dia sem bloco vira uma linha só.
+                      const rows = c.shifts.length ? c.shifts : [null];
+                      const groupTop = ci > 0 ? hair : 'none';
+                      return rows.map((s, si) => (
+                        <tr key={`${c.dow}-${si}`}>
+                          {si === 0 && (
+                            <th scope="row" rowSpan={rows.length}
+                              style={{ ...rowLabel, borderTop: groupTop, borderRight: hair, verticalAlign: 'top' }}>
+                              {c.label}
+                            </th>
+                          )}
+                          {s ? (
+                            <>
+                              <td style={{ ...td, borderTop: si === 0 ? groupTop : hair, fontWeight: 600, color: T.textSecondary }}>
+                                {s.period}
+                              </td>
+                              <td className="tnum" style={{ ...tdMono, borderTop: si === 0 ? groupTop : hair }}>{s.time}</td>
+                              <td className="tnum" style={{ ...tdNum, borderTop: si === 0 ? groupTop : hair, borderRight: hair }}>
+                                {shiftDuration(s.time)}
+                              </td>
+                            </>
+                          ) : (
+                            <td colSpan={3} style={{ ...td, borderTop: groupTop, borderRight: hair, color: T.textMuted, fontStyle: 'italic' }}>
+                              Sem turnos
+                            </td>
+                          )}
+                          {si === 0 && (
+                            <td rowSpan={rows.length} className="tnum"
+                              style={{ ...tdMono, borderTop: groupTop, verticalAlign: 'top' }}>
+                              {c.gaps.length ? c.gaps.join(', ') : '—'}
+                            </td>
+                          )}
+                        </tr>
+                      ));
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
             {team.startsOn && (
-              <p className="text-xs mt-3" style={{ color: T.textMuted }}>Equipe existe a partir de {String(team.startsOn).slice(8, 10)}/{String(team.startsOn).slice(5, 7)}/{String(team.startsOn).slice(0, 4)}.</p>
+              <p style={noteStyle}>
+                Equipe existe a partir de <span className="tnum">{String(team.startsOn).slice(8, 10)}/{String(team.startsOn).slice(5, 7)}/{String(team.startsOn).slice(0, 4)}</span>.
+              </p>
             )}
           </section>
         )}

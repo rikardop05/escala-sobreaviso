@@ -3,23 +3,47 @@ import { useApi } from '../lib/api';
 import { MONTHS, durationHours, fmtHM, brl, buildSchedule } from '../lib/schedule';
 import { parseShiftTime, scheduleEntriesFor, monthTotals, isEntryCountable, splitHoraExtra } from '../lib/chCalc';
 import { TEAMS, MEMBERS, chGroupsFor } from '../lib/teams';
-import { getTheme, DANGER, WARN } from '../lib/theme';
-import { Icon, SaveStatus, Snackbar, ConfirmDialog, friendlyError } from './ui';
+import { getTheme, memberTone } from '../lib/theme';
+import { Icon, Button, Badge, Panel, SectionLabel, SaveStatus, Snackbar, ConfirmDialog, friendlyError } from './ui';
 import RelatorioConsolidado from './RelatorioConsolidado';
 import AprovacaoPendencias from './AprovacaoPendencias';
 
 const TYPES = ["Hora Extra", "Compensação"];
-const TYPE_META = {
-  Sobreaviso:   { color: "#60A5FA", bg: "#1E3A5F", lightColor: "#1565C0", lightBg: "#E3F2FD" },
-  "Hora Extra": { color: "#F472B6", bg: "#4A1025", lightColor: "#C2185B", lightBg: "#FCE4EC" },
-  Compensação:  { color: "#FCD34D", bg: "#431407", lightColor: "#854D0E", lightBg: "#FEF9C3" },
+
+// Tipo de lançamento → tom semântico do sistema (src/lib/theme.js). Antes eram
+// pares de hex escolhidos à mão, um par por tema (`color`/`bg` + `lightColor`/
+// `lightBg`), o que obrigava cada leitor a escolher o par certo e deixava valor
+// de tema claro (#FEF9C3, #431407…) renderizado no escuro quando alguém
+// esquecia. O tom vem de T, que já troca com o tema.
+//   Sobreaviso  → info    (automático, vem da escala)
+//   Hora Extra  → success (acresce à NF)
+//   Compensação → warn    (abate da NF)
+// `danger` fica reservado a erro e a Hora Extra rejeitada.
+const TYPE_TONE = {
+  Sobreaviso:   'info',
+  "Hora Extra": 'success',
+  Compensação:  'warn',
 };
+
 // Só Hora Extra tem status — Sobreaviso e Compensação nunca passam por aprovação.
 const STATUS_META = {
-  aprovado:  { label: "Aprovado",  color: "#22C55E", bg: "rgba(34,197,94,0.15)" },
-  pendente:  { label: "Pendente",  color: WARN,       bg: "rgba(245,158,11,0.15)" },
-  rejeitado: { label: "Rejeitado", color: DANGER,      bg: "rgba(239,68,68,0.15)" },
+  aprovado:  { label: "Aprovado",  tone: 'success' },
+  pendente:  { label: "Pendente",  tone: 'warn' },
+  rejeitado: { label: "Rejeitado", tone: 'danger' },
 };
+
+// Resolve um tom em tinta/fundo/borda. Mesma tabela do Badge em ui.jsx, exposta
+// aqui porque os cartões de total e a legenda da tabela não são badges.
+function toneColors(T, tone) {
+  return {
+    accent:  { fg: T.accent,     bg: T.accentQuiet,  border: T.accentBorder },
+    success: { fg: T.success,    bg: T.successQuiet, border: T.successBorder },
+    warn:    { fg: T.warn,       bg: T.warnQuiet,    border: T.warnBorder },
+    danger:  { fg: T.danger,     bg: T.dangerQuiet,  border: T.dangerBorder },
+    info:    { fg: T.info,       bg: T.infoQuiet,    border: T.infoBorder },
+    neutral: { fg: T.textMuted,  bg: T.surfaceHover, border: T.border },
+  }[tone] || { fg: T.textMuted, bg: T.surfaceHover, border: T.border };
+}
 
 export default function ControleDeHoras({ dark, profile }) {
   const api = useApi();
@@ -189,14 +213,18 @@ export default function ControleDeHoras({ dark, profile }) {
 
   const T = getTheme(dark);
 
+  // Campo e rótulo de formulário — tokens do sistema, raio de controle (5px) em
+  // vez do 0.5rem antigo. Altura mínima de 2.5rem preserva o alvo de toque.
   const inputStyle = {
     background: T.inputBg, color: T.textPrimary,
     border: `1px solid ${T.inputBorder}`,
-    borderRadius: "0.5rem", padding: "0.5rem 0.6rem", minHeight: "2.5rem",
-    fontSize: "0.875rem", width: "100%",
+    borderRadius: T.rControl, padding: "0.45rem 0.55rem", minHeight: "2.5rem",
+    fontSize: "0.82rem", width: "100%",
     transition: "border-color 0.15s",
   };
   const labelStyle = { fontSize: "0.72rem", fontWeight: 600, color: T.labelColor, display: "block", marginBottom: "0.25rem" };
+  // Botão quadrado de ícone (olho, lápis, confirmar) — 2.5rem de lado.
+  const iconBtnStyle = { width: "2.5rem", padding: 0, flexShrink: 0 };
 
   const params = paramsByPerson[person] || { remuneracao: '', jornada: 168 };
   const valorHora = (Number(params.remuneracao) || 0) / params.jornada;
@@ -431,7 +459,9 @@ export default function ControleDeHoras({ dark, profile }) {
     URL.revokeObjectURL(url);
   };
 
-  const p = MEMBERS[person] || { color: "#64748B", bg: "#F1F5F9" };
+  // Tom da pessoa selecionada — OKLCH com lightness fixa por tema (memberTone),
+  // não mais o par color/bg do Material, que sumia no escuro.
+  const p = memberTone(person, dark);
   const years = [year - 1, year, year + 1];
   const liveDuration = durationHours(form.inicio, form.fim);
   const crossesMidnight = form.inicio && form.fim && form.fim <= form.inicio;
@@ -459,29 +489,32 @@ export default function ControleDeHoras({ dark, profile }) {
   const thStyle = { textAlign: "left", fontSize: "0.68rem", fontWeight: 600, color: T.labelColor, padding: "0.5rem 0.5rem", whiteSpace: "nowrap" };
 
   return (
-    <div style={{ minHeight:"100vh", background:T.pageBg, fontFamily:"'Segoe UI',system-ui,sans-serif", color:T.textPrimary, transition:"background 0.2s,color 0.2s" }}>
-      <div className={showReport ? "max-w-6xl mx-auto px-4 py-6" : "max-w-3xl mx-auto px-4 py-6"}>
+    <div style={{ minHeight:"100vh", background:T.pageBg, fontFamily:T.fontSans, color:T.textPrimary }}>
+      <div className="mx-auto px-3 sm:px-4 py-4" style={{ maxWidth: showReport ? "1440px" : "1100px" }}>
 
-        {/* CABEÇALHO */}
-        <header className="rounded-2xl p-5 mb-5 text-white" style={{ background:T.headerGrad }}>
-          <h1 className="text-sm font-semibold opacity-80 mb-1" style={{ letterSpacing:"0.01em" }}>Controle de Horas</h1>
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="text-2xl font-bold">{MONTHS[monthIdx]} de {year}</div>
-            {!showReport && isClosed && (
-              <span className="inline-flex items-center gap-1 text-xs font-bold rounded-full px-2.5 py-1" style={{ background:"rgba(34,197,94,0.18)", color:"#4ADE80", border:"1px solid rgba(74,222,128,0.4)" }}>
-                <Icon name="check" size={12} /> Mês fechado
-              </span>
-            )}
-          </div>
-          <div className="text-sm opacity-80 mt-1">
-            {showReport ? "Relatório consolidado — todas as pessoas das suas equipes" : "Sobreaviso (escala automática) + horas extra e compensação"}
-          </div>
+        {/* CABEÇALHO — sem bloco colorido nem texto branco forçado. O antigo era
+            um gradiente decorativo com `text-white` nos DOIS temas, o que no tema
+            claro dependia de o cabeçalho ser escuro; agora usa os tokens de texto
+            como todo o resto da tela. */}
+        <header className="flex items-baseline flex-wrap gap-x-3 gap-y-1 mb-4">
+          <h1 style={{ fontSize:"1.15rem", fontWeight:700, letterSpacing:"-0.01em", color:T.textPrimary, margin:0 }}>
+            {showReport ? "Relatório consolidado" : "Controle de Horas"}
+          </h1>
+          <span className="tnum" style={{ fontSize:"0.95rem", fontWeight:600, color:T.textSecondary }}>
+            {MONTHS[monthIdx]} de {year}
+          </span>
+          {!showReport && isClosed && (
+            <Badge T={T} tone="success" icon="check">Mês fechado</Badge>
+          )}
+          <span style={{ fontSize:"0.78rem", color:T.textMuted, flexBasis:"100%" }}>
+            {showReport ? "Todas as pessoas das suas equipes" : "Sobreaviso (escala automática) + horas extra e compensação"}
+          </span>
         </header>
 
         {!showReport && dataLoading && (
-          <div role="status" className="rounded-2xl p-4 mb-4 text-center text-sm" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}`, color:T.textMuted }}>
+          <Panel T={T} role="status" style={{ padding:"0.85rem", marginBottom:"1rem", textAlign:"center", fontSize:"0.85rem", color:T.textMuted }}>
             Carregando lançamentos e parâmetros…
-          </div>
+          </Panel>
         )}
 
         {/* SELETORES */}
@@ -498,9 +531,12 @@ export default function ControleDeHoras({ dark, profile }) {
                   ))}
                 </select>
               ) : (
-                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-bold"
-                  style={{ background: p.color, color: "#fff", minHeight:"2.5rem" }}>
-                  <span className="w-2 h-2 rounded-full bg-white opacity-70" />
+                // Tinta sobre tinta-clara da própria matiz. Antes era branco
+                // sobre p.ink: no tema escuro a matiz é clara (L .79), então
+                // texto branco em cima ficava perto de 1,3:1.
+                <div className="inline-flex items-center gap-2"
+                  style={{ background: p.tint, color: p.ink, border:`1px solid ${p.ink}`, borderRadius:T.rControl, padding:"0.3rem 0.6rem", minHeight:"2.25rem", fontSize:"0.85rem", fontWeight:600 }}>
+                  <span style={{ width:7, height:7, borderRadius:"50%", background:p.dot, flexShrink:0 }} />
                   {person}
                 </div>
               )}
@@ -521,12 +557,13 @@ export default function ControleDeHoras({ dark, profile }) {
           {isAdmin && (
             <div className="ml-auto flex items-center gap-2 flex-wrap">
               <AprovacaoPendencias dark={dark} profile={profile} />
-              <button type="button" onClick={() => setShowReport(s => !s)}
-                className="inline-flex items-center gap-2"
-                style={{ background: showReport ? T.cancelBg : T.exportBg, color: showReport ? T.cancelColor : "#fff", border: showReport ? `1px solid ${T.cancelBorder}` : "none", borderRadius:"0.5rem", padding:"0.5rem 1rem", minHeight:"2.75rem", fontWeight:"700", fontSize:"0.875rem", cursor:"pointer" }}>
+              {/* Alternar de vista é navegação, não estado positivo — por isso
+                  não usa o verde. Verde fica reservado a sucesso/aprovado. */}
+              <Button T={T} size="sm" variant={showReport ? 'primary' : 'secondary'}
+                onClick={() => setShowReport(s => !s)}>
                 <Icon name={showReport ? "x" : "calendar"} size={15} />
                 {showReport ? "Voltar ao painel individual" : "Relatório consolidado"}
-              </button>
+              </Button>
             </div>
           )}
         </div>
@@ -536,7 +573,7 @@ export default function ControleDeHoras({ dark, profile }) {
         ) : (
         <>
         {/* PARÂMETROS */}
-        <section className="rounded-2xl p-4 mb-4" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}` }}>
+        <section className="mb-3" style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:T.rPanel, padding:"0.8rem" }}>
           <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
             <h2 className="text-sm font-semibold" style={{ color:T.textSecondary }}>Parâmetros de {person}</h2>
             <SaveStatus status={paramsStatus} onRetry={retryParams} T={T} />
@@ -577,7 +614,7 @@ export default function ControleDeHoras({ dark, profile }) {
             </div>
             <div className="ml-auto text-right">
               <div className="text-xs" style={{ color:T.labelColor }}>Valor hora <span style={{ color:T.textMuted }}>(remuneração ÷ jornada)</span></div>
-              <div className="text-lg font-bold" style={{ color:p.color }}>{valorHora > 0 ? brl(valorHora) : "—"}</div>
+              <div className="text-lg font-bold" style={{ color:p.ink }}>{valorHora > 0 ? brl(valorHora) : "—"}</div>
             </div>
           </div>
           {isClosed && (
@@ -589,7 +626,7 @@ export default function ControleDeHoras({ dark, profile }) {
         </section>
 
         {/* FORMULÁRIO — só HE e Compensação */}
-        <section className="rounded-2xl p-4 mb-4" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}` }}>
+        <section className="mb-3" style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:T.rPanel, padding:"0.8rem" }}>
           <h2 className="text-sm font-semibold mb-3" style={{ color:T.textSecondary }}>
             {editId ? `Editar lançamento — ${person}` : `Novo lançamento (HE ou Compensação) — ${person}`}
           </h2>
@@ -624,33 +661,34 @@ export default function ControleDeHoras({ dark, profile }) {
             </div>
           </div>
           {formMonthClosed && (
-            <p role="alert" className="flex items-center gap-1.5 text-xs font-semibold mb-3" style={{ color:WARN }}>
+            <p role="alert" className="flex items-center gap-1.5 text-xs font-semibold mb-3" style={{ color:T.warn }}>
               <Icon name="alert" size={13} />
               {form.data.slice(0,7).split('-').reverse().join('/')} está fechado para lançamentos. Peça ao admin para reabrir o mês se precisar alterar.
             </p>
           )}
           {crossesMidnight && (
-            <p className="flex items-center gap-1.5 text-xs font-semibold mb-3" style={{ color:WARN }}>
+            <p className="flex items-center gap-1.5 text-xs font-semibold mb-3" style={{ color:T.warn }}>
               <Icon name="alert" size={13} />
               Fim antes do início: será registrado como turno que atravessa a meia-noite ({fmtHM(liveDuration)} de duração). Confira antes de salvar.
             </p>
           )}
           {splitSummary && (
-            <p className="flex items-center gap-1.5 text-xs font-semibold mb-3" style={{ color: splitSummary.pending ? WARN : T.textMuted }}>
+            <p className="flex items-center gap-1.5 text-xs font-semibold mb-3" style={{ color: splitSummary.pending ? T.warn : T.textMuted }}>
               <Icon name="alert" size={13} />
               {splitSummary.text}
             </p>
           )}
           <div className="flex items-center gap-3 flex-wrap">
-            <button onClick={submit} disabled={!canSubmit}
-              style={{ background:canSubmit?T.saveBg:T.cardBorder, color:canSubmit?T.saveColor:T.textMuted, border:"none", borderRadius:"0.5rem", padding:"0.5rem 1.1rem", minHeight:"2.75rem", fontWeight:"700", fontSize:"0.875rem", cursor:canSubmit?"pointer":"not-allowed", transition:"background 0.15s" }}>
+            {/* Desabilitado não pinta um fundo cinza com texto apagado em cima
+                (o par T.border + T.textMuted dava 4,47:1, abaixo de AA): mantém
+                a superfície e baixa a opacidade do controle inteiro. */}
+            <Button T={T} variant="primary" onClick={submit} disabled={!canSubmit}>
               {submitting ? "Salvando…" : editId ? "Salvar alterações" : "Adicionar lançamento"}
-            </button>
+            </Button>
             {editId && (
-              <button onClick={() => { setEditId(null); setForm(blank); }}
-                style={{ background:T.cancelBg, color:T.cancelColor, border:`1px solid ${T.cancelBorder}`, borderRadius:"0.5rem", padding:"0.5rem 1.1rem", minHeight:"2.75rem", fontWeight:"700", fontSize:"0.875rem", cursor:"pointer" }}>
+              <Button T={T} variant="secondary" onClick={() => { setEditId(null); setForm(blank); }}>
                 Cancelar
-              </button>
+              </Button>
             )}
             {form.inicio && form.fim && (
               <span className="text-sm" style={{ color:T.labelColor }}>
@@ -662,14 +700,14 @@ export default function ControleDeHoras({ dark, profile }) {
         </section>
 
         {/* RELATÓRIO */}
-        <section className="rounded-2xl p-4 mb-4" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}` }}>
+        <section className="mb-3" style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:T.rPanel, padding:"0.8rem" }}>
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <h2 className="text-sm font-semibold" style={{ color:T.textSecondary }}>Relatório do mês</h2>
             <div className="flex items-center gap-2 flex-wrap">
               {isAdmin && !dataLoading && (
                 isClosed ? (
                   <button onClick={() => setCloseDialog('reopen')} disabled={closeBusy}
-                    style={{ display:"inline-flex", alignItems:"center", gap:"0.4rem", background:"transparent", color:WARN, border:`1px solid ${WARN}`, borderRadius:"0.5rem", padding:"0.5rem 0.9rem", minHeight:"2.75rem", fontWeight:"700", fontSize:"0.875rem", cursor:closeBusy?"not-allowed":"pointer" }}>
+                    style={{ display:"inline-flex", alignItems:"center", gap:"0.4rem", background:"transparent", color:T.warn, border:`1px solid ${T.warn}`, borderRadius:"0.5rem", padding:"0.5rem 0.9rem", minHeight:"2.75rem", fontWeight:"700", fontSize:"0.875rem", cursor:closeBusy?"not-allowed":"pointer" }}>
                     {closeBusy ? "Reabrindo…" : "Reabrir mês"}
                   </button>
                 ) : (
@@ -679,43 +717,47 @@ export default function ControleDeHoras({ dark, profile }) {
                   </button>
                 )
               )}
-              <button onClick={exportCSV} disabled={displayEntries.length === 0}
-                style={{ display:"inline-flex", alignItems:"center", gap:"0.4rem", background:displayEntries.length>0?T.exportBg:T.cardBorder, color:displayEntries.length>0?"#fff":T.textMuted, border:"none", borderRadius:"0.5rem", padding:"0.5rem 0.9rem", minHeight:"2.75rem", fontWeight:"700", fontSize:"0.875rem", cursor:displayEntries.length>0?"pointer":"not-allowed" }}>
+              <Button T={T} size="sm" variant="secondary" onClick={exportCSV} disabled={displayEntries.length === 0}>
                 <Icon name="download" size={14} /> Exportar CSV
-              </button>
+              </Button>
             </div>
           </div>
           {isClosed && (
-            <p className="flex items-center gap-1.5 text-xs font-semibold mb-3" style={{ color:"#22C55E" }}>
+            <p className="flex items-center gap-1.5 text-xs font-semibold mb-3" style={{ color:T.success }}>
               <Icon name="check" size={13} />
               Fechado em {fmtClosedAt(closedSnap.closedAt)} por {closedSnap.closedBy} — valores congelados para a folha.
             </p>
           )}
           {closeError && (
-            <p role="alert" className="flex items-center gap-1.5 text-xs font-semibold mb-3" style={{ color:DANGER }}>
+            <p role="alert" className="flex items-center gap-1.5 text-xs font-semibold mb-3" style={{ color:T.danger }}>
               <Icon name="alert" size={13} /> {closeError}
             </p>
           )}
-          <div className="grid gap-3" style={{ gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))" }}>
+          <div className="grid gap-2" style={{ gridTemplateColumns:"repeat(auto-fit, minmax(150px, 1fr))" }}>
             {[
-              { label:"Sobreaviso",  h:displayTotals.sobreaviso, v:displayTotals.valorSobreaviso,      neg:false, formula:"⅓ do valor-hora",           tm:TYPE_META.Sobreaviso },
-              { label:"Hora Extra",  h:displayTotals.extra,      v:displayTotals.valorExtra,           neg:false, formula:"valor-hora × 1,5",          tm:TYPE_META["Hora Extra"] },
-              { label:"Compensação", h:displayTotals.comp,       v:displayTotals.valorComp ?? null,     neg:true,  formula:"⅓ do valor-hora · abate da NF", tm:TYPE_META.Compensação },
+              { label:"Sobreaviso",  h:displayTotals.sobreaviso, v:displayTotals.valorSobreaviso,      neg:false, formula:"⅓ do valor-hora",           tone:TYPE_TONE.Sobreaviso },
+              { label:"Hora Extra",  h:displayTotals.extra,      v:displayTotals.valorExtra,           neg:false, formula:"valor-hora × 1,5",          tone:TYPE_TONE["Hora Extra"] },
+              { label:"Compensação", h:displayTotals.comp,       v:displayTotals.valorComp ?? null,     neg:true,  formula:"⅓ do valor-hora · abate da NF", tone:TYPE_TONE.Compensação },
             ].map(b => {
-              const bg    = dark ? b.tm.bg    : b.tm.lightBg;
-              const color = dark ? b.tm.color : b.tm.lightColor;
+              const c = toneColors(T, b.tone);
               return (
-                <div key={b.label} className="rounded-xl p-3" style={{ background:bg }}>
-                  <div className="text-xs font-bold" style={{ color }}>{b.label}</div>
-                  <div className="text-xl font-bold" style={{ color:dark?"#F1F5F9":"#1E293B" }}>{fmtHM(b.h)}</div>
-                  {b.v !== null && displayValorHora > 0 && <div className="text-sm font-semibold" style={{ color }}>{b.neg && b.v > 0 ? "− " : ""}{brl(b.v)}</div>}
-                  <div className="text-[10px] mt-0.5" style={{ color, opacity:0.85 }}>{b.formula}</div>
+                <div key={b.label} style={{ background:c.bg, border:`1px solid ${c.border}`, borderRadius:T.rControl, padding:"0.6rem 0.7rem" }}>
+                  <div style={{ fontSize:"0.7rem", fontWeight:700, letterSpacing:"0.03em", textTransform:"uppercase", color:c.fg }}>{b.label}</div>
+                  <div className="tnum" style={{ fontSize:"1.35rem", fontWeight:700, lineHeight:1.2, color:T.textPrimary, fontVariantNumeric:"tabular-nums" }}>{fmtHM(b.h)}</div>
+                  {b.v !== null && displayValorHora > 0 && (
+                    <div className="tnum" style={{ fontSize:"0.85rem", fontWeight:600, color:c.fg }}>
+                      {b.neg && b.v > 0 ? "− " : ""}{brl(b.v)}
+                    </div>
+                  )}
+                  {/* textSecondary, não textMuted: sobre o fundo tingido do
+                      cartão o muted caía para ~4,1:1, abaixo de AA em 10,6px. */}
+                  <div style={{ fontSize:"0.68rem", marginTop:"0.15rem", color:T.textSecondary }}>{b.formula}</div>
                 </div>
               );
             })}
           </div>
           {!isClosed && totals.overlapMin > 0 && (
-            <p className="flex items-start gap-1.5 text-xs mt-3" style={{ color:WARN }}>
+            <p className="flex items-start gap-1.5 text-xs mt-3" style={{ color:T.warn }}>
               <Icon name="alert" size={13} style={{ flexShrink:0, marginTop:'0.1rem' }} />
               <span>Há lançamentos com horários sobrepostos — <b>{fmtHM(totals.overlapMin / 60)}</b> em comum foi contado uma vez só. O total usa a união dos períodos, não a soma das linhas.</span>
             </p>
@@ -724,7 +766,7 @@ export default function ControleDeHoras({ dark, profile }) {
             <span className="text-sm" style={{ color:T.labelColor }}>Total de horas: <b style={{ color:T.textPrimary }}>{fmtHM(displayTotals.totalHoras)}</b></span>
             <div className="text-right">
               <div className="text-xs" style={{ color:T.labelColor }}>Valor total a receber</div>
-              <div className="text-2xl font-bold" style={{ color:p.color }}>
+              <div className="text-2xl font-bold" style={{ color:p.ink }}>
                 {displayValorHora > 0 ? brl(displayTotals.valorTotal) : "—"}
               </div>
             </div>
@@ -734,7 +776,7 @@ export default function ControleDeHoras({ dark, profile }) {
           <div className="mt-3 pt-3 flex items-center justify-between gap-3 flex-wrap" style={{ borderTop:`1px solid ${T.cardBorder}` }}>
             <div>
               <div className="text-xs" style={{ color:T.labelColor }}>Valor da NF <span style={{ color:T.textMuted }}>(remuneração + SA + HE − Compensação)</span></div>
-              <div className="text-2xl font-bold" style={{ color:p.color }}>
+              <div className="text-2xl font-bold" style={{ color:p.ink }}>
                 {nfVisible ? (displayValorHora > 0 || displayRemuneracao > 0 ? brl(valorNF) : "—") : "R$ ••••••"}
               </div>
             </div>
@@ -746,25 +788,28 @@ export default function ControleDeHoras({ dark, profile }) {
         </section>
 
         {/* TABELA */}
-        <section className="rounded-2xl overflow-hidden" style={{ border:`1px solid ${T.cardBorder}` }}>
+        <section style={{ border:`1px solid ${T.border}`, borderRadius:T.rPanel, overflow:"hidden" }}>
           <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2" style={{ background:T.cardBg, borderBottom:`1px solid ${T.cardBorder}` }}>
             <h2 className="text-sm font-semibold inline-flex items-center gap-2" style={{ color:T.textSecondary }}>
               Lançamentos ({displayEntries.length})
               {isClosed && (
-                <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ background:"rgba(34,197,94,0.15)", color:"#22C55E" }}>
-                  congelados
-                </span>
+                <Badge T={T} tone="success">congelados</Badge>
               )}
             </h2>
-            <div className="flex items-center gap-3 text-[10px] font-semibold" style={{ color:T.textMuted }}>
-              <span className="flex items-center gap-1">
-                <span className="inline-block w-2 h-2 rounded-sm" style={{ background: dark ? TYPE_META.Sobreaviso.bg : TYPE_META.Sobreaviso.lightBg, border:`1px solid ${dark ? TYPE_META.Sobreaviso.color : TYPE_META.Sobreaviso.lightColor}` }} />
-                SA · escala automática
-              </span>
-              <span className="flex items-center gap-1">
-                <span className="inline-block w-2 h-2 rounded-sm" style={{ background: dark ? TYPE_META["Hora Extra"].bg : TYPE_META["Hora Extra"].lightBg, border:`1px solid ${dark ? TYPE_META["Hora Extra"].color : TYPE_META["Hora Extra"].lightColor}` }} />
-                HE · manual
-              </span>
+            {/* Legenda da tabela — mesmo tom que a etiqueta de cada linha usa. */}
+            <div className="flex items-center gap-3" style={{ fontSize:"0.66rem", fontWeight:600, color:T.textMuted }}>
+              {[
+                { tone: TYPE_TONE.Sobreaviso,     label: "SA · escala automática" },
+                { tone: TYPE_TONE["Hora Extra"],  label: "HE · manual" },
+              ].map(({ tone, label }) => {
+                const c = toneColors(T, tone);
+                return (
+                  <span key={label} className="flex items-center gap-1">
+                    <span style={{ width:8, height:8, borderRadius:"2px", flexShrink:0, background:c.bg, border:`1px solid ${c.fg}` }} />
+                    {label}
+                  </span>
+                );
+              })}
             </div>
           </div>
 
@@ -791,9 +836,7 @@ export default function ControleDeHoras({ dark, profile }) {
                 <tbody>
                   {displayEntries.map((e) => {
                     const h = durationHours(e.inicio, e.fim);
-                    const tm = TYPE_META[e.tipo];
-                    const tagBg    = dark ? tm.bg    : tm.lightBg;
-                    const tagColor = dark ? tm.color : tm.lightColor;
+                    const tagC = toneColors(T, TYPE_TONE[e.tipo]);
                     const rowBg = e._fromSchedule
                       ? T.rowSchedBg
                       : editId === e.id ? T.rowEditBg : "transparent";
@@ -801,16 +844,16 @@ export default function ControleDeHoras({ dark, profile }) {
 
                     return (
                       <tr key={e.id} style={{ borderTop:`1px solid ${T.divider}`, background:rowBg }}>
-                        <td className="font-mono font-bold whitespace-nowrap" style={{ color:T.textSecondary, padding:"0.5rem" }}>
+                        <td className="tnum whitespace-nowrap" style={{ fontFamily:T.fontMono, fontWeight:700, color:T.textSecondary, padding:"0.45rem 0.5rem" }}>
                           {e.data.slice(8,10)}/{e.data.slice(5,7)}
                         </td>
-                        <td style={{ padding:"0.5rem" }}>
-                          <span className="rounded-md px-2 py-0.5 text-xs font-bold whitespace-nowrap" style={{ background:tagBg, color:tagColor }}>
+                        <td style={{ padding:"0.45rem 0.5rem" }}>
+                          <span className="whitespace-nowrap" style={{ background:tagC.bg, color:tagC.fg, borderRadius:T.rChip, padding:"0.1rem 0.35rem", fontSize:"0.68rem", fontWeight:700 }}>
                             {e._fromSchedule ? "SA" : e.tipo === "Hora Extra" ? "HE" : "Comp"}
                           </span>
                         </td>
-                        <td className="font-mono text-xs whitespace-nowrap" style={{ color:T.textMuted, padding:"0.5rem" }}>{e.inicio}–{e.fim}</td>
-                        <td className="font-mono text-xs font-bold whitespace-nowrap" style={{ color:T.textSecondary, padding:"0.5rem" }}>{fmtHM(h)}</td>
+                        <td className="tnum whitespace-nowrap" style={{ fontFamily:T.fontMono, fontSize:"0.76rem", color:T.textMuted, padding:"0.45rem 0.5rem" }}>{e.inicio}–{e.fim}</td>
+                        <td className="tnum whitespace-nowrap" style={{ fontFamily:T.fontMono, fontSize:"0.76rem", fontWeight:700, color:T.textSecondary, padding:"0.45rem 0.5rem" }}>{fmtHM(h)}</td>
                         <td style={{ padding:"0.5rem" }}>
                           {statusMeta && (
                             <>
