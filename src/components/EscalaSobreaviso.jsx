@@ -7,9 +7,12 @@ import {
   getActiveSub, getCoverSuggestions, shiftPeople, resolveShiftPeople, parseTimeRange,
   shiftDuration, sortShiftsByStart,
 } from '../lib/schedule';
-import { TEAMS, MEMBERS, teamScopeCovers } from '../lib/teams';
-import { getTheme, ACCENT, DANGER, WARN } from '../lib/theme';
-import { Icon, Snackbar, ConfirmDialog, Skeleton, friendlyError } from './ui';
+import { TEAMS, teamScopeCovers } from '../lib/teams';
+import { getTheme, memberTone } from '../lib/theme';
+import {
+  Icon, Snackbar, ConfirmDialog, Skeleton, friendlyError,
+  Button, Badge, Segmented, SegmentedItem, Panel, SectionLabel,
+} from './ui';
 
 // Envio em lotes de overrides "aplicar a todos os meses seguintes" — propagar 1
 // turno pelo range inteiro (~365 dias) gera ~30 KB, perto do limite de 50 KB do
@@ -19,17 +22,23 @@ const PATCH_BATCH_DAYS = 150;
 // Pessoas de TODAS as equipes (src/lib/teams.js) — cores/badges usadas em qualquer
 // tela que possa mostrar gente de mais de uma equipe (o widget "Agora", em
 // particular, sempre mostra as três). `PEOPLE` (schedule.js) cobre só a sustentação.
-function PersonTag({ name, dim, subOf }) {
-  const p = MEMBERS[name] || { color: "#555", bg: "#eee" };
+// O tom vem de memberTone (OKLCH, lightness fixa por tema) — não mais do par
+// color/bg do Material, que era desenhado para fundo claro e sumia no escuro.
+function PersonTag({ name, dim, subOf, T, dark }) {
+  const tone = memberTone(name, dark);
   return (
     <span
-      className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-sm font-bold"
-      style={{ color: p.color, background: dim ? "transparent" : p.bg, opacity: dim ? 0.3 : 1 }}
+      className="inline-flex items-center gap-1.5 text-sm"
+      style={{
+        color: tone.ink, background: dim ? 'transparent' : tone.tint,
+        opacity: dim ? 0.35 : 1, fontWeight: 600,
+        borderRadius: T.rChip, padding: '0.1rem 0.4rem',
+      }}
     >
-      <span className="w-2 h-2 rounded-full" style={{ background: p.color }} />
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: tone.dot, flexShrink: 0 }} />
       {name}
       {subOf && (
-        <span style={{ fontSize:"0.6rem", fontWeight:"700", background:"rgba(0,0,0,0.12)", borderRadius:"3px", padding:"0 3px", letterSpacing:"0.03em" }}>
+        <span style={{ fontSize:'0.6rem', fontWeight:700, color:T.textMuted, letterSpacing:'0.04em', textTransform:'uppercase' }}>
           sub
         </span>
       )}
@@ -40,16 +49,23 @@ function PersonTag({ name, dim, subOf }) {
 // Multi-seleção de pessoas (chips) — usado ao editar e ao adicionar turnos.
 // `roster` é a lista de nomes elegíveis — SEMPRE a equipe ativa, nunca todo mundo
 // (um turno da sustentação não pode ser atribuído a alguém da infra).
-function PersonPicker({ selected, onToggle, roster }) {
+function PersonPicker({ selected, onToggle, roster, T, dark }) {
   return (
     <div className="flex flex-wrap gap-1.5">
       {roster.map(name => {
-        const p = MEMBERS[name] || { color: "#555", bg: "#eee" };
+        const tone = memberTone(name, dark);
         const on = selected.includes(name);
         return (
           <button key={name} type="button" onClick={() => onToggle(name)} aria-pressed={on}
-            style={{ display:'inline-flex', alignItems:'center', gap:'0.3rem', fontSize:'0.72rem', fontWeight:700, padding:'0.35rem 0.6rem', minHeight:'2.25rem', borderRadius:'9999px', cursor:'pointer', background: on ? p.color : 'transparent', color: on ? '#fff' : p.color, border:`1.5px solid ${on ? p.color : 'rgba(148,163,184,0.45)'}` }}>
-            <span style={{ width:7, height:7, borderRadius:'50%', flexShrink:0, background: on ? '#fff' : p.color }} />
+            style={{
+              display:'inline-flex', alignItems:'center', gap:'0.35rem',
+              fontSize:'0.75rem', fontWeight:600, padding:'0.3rem 0.55rem', minHeight:'2.1rem',
+              borderRadius:T.rControl, cursor:'pointer',
+              background: on ? tone.tint : 'transparent',
+              color: on ? tone.ink : T.textSecondary,
+              border:`1px solid ${on ? tone.ink : T.border}`,
+            }}>
+            <span style={{ width:7, height:7, borderRadius:'50%', flexShrink:0, background: tone.dot, opacity: on ? 1 : 0.55 }} />
             {name}
           </button>
         );
@@ -328,9 +344,6 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
 
   // { people: [{ person, coveringFor }], label, time } | null — pode ter +1 pessoa (feriado)
   const onCall = currentOnCall(now, schedule, subs, team.dayStart);
-  const onCallColor = onCall && onCall.people.length === 1
-    ? (MEMBERS[onCall.people[0].person] || {}).color || "#94A3B8"
-    : "#94A3B8";
 
   // Handoff: plantonista anterior e próximo (com substituições), referente à equipe ativa
   const handoff = useMemo(() => adjacentOnCall(now, schedule, subs, team.dayStart), [now, schedule, subs, team]);
@@ -782,9 +795,10 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
 
   const T = getTheme(dark);
 
+  // Input e rótulo de formulário — tokens do sistema, raio de controle (5px).
   const selStyle = {
-    display:"block", width:"100%", padding:"0.5rem 0.6rem", fontSize:"0.85rem", minHeight:"2.5rem",
-    borderRadius:"0.4rem", border:`1px solid ${T.inputBorder}`,
+    display:"block", width:"100%", padding:"0.45rem 0.55rem", fontSize:"0.82rem", minHeight:"2.25rem",
+    borderRadius:T.rControl, border:`1px solid ${T.inputBorder}`,
     background:T.inputBg, color:T.textPrimary, marginTop:"0.25rem",
   };
 
@@ -792,698 +806,760 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
 
   const scheduleReady = !overridesLoading;
 
+  // Hora do relógio no cabeçalho do painel "Agora". Substitui o ponto pulsante
+  // decorativo (animate-ping) por informação: numa ferramenta de plantão o que
+  // importa não é uma animação de "ao vivo", é a que hora esta leitura se refere.
+  const nowTime = `${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
+
   // Texto/cor de uma linha do widget "Agora" (docs/specs/multi-equipe.md §5):
   // vigência > carregando > sem cobertura agora > turno vago > nome(s).
   function rowInfo(row) {
-    if (row.vig) return { text: row.vig, dotColor: "#64748B", until: null };
-    if (row.loading) return { text: "…", dotColor: "#475569", until: null };
-    if (!row.onCall) return { text: "Sem plantão", dotColor: "#475569", until: null };
-    if (row.onCall.people.length === 0) return { text: "Turno vago", dotColor: WARN, until: null };
+    if (row.vig)     return { text: row.vig,        tone: T.textMuted, dotColor: T.borderStrong, until: null, quiet: true };
+    if (row.loading) return { text: "…",            tone: T.textMuted, dotColor: T.borderStrong, until: null, quiet: true };
+    if (!row.onCall) return { text: "Sem plantão",  tone: T.textMuted, dotColor: T.borderStrong, until: null, quiet: true };
+    if (row.onCall.people.length === 0) return { text: "Turno vago", tone: T.warn, dotColor: T.warn, until: null };
     const until = row.onCall.time.split(/[–—-]/)[1]?.trim();
     const dotColor = row.onCall.people.length === 1
-      ? (MEMBERS[row.onCall.people[0].person] || {}).color || "#94A3B8"
-      : "#94A3B8";
-    return { text: row.onCall.people.map(p => p.person).join(" · "), dotColor, until };
+      ? memberTone(row.onCall.people[0].person, dark).dot
+      : T.textSecondary;
+    return { text: row.onCall.people.map(p => p.person).join(" · "), tone: T.textPrimary, dotColor, until };
   }
 
   return (
-    <div style={{ minHeight:"100vh", background:T.pageBg, fontFamily:"'Segoe UI',system-ui,sans-serif", color:T.textPrimary, transition:"background 0.2s,color 0.2s" }}>
-      <div className="max-w-3xl mx-auto px-4 py-6">
+    <div style={{ minHeight:"100vh", background:T.pageBg, fontFamily:T.fontSans, color:T.textPrimary }}>
+      <div className="mx-auto px-3 sm:px-4 py-4" style={{ maxWidth:"1440px" }}>
 
-        {/* CABEÇALHO */}
-        <header className="rounded-2xl p-5 mb-5 text-white" style={{ background:T.headerGrad, position:"relative" }}>
-          <button
-            onClick={onToggleDark}
-            aria-label={dark ? "Mudar para tema claro" : "Mudar para tema escuro"}
-            style={{ position:"absolute", top:"0.6rem", right:"0.6rem", zIndex:2, display:"inline-flex", alignItems:"center", gap:"0.35rem", background:"rgba(255,255,255,0.12)", color:"#fff", border:"1px solid rgba(255,255,255,0.22)", borderRadius:"9999px", padding:"0.5rem 0.85rem", minHeight:"2.75rem", fontSize:"0.72rem", fontWeight:"600", cursor:"pointer", letterSpacing:"0.02em" }}
-          >
-            <Icon name={dark ? "sun" : "moon"} size={14} />
-            {dark ? "Claro" : "Escuro"}
-          </button>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h1 className="text-sm font-semibold opacity-80 mb-1" style={{ letterSpacing:"0.01em" }}>Escala de Sobreaviso</h1>
-              <div className="text-2xl font-bold">{DOW[now.getDay()]}, {fmtDate(now)}/{now.getFullYear()}</div>
-            </div>
-            <div className="rounded-xl px-4 py-3 min-w-[230px]" style={{ background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.16)" }}>
-              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider opacity-80">
-                <span className="relative flex w-2 h-2">
-                  <span className="animate-ping motion-reduce:animate-none absolute inline-flex h-full w-full rounded-full opacity-60" style={{ background:scheduleReady ? onCallColor : "#94A3B8" }} />
-                  <span className="relative inline-flex rounded-full w-2 h-2" style={{ background:scheduleReady ? onCallColor : "#94A3B8" }} />
+        {/* Composição de desktop (decisão registrada em PRODUCT.md: tela grande
+            vence): coluna principal com a escala e sua edição, barra lateral
+            fixa com estado e lentes. Abaixo de lg empilha, e o "Agora" fica
+            em cima — que é a ordem certa no celular. */}
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_21rem] lg:items-start">
+
+          {/* ══ COLUNA PRINCIPAL ═════════════════════════════════════════════ */}
+          <div className="min-w-0 order-2 lg:order-1">
+
+            {overridesError && (
+              <div role="alert" className="flex items-center justify-between gap-3 flex-wrap mb-3"
+                style={{ background:T.warnQuiet, border:`1px solid ${T.warnBorder}`, borderRadius:T.rPanel, padding:"0.6rem 0.8rem" }}>
+                <span className="flex items-center gap-2" style={{ color:T.warn, fontSize:"0.82rem", fontWeight:600 }}>
+                  <Icon name="alert" size={15} />
+                  Não foi possível carregar as edições da escala — mostrando a escala base.
                 </span>
-                Agora
+                <Button T={T} size="sm" variant="secondary" onClick={() => loadOverrides(activeTeam)}>
+                  Tentar de novo
+                </Button>
+              </div>
+            )}
+
+            {/* BARRA DE FERRAMENTAS — equipe, mês, edição */}
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              <Segmented T={T} role="group" aria-label="Equipe">
+                {Object.values(TEAMS).map((t, i) => (
+                  <SegmentedItem key={t.id} T={T} first={i === 0}
+                    active={activeTeam === t.id} onClick={() => switchTeam(t.id)}>
+                    {t.nome}
+                  </SegmentedItem>
+                ))}
+              </Segmented>
+
+              <div className="flex-1" />
+
+              {canEditActiveTeam && (
+                <Button T={T} size="sm" variant={editMode ? 'primary' : 'secondary'} onClick={toggleEditMode}>
+                  <Icon name={editMode ? 'x' : 'pencil'} size={14} />
+                  {editMode ? 'Sair da edição' : 'Editar escala'}
+                </Button>
+              )}
+            </div>
+
+            {/* NAVEGAÇÃO DE MESES */}
+            <div className="flex items-center gap-2 mb-3">
+              <Button T={T} size="sm" variant="secondary" onClick={goToToday}>Hoje</Button>
+              <div className="min-w-0 overflow-x-auto">
+                <Segmented T={T} role="group" aria-label="Mês">
+                  {months.map((m, i) => (
+                    <SegmentedItem key={m.key} T={T} first={i === 0}
+                      active={activeMonth === m.key}
+                      aria-current={activeMonth === m.key ? 'true' : undefined}
+                      onClick={() => handleMonthChange(m.key)}
+                      style={{ padding:'0.45rem 0.6rem' }}>
+                      <span className="tnum">{MONTHS_SHORT[m.m]}/{String(m.y).slice(2)}</span>
+                    </SegmentedItem>
+                  ))}
+                </Segmented>
+              </div>
+            </div>
+
+            <div className="flex items-baseline gap-2 mb-2">
+              <h1 style={{ fontSize:"1.15rem", fontWeight:700, letterSpacing:"-0.01em", color:T.textPrimary, margin:0 }}>
+                {am ? `${MONTHS[am.m]} de ${am.y}` : team.nome}
+              </h1>
+              {am && (
+                <span className="tnum" style={{ fontSize:"0.78rem", color:T.textMuted }}>
+                  {monthDays.length} dias
+                </span>
+              )}
+            </div>
+
+            {/* ══ CALENDÁRIO ═════════════════════════════════════════════════
+                Um painel com linhas separadas por hairline, não 30 cards
+                flutuantes. Estes dados SÃO uma tabela: dias em linhas, turnos
+                dentro da linha. Ganha densidade (a restrição fixada pelo dono)
+                e calma ao mesmo tempo. */}
+            {!scheduleReady ? (
+              <div role="status" aria-label="Carregando calendário"
+                style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:T.rPanel, overflow:"hidden" }}>
+                {[0,1,2,3,4,5].map(i => (
+                  <div key={i} style={{ padding:"0.7rem 0.8rem", borderTop: i > 0 ? `1px solid ${T.border}` : "none" }}>
+                    <Skeleton h="1.9rem" T={T} />
+                  </div>
+                ))}
+              </div>
+            ) : !am ? (
+              // Estado vazio: equipe fora da vigência (infra e desenvolvimento
+              // só existem a partir de startsOn).
+              <Panel T={T} style={{ padding:"2rem 1rem", textAlign:"center" }}>
+                <p style={{ color:T.textSecondary, fontSize:"0.88rem", margin:0, fontWeight:600 }}>
+                  {team.nome} não tem escala neste período.
+                </p>
+                {team.startsOn && (
+                  <p style={{ color:T.textMuted, fontSize:"0.8rem", margin:"0.35rem 0 0" }}>
+                    A equipe existe a partir de {fmtDS(team.startsOn)}.
+                  </p>
+                )}
+              </Panel>
+            ) : (
+            <div style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:T.rPanel, overflow:"hidden" }}>
+              {monthDays.map((d, di) => {
+                const isToday   = sameDay(d.date, now);
+                const isWeekend = d.dow === 0 || d.dow === 6;
+                const isPast    = !isToday && d.date < now;
+                const dk        = dayKey(d.date);
+                const hasFiltered = !filter || d.shifts.some(s => {
+                  const locked = !!s.personsOverridden;
+                  return shiftPeople(s).some(p => {
+                    const sub = locked ? null : getActiveSub(p, dk, subs);
+                    return (sub ? sub.substituto : p) === filter || p === filter;
+                  });
+                }) || d.folga.includes(filter);
+                const overlap = detectOverlaps(d, dk, subs);
+                const rowBg = isToday ? T.accentQuiet : isWeekend ? T.surfaceAlt : "transparent";
+                return (
+                  <div key={dk} ref={isToday ? todayRef : null}
+                    style={{
+                      scrollMarginTop:"3.75rem",
+                      borderTop: di > 0 ? `1px solid ${T.border}` : "none",
+                      background: rowBg,
+                      opacity: isPast ? 0.5 : (filter && !hasFiltered) ? 0.32 : 1,
+                    }}>
+                    <div className="flex items-stretch">
+                      {/* CALHA DE DATA */}
+                      <div className="flex flex-col items-center justify-start shrink-0"
+                        style={{ width:"3.25rem", padding:"0.6rem 0", borderRight:`1px solid ${T.border}` }}>
+                        <div style={{ fontSize:"0.62rem", fontWeight:700, letterSpacing:"0.05em", textTransform:"uppercase", color:T.textMuted }}>
+                          {DOW_SHORT[d.dow]}
+                        </div>
+                        <div className="tnum" style={{ fontSize:"1.15rem", fontWeight:700, lineHeight:1.15, color: isToday ? T.accent : T.textPrimary }}>
+                          {String(d.date.getDate()).padStart(2,"0")}
+                        </div>
+                        {isToday && (
+                          <div style={{ marginTop:"0.15rem", fontSize:"0.55rem", fontWeight:800, letterSpacing:"0.06em", color:T.accent }}>
+                            HOJE
+                          </div>
+                        )}
+                      </div>
+
+                      {/* CONTEÚDO DO DIA */}
+                      <div className="flex-1 min-w-0" style={{ padding:"0.5rem 0.7rem" }}>
+                        {(d.label || (editMode && canEditActiveTeam) || overlap.samePerson || overlap.partial || overlap.identical) && (
+                          <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+                            {d.label && !editMode && (
+                              <Badge T={T} tone="accent">{d.label}</Badge>
+                            )}
+                            {/* Detector de sobreposição (§6): só a MESMA pessoa em turnos que se
+                                sobrepõem é aviso forte — pessoas diferentes em janelas idênticas é
+                                cobertura dupla intencional (feriado com dupla escala), sem alarme. */}
+                            {overlap.samePerson && (
+                              <Badge T={T} tone="danger" icon="alert">mesma pessoa em turnos sobrepostos</Badge>
+                            )}
+                            {overlap.partial && (
+                              <Badge T={T} tone="warn" icon="alert">sobreposição parcial</Badge>
+                            )}
+                            {overlap.identical && !overlap.samePerson && (
+                              <Badge T={T} tone="neutral">cobertura dupla</Badge>
+                            )}
+                            {editMode && canEditActiveTeam && (
+                              <input
+                                key={`${dk}-${d.label || ''}`}
+                                defaultValue={d.label || ''}
+                                placeholder="rótulo do dia (ex.: Feriado)"
+                                aria-label={`Rótulo de ${fmtDS(dk)}`}
+                                onBlur={e => saveDayLabel(dk, e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                                style={{ fontSize:'0.72rem', background:T.inputBg, color:T.textPrimary, border:`1px solid ${T.inputBorder}`, borderRadius:T.rControl, padding:'0.25rem 0.45rem', minHeight:'1.9rem', maxWidth:'13rem' }}
+                              />
+                            )}
+                          </div>
+                        )}
+
+                        {/* Semana do ciclo / Folga FDS só existem em equipe com rotação (a
+                            sustentação) — infra e desenvolvimento não têm rodízio, então
+                            d.cycleWeek vem null e não há nada a mostrar aqui. */}
+                        {isWeekend && d.dow === 6 && d.cycleWeek !== null && (
+                          <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+                            <Badge T={T} tone="neutral">Semana {d.cycleWeek} do ciclo</Badge>
+                            <Badge T={T} tone="warn" icon="umbrella"
+                              style={{ opacity: filter && !d.folga.includes(filter) ? 0.4 : 1 }}>
+                              Folga FDS: {d.folga.join(", ")}
+                            </Badge>
+                          </div>
+                        )}
+
+                        {/* TURNOS — ordenados pelo horário real de início; idx é só a
+                            chave estável do override, nunca a posição (ver "Dividir turno"). */}
+                        <div>
+                          {sortShiftsByStart(d.shifts, team.dayStart).map((s) => {
+                            const i = s.idx;
+                            const people = resolveShiftPeople(s, dk, subs)
+                              .map(r => ({ person: r.person, subOf: r.coveringFor, titular: r.titular }));
+                            const dim = !!(filter && !people.some(p => p.person === filter || p.titular === filter));
+                            const shiftKey = `${dk}-${i}`;
+                            const isSelected = selectedShifts.has(shiftKey);
+                            const ov = overrides[dk]?.[String(i)];
+                            const hasOverride = !!ov;
+                            const recent = ov?.editedAt ? (now.getTime() - Date.parse(ov.editedAt)) < EDIT_RECENT_MS : false;
+                            // Fora do modo edição: só destaca o que mudou recentemente.
+                            // No modo edição: destaca todos os overrides (o admin gerencia customizações).
+                            const highlight = editMode ? hasOverride : recent;
+                            const shiftProps = editMode ? {
+                              role: 'checkbox',
+                              'aria-checked': isSelected,
+                              'aria-label': `${DOW_SHORT[d.dow]} ${fmtDate(d.date)} · ${s.period} ${s.time} · ${people.map(p => p.person).join(', ')}`,
+                              tabIndex: 0,
+                              onClick: () => toggleShift(dk, i),
+                              onKeyDown: (e) => {
+                                if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggleShift(dk, i); }
+                              },
+                            } : {};
+                            return (
+                              <div key={i}
+                                {...shiftProps}
+                                className="flex flex-wrap items-center gap-x-2.5 gap-y-1"
+                                style={{
+                                  opacity: dim ? 0.32 : 1,
+                                  cursor: editMode ? 'pointer' : 'default',
+                                  background: isSelected ? T.accentQuiet : 'transparent',
+                                  boxShadow: isSelected ? `inset 0 0 0 1px ${T.accent}` : undefined,
+                                  borderRadius: T.rControl,
+                                  padding: editMode ? '0.35rem 0.4rem' : '0.12rem 0',
+                                  margin: editMode ? '0.1rem 0' : undefined,
+                                  fontSize: '0.82rem',
+                                }}>
+                                {editMode && (
+                                  <span aria-hidden="true" style={{ width:'0.95rem', height:'0.95rem', borderRadius:'3px', border:`1px solid ${isSelected?T.accent:T.borderStrong}`, background:isSelected?T.accentFill:'transparent', display:'inline-flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+                                    {isSelected && <Icon name="check" size={11} style={{ color:T.accentInk }} />}
+                                  </span>
+                                )}
+                                <span style={{ width:'5.5rem', flexShrink:0, fontWeight:600, color: highlight ? T.accent : T.textSecondary }}>
+                                  {s.period}
+                                </span>
+                                <span className="tnum" style={{ width:'7rem', flexShrink:0, fontFamily:T.fontMono, fontSize:'0.76rem', color: highlight ? T.accent : T.textMuted }}>
+                                  {s.time}
+                                </span>
+                                <span className="tnum" style={{ width:'2.1rem', flexShrink:0, fontFamily:T.fontMono, fontSize:'0.76rem', color:T.textMuted }}>
+                                  {shiftDuration(s.time)}
+                                </span>
+                                <span className="inline-flex flex-wrap items-center gap-1">
+                                  {people.length > 0 ? (
+                                    people.map((p, pi) => <PersonTag key={pi} name={p.person} subOf={p.subOf} T={T} dark={dark} />)
+                                  ) : canEditActiveTeam && !editMode ? (
+                                    <button type="button"
+                                      onClick={() => { setEditMode(true); setSelectedShifts(new Set([shiftKey])); }}
+                                      style={{ fontSize:'0.72rem', fontWeight:600, color:T.warn, background:T.warnQuiet, border:`1px dashed ${T.warnBorder}`, borderRadius:T.rChip, padding:'0.1rem 0.45rem', cursor:'pointer' }}>
+                                      sem plantonista — atribuir
+                                    </button>
+                                  ) : (
+                                    <span style={{ fontSize:'0.78rem', color:T.textMuted, fontStyle:'italic' }}>sem plantonista</span>
+                                  )}
+                                </span>
+                                {recent ? (
+                                  <Badge T={T} tone="accent" style={{ marginLeft:'auto' }}>
+                                    <span className="tnum">alterado {fmtEdited(ov.editedAt)}</span>
+                                  </Badge>
+                                ) : (editMode && hasOverride) ? (
+                                  <Badge T={T} tone="neutral" style={{ marginLeft:'auto' }}>editado</Badge>
+                                ) : null}
+                                {editMode && canEditActiveTeam && (
+                                  <Button T={T} size="sm" variant="quiet"
+                                    onClick={(e) => { e.stopPropagation(); openSplitForm(dk, i, s); }}
+                                    title="Dividir este turno em partes"
+                                    style={{ marginLeft: (recent || (editMode && hasOverride)) ? undefined : 'auto', minHeight:'1.75rem', padding:'0.15rem 0.45rem', fontSize:'0.68rem' }}>
+                                    <Icon name="scissors" size={12} /> Dividir
+                                  </Button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Adicionar turno ao dia (modo edição) */}
+                        {editMode && canEditActiveTeam && (addDay === dk ? (
+                          <div className="mt-2 pt-2" style={{ borderTop:`1px dashed ${T.borderStrong}` }}>
+                            <div className="grid gap-2 mb-2" style={{ gridTemplateColumns:'repeat(auto-fit, minmax(120px, 1fr))' }}>
+                              <input value={addForm.period} onChange={e => setAddForm(f => ({ ...f, period:e.target.value }))} placeholder="Período (ex: Tarde)" aria-label="Período do novo turno" style={{ ...selStyle, marginTop:0 }} />
+                              <input value={addForm.time} onChange={e => setAddForm(f => ({ ...f, time:e.target.value }))} placeholder="Horário (ex: 17:00 – 23:00)" aria-label="Horário do novo turno" style={{ ...selStyle, marginTop:0 }} />
+                            </div>
+                            <div className="mb-2">
+                              <PersonPicker selected={addForm.persons} onToggle={n => setAddForm(f => ({ ...f, persons: togglePerson(f.persons, n) }))} roster={team.roster} T={T} dark={dark} />
+                            </div>
+                            <div className="flex gap-2">
+                              <Button T={T} size="sm" variant="primary" onClick={addShift} disabled={editSaving}>
+                                {editSaving ? 'Salvando…' : 'Adicionar turno'}
+                              </Button>
+                              <Button T={T} size="sm" variant="secondary" onClick={() => { setAddDay(null); setEditError(null); }}>
+                                Cancelar
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <Button T={T} size="sm" variant="quiet" className="mt-1"
+                            onClick={() => { setAddDay(dk); setAddForm({ persons: [], period: '', time: '' }); setEditError(null); }}
+                            style={{ marginTop:'0.35rem', border:`1px dashed ${T.border}`, fontSize:'0.72rem' }}>
+                            <Icon name="plus" size={12} /> Adicionar turno
+                          </Button>
+                        ))}
+
+                        {/* Dividir turno (modo edição) — docs/specs/multi-equipe.md §6 */}
+                        {editMode && canEditActiveTeam && splitForm?.dk === dk && (
+                          <div className="mt-2 pt-2" style={{ borderTop:`1px dashed ${T.borderStrong}` }}>
+                            <div style={{ fontSize:'0.78rem', fontWeight:700, color:T.textPrimary, marginBottom:'0.15rem' }}>
+                              Dividir turno · {splitForm.originalPeriod} · <span className="tnum">{splitForm.originalTime}</span>
+                            </div>
+                            <p style={{ fontSize:'0.75rem', color:T.textMuted, margin:'0 0 0.6rem' }}>
+                              Pessoas vazias mantêm quem já está na 1ª parte; nas partes novas, viram turno vago.
+                            </p>
+                            {splitPreview?.error && (
+                              <p role="alert" className="flex items-center gap-1.5 mb-2" style={{ color:T.danger, fontSize:'0.75rem', fontWeight:600 }}>
+                                <Icon name="alert" size={13} /> {splitPreview.error}
+                              </p>
+                            )}
+                            {splitForm.parts.map((part, pi) => (
+                              <div key={pi} className="mb-2 pb-2" style={{ borderBottom: pi < splitForm.parts.length - 1 ? `1px dashed ${T.border}` : 'none' }}>
+                                <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                                  <span className="tnum" style={{ fontFamily:T.fontMono, fontSize:'0.76rem', fontWeight:700, color:T.textSecondary, minWidth:'7rem' }}>
+                                    {splitPreview?.parts?.[pi]?.time || '…'}
+                                  </span>
+                                  <input value={part.period} onChange={e => updateSplitPart(pi, 'period', e.target.value)}
+                                    placeholder="Período (ex: Manhã)" aria-label={`Período da parte ${pi + 1}`}
+                                    style={{ ...selStyle, marginTop:0, maxWidth:'11rem' }} />
+                                </div>
+                                <PersonPicker selected={part.persons} onToggle={n => updateSplitPart(pi, 'persons', togglePerson(part.persons, n))} roster={team.roster} T={T} dark={dark} />
+                                {pi < splitForm.cuts.length && (
+                                  <div className="flex items-center gap-2 mt-1.5">
+                                    <label style={labelStyle} htmlFor={`cut-${dk}-${pi}`}>corte em</label>
+                                    <input id={`cut-${dk}-${pi}`} type="time" value={splitForm.cuts[pi]} onChange={e => updateSplitCut(pi, e.target.value)}
+                                      style={{ ...selStyle, marginTop:0, width:'8rem' }} />
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                            <div className="flex flex-wrap gap-2 mb-2">
+                              <Button T={T} size="sm" variant="secondary" onClick={addSplitCut}
+                                disabled={splitForm.parts.length >= MAX_SPLIT_PARTS}
+                                style={{ borderStyle:'dashed' }}>
+                                <Icon name="plus" size={12} /> Adicionar corte
+                              </Button>
+                              {splitForm.cuts.length > 1 && (
+                                <Button T={T} size="sm" variant="quiet" onClick={removeSplitCut}>
+                                  Remover último corte
+                                </Button>
+                              )}
+                            </div>
+                            <div className="flex gap-2">
+                              <Button T={T} size="sm" variant="primary" onClick={applySplit}
+                                disabled={editSaving || !!splitPreview?.error}>
+                                {editSaving ? 'Salvando…' : `Dividir em ${splitForm.parts.length} partes`}
+                              </Button>
+                              <Button T={T} size="sm" variant="secondary" onClick={() => { setSplitForm(null); setEditError(null); }}>
+                                Cancelar
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            )}
+
+            {/* ══ SUBSTITUIÇÕES ══════════════════════════════════════════════ */}
+            <Panel T={T} style={{ marginTop:"1rem", padding:"0.8rem" }}>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2">
+                  <SectionLabel T={T}>Substituições</SectionLabel>
+                  {monthSubs.length > 0 && (
+                    <Badge T={T} tone="info">
+                      <span className="tnum">{monthSubs.length}</span> ativa{monthSubs.length > 1 ? "s" : ""}
+                    </Badge>
+                  )}
+                </div>
+                {/* Viewers cannot create substitutions */}
+                {profile?.role !== 'viewer' && (
+                  <Button T={T} size="sm" variant="secondary"
+                    onClick={subForm.show ? () => setSubForm(f => ({ ...f, show:false })) : openSubForm}>
+                    {subForm.show ? <><Icon name="x" size={13} /> Cancelar</> : <><Icon name="plus" size={13} /> Adicionar</>}
+                  </Button>
+                )}
               </div>
 
-              {/* Sempre as três equipes, ignorando o seletor (docs/specs/multi-equipe.md §5) */}
-              <div className="mt-1.5">
+              {subError && (
+                <p role="alert" className="flex items-center gap-1.5 mb-2" style={{ color:T.danger, fontSize:'0.78rem', fontWeight:600 }}>
+                  <Icon name="alert" size={13} /> {subError}
+                </p>
+              )}
+
+              {monthSubs.length === 0 && !subForm.show && !subsLoading && (
+                <p style={{ fontSize:"0.8rem", color:T.textMuted, margin:0 }}>
+                  Nenhuma substituição neste mês. Use para férias ou trocas eventuais.
+                </p>
+              )}
+              {subsLoading && <p role="status" style={{ fontSize:"0.8rem", color:T.textMuted, margin:0 }}>Carregando substituições…</p>}
+
+              {monthSubs.map((s, si) => {
+                // Show delete only to admin, or to member if they appear in the substitution
+                const canDelete = isAdmin
+                  || (profile?.role === 'member' && (s.titular === profile?.memberId || s.substituto === profile?.memberId));
+                return (
+                  <div key={s.id} className="flex items-center justify-between flex-wrap gap-y-1"
+                    style={{ borderTop: `1px solid ${T.border}`, padding:"0.4rem 0", marginTop: si === 0 ? "0.5rem" : 0 }}>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <PersonTag name={s.titular} T={T} dark={dark} />
+                      <Icon name="chevronRight" size={13} style={{ color:T.textMuted }} />
+                      <PersonTag name={s.substituto} T={T} dark={dark} />
+                      <span className="tnum" style={{ fontFamily:T.fontMono, fontSize:"0.74rem", color:T.textMuted }}>
+                        {fmtDS(s.from)} – {fmtDS(s.until)}
+                      </span>
+                    </div>
+                    {canDelete && (
+                      <Button T={T} size="sm" variant="quiet" onClick={() => removeSub(s)}
+                        aria-label={`Excluir substituição: ${s.substituto} cobre ${s.titular} de ${fmtDS(s.from)} a ${fmtDS(s.until)}`}
+                        style={{ width:'2.25rem', minHeight:'2.25rem', padding:0 }}>
+                        <Icon name="x" size={15} />
+                      </Button>
+                    )}
+                  </div>
+                );
+              })}
+
+              {subForm.show && (
+                <div className="mt-3 pt-3" style={{ borderTop:`1px solid ${T.border}` }}>
+                  <div className="grid gap-3 mb-3" style={{ gridTemplateColumns:'repeat(auto-fit, minmax(160px, 1fr))' }}>
+                    <label style={labelStyle}>Titular (ausente)
+                      <select value={subForm.titular} onChange={e => setSubForm(f => ({ ...f, titular:e.target.value, substituto: f.substituto===e.target.value?"":f.substituto }))} style={selStyle}>
+                        <option value="">Selecionar…</option>
+                        {team.roster.map(p => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                    </label>
+                    <label style={labelStyle}>Substituto
+                      <select value={subForm.substituto} onChange={e => setSubForm(f => ({ ...f, substituto:e.target.value }))} style={selStyle}>
+                        <option value="">Selecionar…</option>
+                        {team.roster.filter(p => p !== subForm.titular).map(p => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                    </label>
+                    <label style={labelStyle}>De
+                      <input type="date" value={subForm.from} onChange={e => setSubForm(f => ({ ...f, from:e.target.value }))} style={selStyle} />
+                    </label>
+                    <label style={labelStyle}>Até
+                      <input type="date" value={subForm.until} onChange={e => setSubForm(f => ({ ...f, until:e.target.value }))} style={selStyle} />
+                    </label>
+                  </div>
+                  <Button T={T} variant="primary" onClick={addSub} disabled={!canSave || subSaving}>
+                    {subSaving ? "Salvando…" : "Salvar substituição"}
+                  </Button>
+
+                  {coverSuggestions.length > 0 && (
+                    <div className="mt-4 pt-3" style={{ borderTop:`1px solid ${T.border}` }}>
+                      <SectionLabel T={T} style={{ marginBottom:'0.5rem' }}>
+                        {subForm.substituto
+                          ? `${subForm.substituto} cobrirá ${coverSuggestions.length} dia${coverSuggestions.length>1?"s":""} de ${subForm.titular || "…"}`
+                          : `${coverSuggestions.length} dia${coverSuggestions.length>1?"s":""} a cobrir — quem está livre`}
+                      </SectionLabel>
+                      <div>
+                        {coverSuggestions.slice(0, 12).map((day, i) => (
+                          <div key={i} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-0.5"
+                            style={{ borderTop: i > 0 ? `1px solid ${T.border}` : "none", padding:"0.35rem 0", fontSize:"0.78rem" }}>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="tnum" style={{ fontFamily:T.fontMono, fontWeight:700, color:T.textSecondary }}>{fmtDate(day.date)}</span>
+                              <span style={{ color:T.textMuted }}>{DOW_SHORT[day.dow]}</span>
+                              <span style={{ color:T.textSecondary }}>{day.shifts.map(s => s.period).join(" + ")}</span>
+                              <span className="tnum" style={{ fontFamily:T.fontMono, fontSize:'0.74rem', color:T.textMuted }}>{day.shifts.map(s => s.time).join(" / ")}</span>
+                            </div>
+                            {!subForm.substituto && (
+                              <span className="inline-flex items-center gap-1" style={{ color: day.available.length ? T.textSecondary : T.danger }}>
+                                {day.available.length ? `Livres: ${day.available.join(", ")}` : <><Icon name="alert" size={12} /> Todos ocupados</>}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                        {coverSuggestions.length > 12 && (
+                          <p style={{ fontSize:"0.75rem", color:T.textMuted, marginTop:"0.35rem" }}>
+                            … e mais {coverSuggestions.length - 12} dias
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </Panel>
+
+            {/* ══ PAINEL DE EDIÇÃO (sticky) ══════════════════════════════════
+                Overlay: sombra, sem borda. Antes carregava borda de 1.5px E
+                sombra de 32px — o "ghost card" que o sistema proíbe. */}
+            {canEditActiveTeam && editMode && (
+              <div style={{ position:'sticky', bottom:'0.75rem', marginTop:'1rem', background:T.surface, borderRadius:T.rPanel, padding:'0.85rem', boxShadow:T.shadowOverlay, zIndex:40 }}>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <span role="status" style={{ fontWeight:700, fontSize:'0.85rem', color: selectedShifts.size ? T.accent : T.textSecondary }}>
+                    {selectedShifts.size === 0
+                      ? 'Toque nos turnos do calendário para selecioná-los'
+                      : `${selectedShifts.size} turno${selectedShifts.size > 1 ? 's' : ''} selecionado${selectedShifts.size > 1 ? 's' : ''}`}
+                  </span>
+                  {selectedShifts.size > 0 && (
+                    <Button T={T} size="sm" variant="quiet" onClick={() => setSelectedShifts(new Set())}>
+                      Limpar seleção
+                    </Button>
+                  )}
+                </div>
+
+                {selectedShifts.size > 0 && (
+                  <>
+                    <div className="mb-3">
+                      <div style={labelStyle}>Pessoas <span style={{ fontWeight:400, color:T.textMuted }}>(vazio = manter as atuais)</span></div>
+                      <div className="mt-1">
+                        <PersonPicker selected={editForm.persons} onToggle={n => setEditForm(f => ({ ...f, persons: togglePerson(f.persons, n) }))} roster={team.roster} T={T} dark={dark} />
+                      </div>
+                    </div>
+                    <div className="grid gap-3 mb-3" style={{ gridTemplateColumns:'repeat(auto-fit, minmax(150px, 1fr))' }}>
+                      <label style={labelStyle}>Período
+                        <input value={editForm.period} onChange={e => setEditForm(f => ({ ...f, period:e.target.value }))}
+                          placeholder="ex: Madrugada" style={selStyle} />
+                      </label>
+                      <label style={labelStyle}>Horário
+                        <input value={editForm.time} onChange={e => setEditForm(f => ({ ...f, time:e.target.value }))}
+                          placeholder="ex: 23:00 – 04:00" style={selStyle} />
+                      </label>
+                    </div>
+
+                    {/* Toggle: apply to all future months */}
+                    <label style={{ display:'flex', alignItems:'center', gap:'0.5rem', marginBottom:'0.6rem', cursor:'pointer', userSelect:'none', minHeight:'2.25rem' }}>
+                      <input
+                        type="checkbox"
+                        checked={applyToFuture}
+                        onChange={e => setApplyToFuture(e.target.checked)}
+                        style={{ width:'1rem', height:'1rem', cursor:'pointer', accentColor:T.accentFill }}
+                      />
+                      <span style={{ fontSize:'0.8rem', fontWeight:600, color: applyToFuture ? T.accent : T.textSecondary }}>
+                        Aplicar a todos os meses seguintes
+                      </span>
+                      {applyToFuture && futureShiftCount > 0 && (
+                        <Badge T={T} tone="warn"><span className="tnum">{futureShiftCount}</span> turno{futureShiftCount > 1 ? 's' : ''}</Badge>
+                      )}
+                    </label>
+                    {applyToFuture && (
+                      <p className="flex items-center gap-1.5" style={{ fontSize:'0.75rem', color:T.warn, fontWeight:600, margin:'0 0 0.6rem 0' }}>
+                        <Icon name="alert" size={13} /> Mudança permanente — afeta todos os meses até o fim da escala
+                      </p>
+                    )}
+
+                    {editSubConflicts.length > 0 && (
+                      <div role="alert" style={{ display:'flex', gap:'0.5rem', alignItems:'flex-start', background:T.warnQuiet, border:`1px solid ${T.warnBorder}`, borderRadius:T.rControl, padding:'0.55rem 0.7rem', margin:'0 0 0.6rem 0' }}>
+                        <Icon name="alert" size={14} style={{ color:T.warn, flexShrink:0, marginTop:'0.1rem' }} />
+                        <div style={{ fontSize:'0.74rem', color:T.textSecondary, lineHeight:1.55 }}>
+                          <b style={{ color:T.warn }}>Conflito com substituição.</b>{' '}
+                          {editSubConflicts.map((c, i) => (
+                            <span key={i}>
+                              <b style={{ color:T.textPrimary }}>{c.person}</b> tem substituição ativa ({c.person} → {c.substituto}) em {fmtDS(c.dk)}
+                              {i < editSubConflicts.length - 1 ? '; ' : '. '}
+                            </span>
+                          ))}
+                          Com esta edição a pessoa é <b>mantida no turno</b> — a substituição não se aplica aqui. Se quer que o substituto assuma, use o formulário de Substituições.
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap gap-2 items-center">
+                      <Button T={T} variant="primary" onClick={applyEditOverrides} disabled={editSaving}>
+                        {editSaving ? (editProgress || 'Salvando…') : applyToFuture ? `Aplicar a ${futureShiftCount} turnos` : 'Aplicar alteração'}
+                      </Button>
+                      <Button T={T} variant="danger" onClick={resetSelectedShifts} disabled={editSaving}>
+                        {editSaving ? (editProgress || 'Salvando…') : applyToFuture ? `Resetar ${futureShiftCount} turnos` : 'Resetar para padrão'}
+                      </Button>
+                    </div>
+                    {editError && (
+                      <p role="alert" className="flex items-center gap-1.5" style={{ color:T.danger, fontSize:'0.76rem', fontWeight:600, marginTop:'0.5rem' }}>
+                        <Icon name="alert" size={13} /> {editError}
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
+            <footer style={{ marginTop:"1rem", fontSize:"0.72rem", color:T.footerText, lineHeight:1.6 }}>
+              Escala seg–sex fixa · rodízio de fim de semana em escada de 6 semanas (a partir de 18/07/2026) · 4 de plantão + 2 de folga
+            </footer>
+          </div>
+
+          {/* ══ BARRA LATERAL — estado e lentes ═══════════════════════════════ */}
+          <aside className="order-1 lg:order-2 flex flex-col gap-3 lg:sticky" style={{ top:"3.5rem" }}>
+
+            {/* AGORA — a resposta de 5 segundos (PRODUCT.md, princípio 1).
+                Sempre as três equipes, ignorando o seletor, cada uma com o
+                PRÓPRIO dayStart (ver ADR-0002). */}
+            <Panel T={T} style={{ padding:"0.75rem 0.8rem" }} aria-label="Plantão agora">
+              <div className="flex items-baseline justify-between gap-2 mb-2">
+                <SectionLabel T={T}>Agora</SectionLabel>
+                <span className="tnum" style={{ fontFamily:T.fontMono, fontSize:"0.74rem", color:T.textMuted }}>
+                  {DOW_SHORT[now.getDay()]} {fmtDate(now)} · {nowTime}
+                </span>
+              </div>
+
+              <div className={scheduleReady ? "settle-in" : undefined}>
                 {nowRows.map(row => {
                   const info = rowInfo(row);
                   return (
-                    <div key={row.team.id} style={{ display:"flex", alignItems:"center", gap:"0.45rem", marginTop:"0.3rem" }}>
+                    <div key={row.team.id} className="flex items-center gap-2"
+                      style={{ padding:"0.3rem 0", borderTop:`1px solid ${T.border}` }}>
                       <span style={{ width:7, height:7, borderRadius:"50%", flexShrink:0, background:info.dotColor }} />
-                      <span style={{ width:"5.2rem", flexShrink:0, fontSize:"0.68rem", color:"rgba(255,255,255,0.6)" }}>{row.team.nome}</span>
-                      <span className="truncate" style={{ fontSize:"0.82rem", fontWeight:600 }}>{info.text}</span>
+                      <span style={{ width:"5.4rem", flexShrink:0, fontSize:"0.72rem", color:T.textMuted }}>
+                        {row.team.nome}
+                      </span>
+                      <span className="truncate" style={{ fontSize:"0.82rem", fontWeight:600, color:info.tone }}>
+                        {info.text}
+                      </span>
                       {info.until && (
-                        <span style={{ fontSize:"0.65rem", color:"rgba(255,255,255,0.5)", flexShrink:0 }}>até {info.until}</span>
+                        <span className="tnum" style={{ marginLeft:"auto", flexShrink:0, fontFamily:T.fontMono, fontSize:"0.72rem", color:T.textMuted }}>
+                          até {info.until}
+                        </span>
                       )}
                     </div>
                   );
                 })}
               </div>
 
-              {/* Handoff: plantonista anterior e próximo, referente à equipe selecionada */}
+              {/* Handoff: plantonista anterior e próximo, da equipe SELECIONADA */}
               {scheduleReady && (handoff.anterior || handoff.proximo) && (
-                <>
-                  <div style={{ height:1, background:"rgba(255,255,255,0.12)", margin:"0.7rem 0 0.15rem" }} />
-                  <div style={{ fontSize:"0.62rem", color:"rgba(255,255,255,0.45)", marginBottom:"0.15rem" }}>{team.nome}</div>
+                <div style={{ marginTop:"0.6rem", paddingTop:"0.5rem", borderTop:`1px solid ${T.border}` }}>
+                  <div style={{ fontSize:"0.68rem", color:T.textMuted, marginBottom:"0.25rem" }}>
+                    Passagem de turno · {team.nome}
+                  </div>
                   {[
                     { label:"antes",  data:handoff.anterior, prefix:"até " },
                     { label:"depois", data:handoff.proximo,  prefix:"" },
                   ].map(({ label, data, prefix }) => (
-                    <div key={label} style={{ display:"flex", alignItems:"center", gap:"0.5rem", fontSize:"0.8rem", marginTop:"0.4rem" }}>
-                      <span style={{ width:"3rem", flex:"none", fontSize:"0.7rem", color:"rgba(255,255,255,0.5)" }}>{label}</span>
+                    <div key={label} className="flex items-center gap-2" style={{ fontSize:"0.8rem", padding:"0.15rem 0" }}>
+                      <span style={{ width:"3rem", flex:"none", fontSize:"0.72rem", color:T.textMuted }}>{label}</span>
                       {data ? (
                         <>
-                          <span style={{ width:8, height:8, borderRadius:"50%", flex:"none", background: data.people.length === 1 ? ((MEMBERS[data.people[0]]||{}).color||"#94A3B8") : "#94A3B8", boxShadow:"0 0 0 1px rgba(255,255,255,0.15)" }} />
-                          <span style={{ fontWeight:600, color:"#E2E8F0" }}>{data.people.length ? data.people.join(" / ") : "vago"}</span>
-                          <span style={{ color:"rgba(255,255,255,0.55)" }}>· {prefix}{data.hora}</span>
+                          <span style={{ width:7, height:7, borderRadius:"50%", flex:"none", background: data.people.length === 1 ? memberTone(data.people[0], dark).dot : T.textSecondary }} />
+                          <span style={{ fontWeight:600, color:T.textSecondary }} className="truncate">
+                            {data.people.length ? data.people.join(" / ") : "vago"}
+                          </span>
+                          <span className="tnum" style={{ marginLeft:"auto", flexShrink:0, fontFamily:T.fontMono, fontSize:"0.72rem", color:T.textMuted }}>
+                            {prefix}{data.hora}
+                          </span>
                         </>
                       ) : (
-                        <span style={{ color:"rgba(255,255,255,0.4)" }}>—</span>
+                        <span style={{ color:T.textMuted }}>—</span>
                       )}
                     </div>
                   ))}
-                </>
+                </div>
               )}
-            </div>
-          </div>
-        </header>
+            </Panel>
 
-        {/* SELETOR DE EQUIPE */}
-        <section className="mb-4" aria-label="Seletor de equipe">
-          <div className="flex flex-wrap gap-2">
-            {Object.values(TEAMS).map(t => (
-              <button key={t.id} onClick={() => switchTeam(t.id)} aria-pressed={activeTeam === t.id}
-                className="px-3.5 rounded-full text-sm font-bold transition-all"
-                style={{ minHeight:"2.5rem", background:activeTeam===t.id?ACCENT:T.filterDefBg, color:activeTeam===t.id?"#fff":T.filterDefColor, border:`1.5px solid ${activeTeam===t.id?ACCENT:T.filterDefBorder}` }}>
-                {t.nome}
-              </button>
-            ))}
-          </div>
-        </section>
-
-        {overridesError && (
-          <div role="alert" className="rounded-xl px-4 py-3 mb-4 flex items-center justify-between gap-3 flex-wrap"
-            style={{ background:"rgba(245,158,11,0.12)", border:`1px solid ${WARN}` }}>
-            <span className="flex items-center gap-2 text-sm font-semibold" style={{ color:WARN }}>
-              <Icon name="alert" size={16} />
-              Não foi possível carregar as edições da escala — mostrando a escala base.
-            </span>
-            <button onClick={() => loadOverrides(activeTeam)}
-              style={{ background:"transparent", border:`1px solid ${WARN}`, color:WARN, borderRadius:"9999px", padding:"0.35rem 0.9rem", fontSize:"0.75rem", fontWeight:700, cursor:"pointer", minHeight:"2.25rem" }}>
-              Tentar de novo
-            </button>
-          </div>
-        )}
-
-        {/* FILTRO — limitado ao roster da equipe selecionada */}
-        <section className="mb-4" aria-label="Filtro por responsável">
-          <h2 className="text-sm font-semibold mb-2" style={{ color:T.textSecondary }}>Filtrar por responsável</h2>
-          <div className="flex flex-wrap gap-2">
-            <button onClick={() => { setFilter(null); saveProfile({ filter: null }); }} className="px-3.5 rounded-full text-sm font-bold transition-all"
-              style={{ minHeight:"2.5rem", background:!filter?T.filterAllBg:T.filterDefBg, color:!filter?T.filterAllColor:T.filterDefColor, border:"1.5px solid "+(!filter?T.filterAllBorder:T.filterDefBorder) }}>
-              Todos
-            </button>
-            {team.roster.map(name => {
-              const p = MEMBERS[name] || { color: "#64748B" };
-              const temSubHoje = activeTitulares.has(name);
-              return (
-                <button key={name} onClick={() => handleFilterChange(name)} className="px-3.5 rounded-full text-sm font-bold transition-all inline-flex items-center gap-1.5"
-                  aria-pressed={filter === name}
-                  style={{ minHeight:"2.5rem", background:filter===name?p.color:T.filterDefBg, color:filter===name?"#fff":p.color, border:`1.5px solid ${filter===name?p.color:T.filterDefBorder}` }}>
-                  {name}
-                  {temSubHoje && <Icon name="umbrella" size={13} />}
+            {/* FILTRO — limitado ao roster da equipe selecionada */}
+            <Panel T={T} style={{ padding:"0.75rem 0.8rem" }} aria-label="Filtro por responsável">
+              <SectionLabel T={T} style={{ marginBottom:"0.5rem" }}>Filtrar por responsável</SectionLabel>
+              <div className="flex flex-wrap gap-1.5">
+                <button onClick={() => { setFilter(null); saveProfile({ filter: null }); }}
+                  aria-pressed={!filter}
+                  style={{
+                    fontSize:'0.75rem', fontWeight:600, padding:'0.3rem 0.55rem', minHeight:'2.1rem',
+                    borderRadius:T.rControl, cursor:'pointer',
+                    background: !filter ? T.accentFill : 'transparent',
+                    color: !filter ? T.accentInk : T.textSecondary,
+                    border:`1px solid ${!filter ? T.accentFill : T.border}`,
+                  }}>
+                  Todos
                 </button>
-              );
-            })}
-          </div>
-          {activeTitulares.size > 0 && (
-            <p className="flex items-center gap-1.5 text-xs mt-2" style={{ color:T.textMuted }}>
-              <Icon name="umbrella" size={12} /> = com substituição ativa hoje (ausente, coberto por outra pessoa)
-            </p>
-          )}
-        </section>
-
-        {/* PRÓXIMOS PLANTÕES */}
-        {filter && (
-          <section className="rounded-2xl p-4 mb-5" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}` }}>
-            <div className="flex items-center gap-2 mb-3">
-              <span className="w-3 h-3 rounded-full" style={{ background: (MEMBERS[filter] || {}).color }} />
-              <h2 className="font-bold text-base">Próximos sobreavisos de {filter}</h2>
-            </div>
-            {upcoming.length === 0 ? (
-              <div className="text-sm" style={{ color:T.textMuted }}>Nenhum plantão encontrado no período.</div>
-            ) : (
-              <div>
-                {upcoming.map((u, i) => (
-                  <div key={i} className="flex items-center justify-between py-2 text-sm gap-2 flex-wrap"
-                    style={{ borderTop: i>0?`1px solid ${T.divider}`:"none", opacity: u.coveredBy ? 0.5 : 1 }}>
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <span className="font-mono font-bold w-14" style={{ color:T.textSecondary }}>{fmtDate(u.date)}</span>
-                      <span className="w-10" style={{ color:T.textMuted }}>{DOW_SHORT[u.dow]}</span>
-                      {u.kind === "folga" ? (
-                        <span className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-bold" style={{ background:"#FEF9C3", color:"#854D0E" }}>
-                          <Icon name="umbrella" size={12} /> Folga FDS
-                        </span>
-                      ) : (
-                        <span className="font-semibold" style={{ color: (MEMBERS[filter] || {}).color }}>{u.period}</span>
-                      )}
-                      {u.coveringFor && <span className="text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:"#DBEAFE", color:"#1D4ED8" }}>cobre {u.coveringFor}</span>}
-                      {u.coveredBy  && <span className="text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:"#F3E5F5", color:"#7B1FA2" }}>coberto por {u.coveredBy}</span>}
-                    </div>
-                    <span className="font-mono text-xs" style={{ color:T.textMuted }}>{u.time}{shiftDuration(u.time)?` · ${shiftDuration(u.time)}`:""}</span>
-                  </div>
-                ))}
+                {team.roster.map(name => {
+                  const tone = memberTone(name, dark);
+                  const on = filter === name;
+                  const temSubHoje = activeTitulares.has(name);
+                  return (
+                    <button key={name} onClick={() => handleFilterChange(name)} aria-pressed={on}
+                      className="inline-flex items-center gap-1.5"
+                      style={{
+                        fontSize:'0.75rem', fontWeight:600, padding:'0.3rem 0.55rem', minHeight:'2.1rem',
+                        borderRadius:T.rControl, cursor:'pointer',
+                        background: on ? tone.tint : 'transparent',
+                        color: on ? tone.ink : T.textSecondary,
+                        border:`1px solid ${on ? tone.ink : T.border}`,
+                      }}>
+                      <span style={{ width:7, height:7, borderRadius:'50%', flexShrink:0, background:tone.dot, opacity: on ? 1 : 0.55 }} />
+                      {name}
+                      {temSubHoje && <Icon name="umbrella" size={12} />}
+                    </button>
+                  );
+                })}
               </div>
-            )}
-          </section>
-        )}
+              {activeTitulares.size > 0 && (
+                <p className="flex items-start gap-1.5" style={{ fontSize:"0.72rem", color:T.textMuted, marginTop:"0.5rem", lineHeight:1.5 }}>
+                  <Icon name="umbrella" size={12} style={{ flexShrink:0, marginTop:'0.15rem' }} />
+                  <span>= com substituição ativa hoje (ausente, coberto por outra pessoa)</span>
+                </p>
+              )}
+            </Panel>
 
-        {/* NAVEGAÇÃO DE MESES + BOTÃO DE EDIÇÃO (admin) */}
-        <div className="flex items-center gap-2 mb-3">
-          <div className="flex-1 min-w-0 rounded-xl px-3 py-1.5" style={{ background:T.cardBg, border:`1px solid ${editMode ? ACCENT : T.cardBorder}` }}>
-            <div className="flex gap-2 overflow-x-auto items-center" style={{ scrollbarWidth:"thin", scrollbarColor:`${T.cardBorder} transparent` }}>
-              <button onClick={goToToday} className="px-3 rounded-lg text-sm font-bold whitespace-nowrap transition-all flex-shrink-0"
-                style={{ minHeight:"2.5rem", background:"transparent", color:ACCENT, border:`1px solid ${ACCENT}` }}>
-                Hoje
-              </button>
-              {months.map(m => (
-                <button key={m.key} onClick={() => handleMonthChange(m.key)} className="px-3 rounded-lg text-sm font-bold whitespace-nowrap transition-all flex-shrink-0"
-                  aria-current={activeMonth === m.key ? 'true' : undefined}
-                  style={{ minHeight:"2.5rem", background:activeMonth===m.key?T.monthActiveBg:T.monthDefBg, color:activeMonth===m.key?T.monthActiveColor:T.monthDefColor, border:"1px solid "+(activeMonth===m.key?T.monthActiveBorder:T.monthDefBorder) }}>
-                  {MONTHS_SHORT[m.m]}/{String(m.y).slice(2)}
-                </button>
-              ))}
-            </div>
-          </div>
-          {canEditActiveTeam && (
-            <button
-              onClick={toggleEditMode}
-              style={{ flexShrink:0, display:"inline-flex", alignItems:"center", gap:"0.35rem", background: editMode ? ACCENT : T.cardBg, color: editMode ? '#fff' : T.textSecondary, border:`1px solid ${editMode ? ACCENT : T.cardBorder}`, borderRadius:"0.75rem", padding:"0.5rem 0.85rem", minHeight:"2.75rem", fontSize:"0.75rem", fontWeight:"700", cursor:"pointer", whiteSpace:"nowrap" }}
-            >
-              <Icon name={editMode ? "x" : "pencil"} size={14} />
-              {editMode ? 'Sair da edição' : 'Editar Escala'}
-            </button>
-          )}
-        </div>
-
-        {/* CALENDÁRIO */}
-        <h2 className="font-bold text-lg mb-2" style={{ color:T.textPrimary }}>{am?`${MONTHS[am.m]} de ${am.y}`:""}</h2>
-        {!scheduleReady ? (
-          <div className="space-y-2 pb-4" role="status" aria-label="Carregando calendário">
-            {[0,1,2,3].map(i => <Skeleton key={i} h="4.5rem" T={T} style={{ borderRadius:"0.75rem" }} />)}
-          </div>
-        ) : !am ? (
-          // Estado vazio: equipe sem dias neste período (fora da vigência —
-          // infra e desenvolvimento só existem a partir de startsOn).
-          <div className="rounded-xl p-6 mb-4 text-center text-sm" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}`, color:T.textMuted }}>
-            {team.nome} não tem escala neste período.
-            {team.startsOn && ` A equipe existe a partir de ${fmtDS(team.startsOn)}.`}
-          </div>
-        ) : (
-        <div className="space-y-2 pb-4">
-          {monthDays.map(d => {
-            const isToday   = sameDay(d.date, now);
-            const isWeekend = d.dow === 0 || d.dow === 6;
-            const isPast    = !isToday && d.date < now;
-            const dk        = dayKey(d.date);
-            const hasFiltered = !filter || d.shifts.some(s => {
-              const locked = !!s.personsOverridden;
-              return shiftPeople(s).some(p => {
-                const sub = locked ? null : getActiveSub(p, dk, subs);
-                return (sub ? sub.substituto : p) === filter || p === filter;
-              });
-            }) || d.folga.includes(filter);
-            const overlap = detectOverlaps(d, dk, subs);
-            return (
-              <div key={dayKey(d.date)} ref={isToday ? todayRef : null} className="rounded-xl overflow-hidden"
-                style={{ scrollMarginTop:'64px', border:`${isToday?2:1}px solid ${isToday?T.cardBorderToday:T.cardBorder}`, opacity: isPast?0.45:filter&&!hasFiltered?0.35:1, background:isWeekend?T.cardBgWeekend:T.cardBg }}>
-                <div className="flex items-stretch">
-                  <div className="flex flex-col items-center justify-center w-16 shrink-0 py-3"
-                    style={{ background:isWeekend?T.dateColBgWeekend:T.dateColBg, borderRight:`1px solid ${T.dateColBorder}` }}>
-                    <div className="text-[10px] font-bold uppercase tracking-wide" style={{ color:T.textMuted }}>{DOW_SHORT[d.dow]}</div>
-                    <div className="text-xl font-bold leading-tight" style={{ color:T.dateNumColor }}>{String(d.date.getDate()).padStart(2,"0")}</div>
-                    <div className="text-[10px] font-semibold" style={{ color:T.monthShortColor }}>{MONTHS_SHORT[d.date.getMonth()]}</div>
-                    {isToday && <div className="mt-1 text-[9px] font-bold text-white bg-slate-800 rounded px-1.5 py-0.5">HOJE</div>}
-                  </div>
-                  <div className="flex-1 px-3 py-2">
-                    {(d.label || (editMode && canEditActiveTeam) || overlap.samePerson || overlap.partial || overlap.identical) && (
-                      <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                        {d.label && !editMode && (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:"rgba(99,102,241,0.15)", color:"#A5B4FC" }}>
-                            <Icon name="umbrella" size={10} /> {d.label}
-                          </span>
-                        )}
-                        {/* Detector de sobreposição (§6): só a MESMA pessoa em turnos que se
-                            sobrepõem é aviso forte — pessoas diferentes em janelas idênticas é
-                            cobertura dupla intencional (feriado com dupla escala), sem alarme. */}
-                        {overlap.samePerson && (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:"rgba(239,68,68,0.15)", color:DANGER }}>
-                            <Icon name="alert" size={10} /> mesma pessoa em turnos sobrepostos
-                          </span>
-                        )}
-                        {overlap.partial && (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:"rgba(245,158,11,0.15)", color:WARN }}>
-                            <Icon name="alert" size={10} /> sobreposição parcial
-                          </span>
-                        )}
-                        {overlap.identical && !overlap.samePerson && (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:"rgba(148,163,184,0.15)", color:"#94A3B8" }}>
-                            cobertura dupla
-                          </span>
-                        )}
-                        {editMode && canEditActiveTeam && (
-                          <input
-                            key={`${dk}-${d.label || ''}`}
-                            defaultValue={d.label || ''}
-                            placeholder="rótulo do dia (ex.: Feriado)"
-                            onBlur={e => saveDayLabel(dk, e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-                            style={{ fontSize:'0.72rem', background:T.inputBg, color:T.textPrimary, border:`1px solid ${T.inputBorder}`, borderRadius:'0.4rem', padding:'0.3rem 0.5rem', minHeight:'2.25rem', maxWidth:'13rem' }}
-                          />
-                        )}
-                      </div>
-                    )}
-                    {/* Semana do ciclo / Folga FDS só existem em equipe com rotação (a
-                        sustentação) — infra e desenvolvimento não têm rodízio, então
-                        d.cycleWeek vem null e não há nada a mostrar aqui. */}
-                    {isWeekend && d.dow === 6 && d.cycleWeek !== null && (
-                      <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                        <span className="text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:T.cycleBg, color:T.cycleColor }}>
-                          Semana {d.cycleWeek} do ciclo
-                        </span>
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold rounded px-1.5 py-0.5" style={{ background:"#FEF9C3", color:"#854D0E", opacity: filter && !d.folga.includes(filter) ? 0.4 : 1 }}>
-                          <Icon name="umbrella" size={11} /> Folga FDS: {d.folga.join(", ")}
-                        </span>
-                      </div>
-                    )}
-                    <div className="space-y-0.5">
-                      {sortShiftsByStart(d.shifts, team.dayStart).map((s) => {
-                        const i = s.idx; // índice estável do override (não a posição no array)
-                        const people = resolveShiftPeople(s, dk, subs)
-                          .map(r => ({ person: r.person, subOf: r.coveringFor, titular: r.titular }));
-                        const dim = !!(filter && !people.some(p => p.person === filter || p.titular === filter));
-                        const shiftKey = `${dk}-${i}`;
-                        const isSelected = selectedShifts.has(shiftKey);
-                        const ov = overrides[dk]?.[String(i)];
-                        const hasOverride = !!ov;
-                        const recent = ov?.editedAt ? (now.getTime() - Date.parse(ov.editedAt)) < EDIT_RECENT_MS : false;
-                        // Fora do modo edição: só destaca o que mudou recentemente.
-                        // No modo edição: destaca todos os overrides (o admin gerencia customizações).
-                        const highlight = editMode ? hasOverride : recent;
-                        const shiftProps = editMode ? {
-                          role: 'checkbox',
-                          'aria-checked': isSelected,
-                          'aria-label': `${DOW_SHORT[d.dow]} ${fmtDate(d.date)} · ${s.period} ${s.time} · ${people.map(p => p.person).join(', ')}`,
-                          tabIndex: 0,
-                          onClick: () => toggleShift(dk, i),
-                          onKeyDown: (e) => {
-                            if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggleShift(dk, i); }
-                          },
-                        } : {};
-                        return (
-                          <div key={i}
-                            {...shiftProps}
-                            className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm"
-                            style={{
-                              opacity: dim ? 0.3 : 1,
-                              cursor: editMode ? 'pointer' : 'default',
-                              background: isSelected ? 'rgba(99,102,241,0.12)' : 'transparent',
-                              borderRadius: '0.375rem',
-                              padding: editMode ? '0.45rem 0.35rem' : '0.1rem 0',
-                              outline: isSelected ? `1.5px solid ${ACCENT}` : undefined,
-                              margin: editMode ? '0.05rem 0' : undefined,
-                            }}>
-                            {editMode && (
-                              <span aria-hidden="true" style={{ width:'1rem', height:'1rem', borderRadius:'3px', border:`1.5px solid ${isSelected?ACCENT:T.cardBorder}`, background:isSelected?ACCENT:'transparent', display:'inline-flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
-                                {isSelected && <Icon name="check" size={11} style={{ color:'#fff' }} />}
-                              </span>
-                            )}
-                            <span className="w-24 font-semibold" style={{ color: highlight ? '#818CF8' : T.textSecondary }}>{s.period}</span>
-                            <span className="font-mono text-xs w-28" style={{ color: highlight ? '#818CF8' : T.textMuted }}>{s.time}</span>
-                            <span className="font-mono text-xs w-9" style={{ color:T.textMuted }}>{shiftDuration(s.time)}</span>
-                            <span className="inline-flex flex-wrap items-center gap-1">
-                              {people.length > 0 ? (
-                                people.map((p, pi) => <PersonTag key={pi} name={p.person} subOf={p.subOf} />)
-                              ) : canEditActiveTeam && !editMode ? (
-                                <button type="button"
-                                  onClick={() => { setEditMode(true); setSelectedShifts(new Set([shiftKey])); }}
-                                  style={{ fontSize:'0.7rem', fontWeight:700, color:WARN, background:'rgba(245,158,11,0.1)', border:`1px dashed ${WARN}`, borderRadius:'0.4rem', padding:'0.15rem 0.55rem', cursor:'pointer' }}>
-                                  sem plantonista — atribuir
-                                </button>
-                              ) : (
-                                <span style={{ fontSize:'0.75rem', fontWeight:600, color:T.textMuted, fontStyle:'italic' }}>sem plantonista</span>
-                              )}
-                            </span>
-                            {recent ? (
-                              <span title={`Alterado em ${fmtEdited(ov.editedAt)}`} style={{ fontSize:'0.6rem', color:'#818CF8', fontWeight:'700', background:'rgba(99,102,241,0.1)', borderRadius:'3px', padding:'0 4px' }}>
-                                alterado {fmtEdited(ov.editedAt)}
-                              </span>
-                            ) : (editMode && hasOverride) ? (
-                              <span style={{ fontSize:'0.6rem', color:T.textMuted, fontWeight:'700', background:'rgba(148,163,184,0.12)', borderRadius:'3px', padding:'0 4px' }}>editado</span>
-                            ) : null}
-                            {editMode && canEditActiveTeam && (
-                              <button type="button"
-                                onClick={(e) => { e.stopPropagation(); openSplitForm(dk, i, s); }}
-                                title="Dividir este turno em partes"
-                                style={{ marginLeft:'auto', fontSize:'0.65rem', fontWeight:700, color:T.textMuted, background:'transparent', border:`1px solid ${T.cardBorder}`, borderRadius:'0.4rem', padding:'0.15rem 0.5rem', minHeight:'1.75rem', cursor:'pointer' }}>
-                                Dividir
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Adicionar turno ao dia (modo edição) */}
-                    {editMode && canEditActiveTeam && (addDay === dk ? (
-                      <div className="mt-2 pt-2" style={{ borderTop:`1px dashed ${T.cardBorder}` }}>
-                        <div className="grid gap-2 mb-2" style={{ gridTemplateColumns:'repeat(auto-fit, minmax(120px, 1fr))' }}>
-                          <input value={addForm.period} onChange={e => setAddForm(f => ({ ...f, period:e.target.value }))} placeholder="Período (ex: Tarde)" style={{ ...selStyle, marginTop:0 }} />
-                          <input value={addForm.time} onChange={e => setAddForm(f => ({ ...f, time:e.target.value }))} placeholder="Horário (ex: 17:00 – 23:00)" style={{ ...selStyle, marginTop:0 }} />
-                        </div>
-                        <div className="mb-2"><PersonPicker selected={addForm.persons} onToggle={n => setAddForm(f => ({ ...f, persons: togglePerson(f.persons, n) }))} roster={team.roster} /></div>
-                        <div className="flex gap-2">
-                          <button onClick={addShift} disabled={editSaving}
-                            style={{ background:ACCENT, color:'#fff', border:'none', borderRadius:'0.5rem', padding:'0.4rem 0.9rem', minHeight:'2.5rem', fontWeight:700, fontSize:'0.78rem', cursor:editSaving?'not-allowed':'pointer' }}>
-                            {editSaving ? 'Salvando…' : 'Adicionar turno'}
-                          </button>
-                          <button onClick={() => { setAddDay(null); setEditError(null); }}
-                            style={{ background:'transparent', color:T.textMuted, border:`1px solid ${T.cardBorder}`, borderRadius:'0.5rem', padding:'0.4rem 0.9rem', minHeight:'2.5rem', fontWeight:700, fontSize:'0.78rem', cursor:'pointer' }}>
-                            Cancelar
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <button onClick={() => { setAddDay(dk); setAddForm({ persons: [], period: '', time: '' }); setEditError(null); }}
-                        className="mt-1.5 inline-flex items-center gap-1"
-                        style={{ background:'transparent', color:T.textMuted, border:`1px dashed ${T.cardBorder}`, borderRadius:'0.5rem', padding:'0.35rem 0.7rem', minHeight:'2.25rem', fontSize:'0.72rem', fontWeight:700, cursor:'pointer' }}>
-                        <Icon name="plus" size={12} /> Adicionar turno
-                      </button>
-                    ))}
-
-                    {/* Dividir turno (modo edição) — docs/specs/multi-equipe.md §6 */}
-                    {editMode && canEditActiveTeam && splitForm?.dk === dk && (
-                      <div className="mt-2 pt-2" style={{ borderTop:`1px dashed ${T.cardBorder}` }}>
-                        <div className="text-xs font-semibold mb-1" style={{ color:T.textSecondary }}>
-                          Dividir turno · {splitForm.originalPeriod} · {splitForm.originalTime}
-                        </div>
-                        <p className="text-xs mb-2" style={{ color:T.textMuted }}>
-                          Pessoas vazias mantêm quem já está na 1ª parte; nas partes novas, viram turno vago.
-                        </p>
-                        {splitPreview?.error && (
-                          <p role="alert" className="flex items-center gap-1.5 text-xs font-semibold mb-2" style={{ color:DANGER }}>
-                            <Icon name="alert" size={13} /> {splitPreview.error}
-                          </p>
-                        )}
-                        {splitForm.parts.map((part, pi) => (
-                          <div key={pi} className="mb-2 pb-2" style={{ borderBottom: pi < splitForm.parts.length - 1 ? `1px dashed ${T.divider}` : 'none' }}>
-                            <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                              <span className="font-mono text-xs font-bold" style={{ color:T.textSecondary, minWidth:'7rem' }}>
-                                {splitPreview?.parts?.[pi]?.time || '…'}
-                              </span>
-                              <input value={part.period} onChange={e => updateSplitPart(pi, 'period', e.target.value)}
-                                placeholder="Período (ex: Manhã)" style={{ ...selStyle, marginTop:0, maxWidth:'11rem' }} />
-                            </div>
-                            <PersonPicker selected={part.persons} onToggle={n => updateSplitPart(pi, 'persons', togglePerson(part.persons, n))} roster={team.roster} />
-                            {pi < splitForm.cuts.length && (
-                              <div className="flex items-center gap-2 mt-1.5">
-                                <label style={labelStyle}>corte em</label>
-                                <input type="time" value={splitForm.cuts[pi]} onChange={e => updateSplitCut(pi, e.target.value)}
-                                  style={{ ...selStyle, marginTop:0, width:'8rem' }} />
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                        <div className="flex flex-wrap gap-2 mb-2">
-                          <button type="button" onClick={addSplitCut} disabled={splitForm.parts.length >= MAX_SPLIT_PARTS}
-                            style={{ background:'transparent', color:T.textSecondary, border:`1px dashed ${T.cardBorder}`, borderRadius:'0.5rem', padding:'0.35rem 0.7rem', minHeight:'2.25rem', fontSize:'0.72rem', fontWeight:700, cursor: splitForm.parts.length >= MAX_SPLIT_PARTS ? 'not-allowed' : 'pointer' }}>
-                            + Adicionar corte
-                          </button>
-                          {splitForm.cuts.length > 1 && (
-                            <button type="button" onClick={removeSplitCut}
-                              style={{ background:'transparent', color:T.textMuted, border:`1px solid ${T.cardBorder}`, borderRadius:'0.5rem', padding:'0.35rem 0.7rem', minHeight:'2.25rem', fontSize:'0.72rem', fontWeight:700, cursor:'pointer' }}>
-                              Remover último corte
-                            </button>
+            {/* PRÓXIMOS PLANTÕES da pessoa filtrada */}
+            {filter && (
+              <Panel T={T} style={{ padding:"0.75rem 0.8rem" }}>
+                <div className="flex items-center gap-2 mb-2">
+                  <span style={{ width:8, height:8, borderRadius:"50%", background:memberTone(filter, dark).dot, flexShrink:0 }} />
+                  <SectionLabel T={T}>Próximos sobreavisos de {filter}</SectionLabel>
+                </div>
+                {upcoming.length === 0 ? (
+                  <p style={{ fontSize:"0.8rem", color:T.textMuted, margin:0 }}>Nenhum plantão encontrado no período.</p>
+                ) : (
+                  <div>
+                    {upcoming.map((u, i) => (
+                      <div key={i} className="flex items-center justify-between gap-2 flex-wrap"
+                        style={{ borderTop: i>0?`1px solid ${T.border}`:"none", padding:"0.3rem 0", opacity: u.coveredBy ? 0.5 : 1, fontSize:"0.78rem" }}>
+                        <div className="flex items-center gap-2 flex-wrap min-w-0">
+                          <span className="tnum" style={{ fontFamily:T.fontMono, fontWeight:700, color:T.textSecondary }}>{fmtDate(u.date)}</span>
+                          <span style={{ color:T.textMuted, width:"1.9rem" }}>{DOW_SHORT[u.dow]}</span>
+                          {u.kind === "folga" ? (
+                            <Badge T={T} tone="warn" icon="umbrella">Folga FDS</Badge>
+                          ) : (
+                            <span style={{ fontWeight:600, color:memberTone(filter, dark).ink }}>{u.period}</span>
                           )}
+                          {u.coveringFor && <Badge T={T} tone="info">cobre {u.coveringFor}</Badge>}
+                          {u.coveredBy  && <Badge T={T} tone="neutral">coberto por {u.coveredBy}</Badge>}
                         </div>
-                        <div className="flex gap-2">
-                          <button onClick={applySplit} disabled={editSaving || !!splitPreview?.error}
-                            style={{ background: (editSaving || splitPreview?.error) ? T.cardBorder : ACCENT, color:'#fff', border:'none', borderRadius:'0.5rem', padding:'0.4rem 0.9rem', minHeight:'2.5rem', fontWeight:700, fontSize:'0.78rem', cursor: (editSaving || splitPreview?.error) ? 'not-allowed' : 'pointer' }}>
-                            {editSaving ? 'Salvando…' : `Dividir em ${splitForm.parts.length} partes`}
-                          </button>
-                          <button onClick={() => { setSplitForm(null); setEditError(null); }}
-                            style={{ background:'transparent', color:T.textMuted, border:`1px solid ${T.cardBorder}`, borderRadius:'0.5rem', padding:'0.4rem 0.9rem', minHeight:'2.5rem', fontWeight:700, fontSize:'0.78rem', cursor:'pointer' }}>
-                            Cancelar
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        )}
-
-        {/* SUBSTITUIÇÕES */}
-        <section className="rounded-2xl p-4 mt-4" style={{ background:T.cardBg, border:`1px solid ${T.cardBorder}` }}>
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-semibold" style={{ color:T.textSecondary }}>Substituições</h2>
-              {monthSubs.length > 0 && (
-                <span className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ background:"#DBEAFE", color:"#1D4ED8" }}>
-                  {monthSubs.length} ativa{monthSubs.length > 1 ? "s" : ""}
-                </span>
-              )}
-            </div>
-            {/* Viewers cannot create substitutions */}
-            {profile?.role !== 'viewer' && (
-              <button
-                onClick={subForm.show ? () => setSubForm(f => ({ ...f, show:false })) : openSubForm}
-                style={{ display:"inline-flex", alignItems:"center", gap:"0.3rem", background:"transparent", border:`1px solid ${T.cardBorder}`, borderRadius:"9999px", padding:"0.4rem 0.85rem", minHeight:"2.5rem", fontSize:"0.75rem", fontWeight:"700", cursor:"pointer", color:T.textSecondary }}
-              >
-                {subForm.show ? <><Icon name="x" size={13} /> Cancelar</> : <><Icon name="plus" size={13} /> Adicionar</>}
-              </button>
-            )}
-          </div>
-
-          {subError && (
-            <p role="alert" className="flex items-center gap-1.5 text-xs font-semibold mb-2" style={{ color:DANGER }}>
-              <Icon name="alert" size={13} /> {subError}
-            </p>
-          )}
-
-          {monthSubs.length === 0 && !subForm.show && !subsLoading && (
-            <div className="text-xs" style={{ color:T.textMuted }}>Nenhuma substituição neste mês. Use para férias ou trocas eventuais.</div>
-          )}
-          {subsLoading && <div className="text-xs" role="status" style={{ color:T.textMuted }}>Carregando substituições…</div>}
-
-          {monthSubs.map((s) => {
-            // Show delete only to admin, or to member if they appear in the substitution
-            const canDelete = isAdmin
-              || (profile?.role === 'member' && (s.titular === profile?.memberId || s.substituto === profile?.memberId));
-            return (
-              <div key={s.id} className="flex items-center justify-between py-1.5 flex-wrap gap-y-1"
-                style={{ borderTop: `1px solid ${T.divider}` }}>
-                <div className="flex items-center gap-2 flex-wrap text-sm">
-                  <PersonTag name={s.titular} />
-                  <span aria-hidden="true" style={{ color:T.textMuted, fontSize:"1rem" }}>→</span>
-                  <PersonTag name={s.substituto} />
-                  <span className="text-xs font-mono" style={{ color:T.textMuted }}>{fmtDS(s.from)} – {fmtDS(s.until)}</span>
-                </div>
-                {canDelete && (
-                  <button onClick={() => removeSub(s)}
-                    aria-label={`Excluir substituição: ${s.substituto} cobre ${s.titular} de ${fmtDS(s.from)} a ${fmtDS(s.until)}`}
-                    style={{ background:"transparent", border:"none", cursor:"pointer", color:T.textMuted, display:"inline-flex", alignItems:"center", justifyContent:"center", width:"2.75rem", height:"2.75rem", borderRadius:"0.5rem", flexShrink:0 }}>
-                    <Icon name="x" size={16} />
-                  </button>
-                )}
-              </div>
-            );
-          })}
-
-          {subForm.show && (
-            <div className="mt-3 pt-3" style={{ borderTop:`1px solid ${T.cardBorder}` }}>
-              <div className="grid grid-cols-2 gap-3 mb-3">
-                <div>
-                  <label style={labelStyle}>Titular (ausente)
-                  <select value={subForm.titular} onChange={e => setSubForm(f => ({ ...f, titular:e.target.value, substituto: f.substituto===e.target.value?"":f.substituto }))} style={selStyle}>
-                    <option value="">Selecionar…</option>
-                    {team.roster.map(p => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                  </label>
-                </div>
-                <div>
-                  <label style={labelStyle}>Substituto
-                  <select value={subForm.substituto} onChange={e => setSubForm(f => ({ ...f, substituto:e.target.value }))} style={selStyle}>
-                    <option value="">Selecionar…</option>
-                    {team.roster.filter(p => p !== subForm.titular).map(p => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                  </label>
-                </div>
-                <div>
-                  <label style={labelStyle}>De
-                  <input type="date" value={subForm.from} onChange={e => setSubForm(f => ({ ...f, from:e.target.value }))} style={selStyle} />
-                  </label>
-                </div>
-                <div>
-                  <label style={labelStyle}>Até
-                  <input type="date" value={subForm.until} onChange={e => setSubForm(f => ({ ...f, until:e.target.value }))} style={selStyle} />
-                  </label>
-                </div>
-              </div>
-              <button onClick={addSub} disabled={!canSave || subSaving}
-                style={{ background:canSave&&!subSaving?T.saveBg:T.cardBorder, color:canSave&&!subSaving?T.saveColor:T.textMuted, border:"none", borderRadius:"0.5rem", padding:"0.5rem 1.1rem", minHeight:"2.75rem", fontWeight:"700", fontSize:"0.8rem", cursor:canSave&&!subSaving?"pointer":"not-allowed", transition:"background 0.15s" }}>
-                {subSaving ? "Salvando…" : "Salvar substituição"}
-              </button>
-
-              {coverSuggestions.length > 0 && (
-                <div className="mt-4 pt-3" style={{ borderTop:`1px solid ${T.divider}` }}>
-                  <h3 className="text-xs font-semibold mb-2" style={{ color:T.labelColor }}>
-                    {subForm.substituto
-                      ? `${subForm.substituto} cobrirá ${coverSuggestions.length} dia${coverSuggestions.length>1?"s":""} de ${subForm.titular || "…"}`
-                      : `${coverSuggestions.length} dia${coverSuggestions.length>1?"s":""} a cobrir — quem está livre`}
-                  </h3>
-                  <div>
-                    {coverSuggestions.slice(0, 12).map((day, i) => (
-                      <div key={i} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-0.5 text-xs py-1.5"
-                        style={{ borderTop: i > 0 ? `1px solid ${T.divider}` : "none" }}>
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono font-bold" style={{ color:T.textSecondary }}>{fmtDate(day.date)}</span>
-                          <span style={{ color:T.textMuted }}>{DOW_SHORT[day.dow]}</span>
-                          <span style={{ color:T.textSecondary }}>{day.shifts.map(s => s.period).join(" + ")}</span>
-                          <span style={{ color:T.textMuted }}>{day.shifts.map(s => s.time).join(" / ")}</span>
-                        </div>
-                        {!subForm.substituto && (
-                          <span className="inline-flex items-center gap-1" style={{ color: day.available.length ? T.textSecondary : DANGER }}>
-                            {day.available.length ? `Livres: ${day.available.join(", ")}` : <><Icon name="alert" size={12} /> Todos ocupados</>}
-                          </span>
-                        )}
+                        <span className="tnum" style={{ fontFamily:T.fontMono, fontSize:"0.74rem", color:T.textMuted, flexShrink:0 }}>
+                          {u.time}{shiftDuration(u.time)?` · ${shiftDuration(u.time)}`:""}
+                        </span>
                       </div>
                     ))}
-                    {coverSuggestions.length > 12 && (
-                      <div className="text-xs mt-1" style={{ color:T.textMuted }}>… e mais {coverSuggestions.length - 12} dias</div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </section>
-
-        {/* PAINEL DE EDIÇÃO (sticky na parte inferior) */}
-        {canEditActiveTeam && editMode && (
-          <div style={{ position:'sticky', bottom:'1rem', marginTop:'1rem', background:T.cardBg, border:`1.5px solid ${selectedShifts.size ? ACCENT : T.cardBorder}`, borderRadius:'1rem', padding:'1rem', boxShadow:'0 8px 32px rgba(0,0,0,0.35)', zIndex:40 }}>
-            <div className="flex items-center justify-between mb-3">
-              <span style={{ fontWeight:700, fontSize:'0.875rem', color:T.textPrimary }} role="status">
-                {selectedShifts.size === 0
-                  ? 'Toque nos turnos do calendário para selecioná-los'
-                  : `${selectedShifts.size} turno${selectedShifts.size > 1 ? 's' : ''} selecionado${selectedShifts.size > 1 ? 's' : ''}`}
-              </span>
-              {selectedShifts.size > 0 && (
-                <button onClick={() => setSelectedShifts(new Set())} style={{ background:'none', border:'none', cursor:'pointer', fontSize:'0.78rem', color:T.textMuted, padding:'0.5rem', minHeight:'2.5rem' }}>
-                  Limpar seleção
-                </button>
-              )}
-            </div>
-
-            {selectedShifts.size > 0 && (
-              <>
-                <div className="mb-3">
-                  <div style={labelStyle}>Pessoas <span style={{ fontWeight:400, color:T.textMuted }}>(vazio = manter as atuais)</span></div>
-                  <div className="mt-1">
-                    <PersonPicker selected={editForm.persons} onToggle={n => setEditForm(f => ({ ...f, persons: togglePerson(f.persons, n) }))} roster={team.roster} />
-                  </div>
-                </div>
-                <div className="grid gap-3 mb-3" style={{ gridTemplateColumns:'repeat(auto-fit, minmax(130px, 1fr))' }}>
-                  <div>
-                    <label style={labelStyle}>Período
-                    <input value={editForm.period} onChange={e => setEditForm(f => ({ ...f, period:e.target.value }))}
-                      placeholder="ex: Madrugada" style={selStyle} />
-                    </label>
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Horário
-                    <input value={editForm.time} onChange={e => setEditForm(f => ({ ...f, time:e.target.value }))}
-                      placeholder="ex: 23:00 – 04:00" style={selStyle} />
-                    </label>
-                  </div>
-                </div>
-
-                {/* Toggle: apply to all future months */}
-                <label style={{ display:'flex', alignItems:'center', gap:'0.5rem', marginBottom:'0.75rem', cursor:'pointer', userSelect:'none', minHeight:'2.5rem' }}>
-                  <input
-                    type="checkbox"
-                    checked={applyToFuture}
-                    onChange={e => setApplyToFuture(e.target.checked)}
-                    style={{ width:'1.1rem', height:'1.1rem', cursor:'pointer', accentColor:ACCENT }}
-                  />
-                  <span style={{ fontSize:'0.8rem', fontWeight:'600', color: applyToFuture ? '#A5B4FC' : T.textSecondary }}>
-                    Aplicar a todos os meses seguintes
-                  </span>
-                  {applyToFuture && futureShiftCount > 0 && (
-                    <span style={{ fontSize:'0.72rem', fontWeight:'700', background:'rgba(245,158,11,0.15)', color:WARN, borderRadius:'9999px', padding:'0.1rem 0.5rem' }}>
-                      {futureShiftCount} turno{futureShiftCount > 1 ? 's' : ''}
-                    </span>
-                  )}
-                </label>
-                {applyToFuture && (
-                  <p className="flex items-center gap-1.5" style={{ fontSize:'0.72rem', color:WARN, fontWeight:'600', margin:'0 0 0.75rem 0' }}>
-                    <Icon name="alert" size={13} /> Mudança permanente — afeta todos os meses até o fim da escala
-                  </p>
-                )}
-
-                {editSubConflicts.length > 0 && (
-                  <div role="alert" style={{ display:'flex', gap:'0.5rem', alignItems:'flex-start', background:'rgba(245,158,11,0.1)', border:`1px solid ${WARN}`, borderRadius:'0.6rem', padding:'0.6rem 0.75rem', margin:'0 0 0.75rem 0' }}>
-                    <Icon name="alert" size={14} style={{ color:WARN, flexShrink:0, marginTop:'0.1rem' }} />
-                    <div style={{ fontSize:'0.72rem', color:T.textSecondary, lineHeight:1.5 }}>
-                      <b style={{ color:WARN }}>Conflito com substituição.</b>{' '}
-                      {editSubConflicts.map((c, i) => (
-                        <span key={i}>
-                          <b style={{ color:T.textPrimary }}>{c.person}</b> tem substituição ativa ({c.person} → {c.substituto}) em {fmtDS(c.dk)}
-                          {i < editSubConflicts.length - 1 ? '; ' : '. '}
-                        </span>
-                      ))}
-                      Com esta edição a pessoa é <b>mantida no turno</b> — a substituição não se aplica aqui. Se quer que o substituto assuma, use o formulário de Substituições.
-                    </div>
                   </div>
                 )}
-
-                <div className="flex flex-wrap gap-2 items-center">
-                  <button onClick={applyEditOverrides} disabled={editSaving}
-                    style={{ background:editSaving?T.cardBorder:ACCENT, color:'#fff', border:'none', borderRadius:'0.5rem', padding:'0.5rem 1rem', minHeight:'2.75rem', fontWeight:700, fontSize:'0.8rem', cursor:editSaving?'not-allowed':'pointer' }}>
-                    {editSaving ? (editProgress || 'Salvando…') : applyToFuture ? `Aplicar a ${futureShiftCount} turnos` : 'Aplicar alteração'}
-                  </button>
-                  <button onClick={resetSelectedShifts} disabled={editSaving}
-                    style={{ background:'transparent', color:DANGER, border:`1px solid ${DANGER}`, borderRadius:'0.5rem', padding:'0.5rem 0.85rem', minHeight:'2.75rem', fontWeight:700, fontSize:'0.8rem', cursor:editSaving?'not-allowed':'pointer' }}>
-                    {editSaving ? (editProgress || 'Salvando…') : applyToFuture ? `Resetar ${futureShiftCount} turnos` : 'Resetar para padrão'}
-                  </button>
-                </div>
-                {editError && (
-                  <p role="alert" className="flex items-center gap-1.5" style={{ color:DANGER, fontSize:'0.75rem', fontWeight:600, marginTop:'0.5rem' }}>
-                    <Icon name="alert" size={13} /> {editError}
-                  </p>
-                )}
-              </>
+              </Panel>
             )}
-          </div>
-        )}
-
-        <footer className="mt-4 text-center text-xs" style={{ color:T.footerText }}>
-          Escala seg–sex fixa · rodízio de fim de semana em escada de 6 semanas (a partir de 18/07/2026) · 4 de plantão + 2 de folga
-        </footer>
+          </aside>
+        </div>
       </div>
 
       <Snackbar
