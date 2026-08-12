@@ -825,7 +825,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
               <h1 className="text-sm font-semibold opacity-80 mb-1" style={{ letterSpacing:"0.01em" }}>Escala de Sobreaviso</h1>
               <div className="text-2xl font-bold">{DOW[now.getDay()]}, {fmtDate(now)}/{now.getFullYear()}</div>
             </div>
-            <div className="rounded-xl px-4 py-3 min-w-[230px]" style={{ background:"rgba(255,255,255,0.08)", borderLeft:`4px solid ${scheduleReady ? onCallColor : "rgba(255,255,255,0.25)"}` }}>
+            <div className="rounded-xl px-4 py-3 min-w-[230px]" style={{ background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.16)" }}>
               <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider opacity-80">
                 <span className="relative flex w-2 h-2">
                   <span className="animate-ping motion-reduce:animate-none absolute inline-flex h-full w-full rounded-full opacity-60" style={{ background:scheduleReady ? onCallColor : "#94A3B8" }} />
