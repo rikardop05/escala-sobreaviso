@@ -1,10 +1,63 @@
 import { useState, useEffect } from 'react';
 import { SignedIn, SignedOut, UserButton, useUser, useClerk } from '@clerk/clerk-react';
 import { useApi } from './lib/api';
-import { Icon } from './components/ui';
+import { Icon, Badge, Button } from './components/ui';
+import { getTheme } from './lib/theme';
 import EscalaSobreaviso from './components/EscalaSobreaviso';
 import ControleDeHoras from './components/ControleDeHoras';
 import EstruturaEscala from './components/EstruturaEscala';
+
+// ─── NAVEGAÇÃO ────────────────────────────────────────────────────────────────
+// Abas com sublinhado de acento, não pílulas. A barra usa a superfície do tema
+// nos DOIS modos: antes era um bloco #020617/#1E293B com texto branco forçado,
+// então no tema claro o app abria com uma faixa quase preta em cima de uma página
+// clara, e todo texto dentro dela precisava de rgba(255,255,255,x) hardcoded.
+
+function Tab({ T, active, onClick, icon, children }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-current={active ? 'page' : undefined}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
+        background: 'transparent',
+        color: active ? T.textPrimary : T.textMuted,
+        border: 'none',
+        borderBottom: `2px solid ${active ? T.accent : 'transparent'}`,
+        padding: '0 0.2rem',
+        margin: '0 0.55rem',
+        height: '2.75rem',
+        fontSize: '0.82rem',
+        fontWeight: active ? 700 : 600,
+        cursor: 'pointer',
+        transition: 'color 0.12s, border-color 0.12s',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <Icon name={icon} size={15} />
+      {children}
+    </button>
+  );
+}
+
+function NavBar({ T, children }) {
+  return (
+    <nav aria-label="Seções do aplicativo" style={{
+      background: T.surface,
+      borderBottom: `1px solid ${T.border}`,
+      padding: '0 0.9rem',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '0.15rem',
+      position: 'sticky',
+      top: 0,
+      zIndex: 50,
+      minHeight: '2.75rem',
+    }}>
+      {children}
+    </nav>
+  );
+}
 
 // ─── APP PRINCIPAL (só renderiza se autenticado) ──────────────────────────────
 
@@ -94,75 +147,42 @@ function MainApp() {
     saveProfile({ dark: next });
   };
 
+  const T = getTheme(dark);
+
   if (loading) {
+    const TL = getTheme(true);
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: "#0F172A" }}>
-        <div className="text-slate-400 text-sm" role="status">Carregando seu perfil…</div>
+      <div className="min-h-screen flex items-center justify-center" style={{ background: TL.pageBg }}>
+        <div style={{ color: TL.textMuted, fontSize: '0.85rem' }} role="status">Carregando seu perfil…</div>
       </div>
     );
   }
 
-  const navBg = dark ? "#020617" : "#1E293B";
-
-  const tabStyle = (active) => ({
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "0.4rem",
-    background: active ? "rgba(255,255,255,0.15)" : "transparent",
-    color: active ? "#fff" : "rgba(255,255,255,0.7)",
-    border: "1px solid " + (active ? "rgba(255,255,255,0.25)" : "transparent"),
-    borderRadius: "9999px",
-    padding: "0.55rem 1rem",
-    minHeight: "2.75rem",
-    fontSize: "0.8rem",
-    fontWeight: "700",
-    cursor: "pointer",
-    transition: "all 0.15s",
-    letterSpacing: "0.02em",
-  });
-
   return (
-    <div>
-      <nav aria-label="Seções do aplicativo" style={{
-        background: navBg,
-        padding: "0.35rem 1rem",
-        display: "flex",
-        alignItems: "center",
-        gap: "0.5rem",
-        position: "sticky",
-        top: 0,
-        zIndex: 50,
-        borderBottom: "1px solid rgba(255,255,255,0.06)",
-        transition: "background 0.2s",
-      }}>
-        <img src="/logo.png" alt="Escala de Sobreaviso" width={32} height={32} style={{ borderRadius: "8px", flexShrink: 0 }} />
-        <button onClick={() => setView('escala')} style={tabStyle(view === 'escala')} aria-current={view === 'escala' ? 'page' : undefined}>
-          <Icon name="calendar" size={15} /> Escala
-        </button>
+    <div style={{ background: T.pageBg, minHeight: '100vh' }}>
+      <NavBar T={T}>
+        <img src="/logo.png" alt="" width={22} height={22} style={{ borderRadius: '4px', flexShrink: 0, marginRight: '0.6rem' }} />
+        <Tab T={T} active={view === 'escala'} onClick={() => setView('escala')} icon="calendar">Escala</Tab>
         {canAccessCH && (
-          <button onClick={() => setView('controle')} style={tabStyle(view === 'controle')} aria-current={view === 'controle' ? 'page' : undefined}>
-            <Icon name="clock" size={15} /> Controle de Horas
-          </button>
+          <Tab T={T} active={view === 'controle'} onClick={() => setView('controle')} icon="clock">Controle de Horas</Tab>
         )}
         {isAdmin && (
-          <button onClick={() => setView('estrutura')} style={tabStyle(view === 'estrutura')} aria-current={view === 'estrutura' ? 'page' : undefined}>
-            <Icon name="calendar" size={15} /> Estrutura
-          </button>
+          <Tab T={T} active={view === 'estrutura'} onClick={() => setView('estrutura')} icon="layers">Estrutura</Tab>
         )}
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "0.75rem" }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+          <Button T={T} size="sm" variant="quiet" onClick={toggleDark}
+            aria-label={dark ? 'Mudar para tema claro' : 'Mudar para tema escuro'}>
+            <Icon name={dark ? 'sun' : 'moon'} size={14} />
+          </Button>
           {profile?.memberId && (
-            <span style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.7)", fontWeight: "600" }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.76rem', color: T.textSecondary, fontWeight: 600 }}>
               {profile.memberId}
-              {profile.role === 'admin' && (
-                <span style={{ marginLeft: "0.3rem", fontSize: "0.6rem", background: "rgba(250,204,21,0.15)", color: "#FCD34D", borderRadius: "3px", padding: "1px 4px", verticalAlign: "middle" }}>
-                  admin
-                </span>
-              )}
+              {isAdmin && <Badge T={T} tone="accent">admin</Badge>}
             </span>
           )}
           <UserButton afterSignOutUrl="/" />
         </div>
-      </nav>
+      </NavBar>
 
       {view === 'estrutura' && isAdmin ? (
         <EstruturaEscala dark={dark} profile={profile} />
@@ -182,44 +202,23 @@ function MainApp() {
 function PublicApp() {
   const { openSignIn } = useClerk();
   const [dark, setDark] = useState(true);
-
-  const navBg = dark ? "#020617" : "#1E293B";
+  const T = getTheme(dark);
 
   return (
-    <div>
-      <header style={{
-        background: navBg,
-        padding: "0.35rem 1rem",
-        display: "flex",
-        alignItems: "center",
-        gap: "0.5rem",
-        position: "sticky",
-        top: 0,
-        zIndex: 50,
-        borderBottom: "1px solid rgba(255,255,255,0.06)",
-        transition: "background 0.2s",
-        minHeight: "3.25rem",
-      }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem", fontWeight: "700", color: "#fff" }}>
-          <img src="/logo.png" alt="" width={22} height={22} style={{ borderRadius: "5px", flexShrink: 0 }} /> Escala de Sobreaviso
+    <div style={{ background: T.pageBg, minHeight: '100vh' }}>
+      <NavBar T={T}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem', fontWeight: 700, color: T.textPrimary }}>
+          <img src="/logo.png" alt="" width={22} height={22} style={{ borderRadius: '4px', flexShrink: 0 }} />
+          Escala de Sobreaviso
         </span>
-        <div style={{ marginLeft: "auto" }}>
-          <button onClick={() => openSignIn()} style={{
-            background: "rgba(255,255,255,0.15)",
-            color: "#fff",
-            border: "1px solid rgba(255,255,255,0.25)",
-            borderRadius: "9999px",
-            padding: "0.55rem 1.1rem",
-            minHeight: "2.75rem",
-            fontSize: "0.8rem",
-            fontWeight: "700",
-            cursor: "pointer",
-            letterSpacing: "0.02em",
-          }}>
-            Entrar
-          </button>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Button T={T} size="sm" variant="quiet" onClick={() => setDark(d => !d)}
+            aria-label={dark ? 'Mudar para tema claro' : 'Mudar para tema escuro'}>
+            <Icon name={dark ? 'sun' : 'moon'} size={14} />
+          </Button>
+          <Button T={T} size="sm" variant="primary" onClick={() => openSignIn()}>Entrar</Button>
         </div>
-      </header>
+      </NavBar>
       <EscalaSobreaviso
         dark={dark}
         onToggleDark={() => setDark(d => !d)}

@@ -27,31 +27,56 @@ const SUSTENTACAO_FULL_NAMES = {
   Raul: "Raul Vitti",
   Alice: "Alice Santos",
 };
+// `hue` é a matiz OKLCH da pessoa — a identidade de cor, sem lightness nem
+// chroma. O tom concreto (texto, ponto, fundo do chip) é derivado por
+// memberTone() em src/lib/theme.js, com lightness FIXA por tema: é o que garante
+// que as 19 pessoas tenham o mesmo contraste e que ninguém "suma" no escuro,
+// como acontecia com as cores Material antigas (#424242 sobre card escuro).
+//
+// Matizes espalhadas DENTRO de cada equipe (nunca 19 únicas globais): você só vê
+// o roster de uma equipe por vez, exceto no widget "Agora", onde o nome da
+// equipe acompanha cada linha e a cor não é o único diferenciador. Vizinhos na
+// mesma equipe ficam a ≥40° um do outro.
+const SUSTENTACAO_HUES = {
+  "Marcus Túlio": 22,
+  Raul: 78,
+  Ricardo: 150,
+  Alice: 196,
+  Emanoel: 258,
+  Carlos: 305,
+};
+
 const SUSTENTACAO_MEMBERS = Object.fromEntries(
   Object.entries(PEOPLE).map(([name, p]) => [
     name,
-    { fullName: SUSTENTACAO_FULL_NAMES[name] || name, teamId: "sustentacao", color: p.color, bg: p.bg },
+    {
+      fullName: SUSTENTACAO_FULL_NAMES[name] || name,
+      teamId: "sustentacao",
+      hue: SUSTENTACAO_HUES[name] ?? 250,
+      color: p.color,
+      bg: p.bg,
+    },
   ])
 );
 
 // Roster derivado da planilha operacional Sobreaviso(Jul-26).csv — ver docs/specs/multi-equipe.md §1.
 const DESENVOLVIMENTO_MEMBERS = {
-  "Luis":              { fullName: "Luis Gustavo",       teamId: "desenvolvimento", color: "#00695C", bg: "#E0F2F1" },
-  "Adalberto":         { fullName: "Adalberto Teshima",  teamId: "desenvolvimento", color: "#0277BD", bg: "#E1F5FE" },
-  "Pedro":             { fullName: "Pedro Wesley",       teamId: "desenvolvimento", color: "#283593", bg: "#E8EAF6" },
-  "Dante":             { fullName: "Dante Escame",       teamId: "desenvolvimento", color: "#C62828", bg: "#FFEBEE" },
-  "Leonardo Matheus":  { fullName: "Leonardo Matheus",   teamId: "desenvolvimento", color: "#4E342E", bg: "#EFEBE9" },
-  "Leonardo Menegon":  { fullName: "Leonardo Menegon",   teamId: "desenvolvimento", color: "#558B2F", bg: "#F1F8E9" },
-  "Jonata":            { fullName: "Jonata Crepaldi",    teamId: "desenvolvimento", color: "#827717", bg: "#F9FBE7" },
-  "Ícaro":             { fullName: "Ícaro Gomes",        teamId: "desenvolvimento", color: "#00838F", bg: "#E0F7FA" },
+  "Luis":              { fullName: "Luis Gustavo",       teamId: "desenvolvimento", hue: 172, color: "#00695C", bg: "#E0F2F1" },
+  "Adalberto":         { fullName: "Adalberto Teshima",  teamId: "desenvolvimento", hue: 248, color: "#0277BD", bg: "#E1F5FE" },
+  "Pedro":             { fullName: "Pedro Wesley",       teamId: "desenvolvimento", hue: 292, color: "#283593", bg: "#E8EAF6" },
+  "Dante":             { fullName: "Dante Escame",       teamId: "desenvolvimento", hue: 8,   color: "#C62828", bg: "#FFEBEE" },
+  "Leonardo Matheus":  { fullName: "Leonardo Matheus",   teamId: "desenvolvimento", hue: 48,  color: "#4E342E", bg: "#EFEBE9" },
+  "Leonardo Menegon":  { fullName: "Leonardo Menegon",   teamId: "desenvolvimento", hue: 132, color: "#558B2F", bg: "#F1F8E9" },
+  "Jonata":            { fullName: "Jonata Crepaldi",    teamId: "desenvolvimento", hue: 92,  color: "#827717", bg: "#F9FBE7" },
+  "Ícaro":             { fullName: "Ícaro Gomes",        teamId: "desenvolvimento", hue: 208, color: "#00838F", bg: "#E0F7FA" },
 };
 
 const INFRA_MEMBERS = {
-  "Alberth": { fullName: "Alberth Souza",     teamId: "infra", color: "#4527A0", bg: "#EDE7F6" },
-  "Gabriel": { fullName: "Gabriel Pavanelli", teamId: "infra", color: "#BF360C", bg: "#FBE9E7" },
-  "Antonio": { fullName: "Antonio Carlos",    teamId: "infra", color: "#424242", bg: "#F5F5F5" },
-  "Diogo":   { fullName: "Diogo de Moraes",   teamId: "infra", color: "#880E4F", bg: "#FCE4EC" },
-  "Caio":    { fullName: "Caio Ribeiro",      teamId: "infra", color: "#B71C1C", bg: "#FFEBEE" },
+  "Alberth": { fullName: "Alberth Souza",     teamId: "infra", hue: 272, color: "#4527A0", bg: "#EDE7F6" },
+  "Gabriel": { fullName: "Gabriel Pavanelli", teamId: "infra", hue: 35,  color: "#BF360C", bg: "#FBE9E7" },
+  "Antonio": { fullName: "Antonio Carlos",    teamId: "infra", hue: 218, color: "#424242", bg: "#F5F5F5" },
+  "Diogo":   { fullName: "Diogo de Moraes",   teamId: "infra", hue: 330, color: "#880E4F", bg: "#FCE4EC" },
+  "Caio":    { fullName: "Caio Ribeiro",      teamId: "infra", hue: 108, color: "#B71C1C", bg: "#FFEBEE" },
 };
 
 export const MEMBERS = { ...SUSTENTACAO_MEMBERS, ...DESENVOLVIMENTO_MEMBERS, ...INFRA_MEMBERS };

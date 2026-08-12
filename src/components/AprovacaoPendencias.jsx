@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useApi } from '../lib/api';
 import { durationHours, fmtHM } from '../lib/schedule';
 import { MEMBERS } from '../lib/teams';
-import { getTheme, ACCENT, DANGER, WARN } from '../lib/theme';
+import { getTheme } from '../lib/theme';
 import { Icon, friendlyError } from './ui';
 
 // Aprovação do excedente de Hora Extra (admin) — a parte de uma Hora Extra que
@@ -79,20 +79,35 @@ export default function AprovacaoPendencias({ dark, profile }) {
 
   const btnStyle = (bg, color, border) => ({
     display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
-    background: bg, color, border: border || 'none',
-    borderRadius: '0.5rem', padding: '0.45rem 0.8rem', minHeight: '2.5rem',
-    fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer',
+    background: bg, color, border: border || '1px solid transparent',
+    borderRadius: T.rControl, padding: '0.45rem 0.8rem', minHeight: '2.5rem',
+    fontWeight: 600, fontSize: '0.78rem', cursor: 'pointer',
   });
+
+  // Aprovar e Rejeitar são o mesmo peso visual: os dois são decisões, e deixar
+  // uma delas preenchida empurraria o admin para o caminho mais fácil.
+  const approveStyle = btnStyle(T.successQuiet, T.success, `1px solid ${T.successBorder}`);
+  const rejectStyle  = btnStyle(T.dangerQuiet,  T.danger,  `1px solid ${T.dangerBorder}`);
 
   return (
     <>
+      {/* Havendo pendência o botão assume o tom de aviso; sem pendência fica
+          secundário. O contador antes usava rgba(255,255,255,0.3), que só
+          funcionava sobre um fundo escuro — agora vem do tom, como o resto. */}
       <button type="button" onClick={verificar} disabled={loading}
         className="inline-flex items-center gap-2"
-        style={{ background: pendencias.length > 0 ? WARN : T.cancelBg, color: pendencias.length > 0 ? '#fff' : T.cancelColor, border: pendencias.length > 0 ? 'none' : `1px solid ${T.cancelBorder}`, borderRadius: '0.5rem', padding: '0.5rem 1rem', minHeight: '2.75rem', fontWeight: 700, fontSize: '0.875rem', cursor: loading ? 'not-allowed' : 'pointer' }}>
+        style={{
+          background: pendencias.length > 0 ? T.warnQuiet : 'transparent',
+          color: pendencias.length > 0 ? T.warn : T.textSecondary,
+          border: `1px solid ${pendencias.length > 0 ? T.warnBorder : T.border}`,
+          borderRadius: T.rControl, padding: '0.45rem 0.8rem', minHeight: '2.5rem',
+          fontWeight: 600, fontSize: '0.8rem', cursor: loading ? 'not-allowed' : 'pointer',
+        }}>
         <Icon name="alert" size={15} />
         {loading ? 'Verificando…' : 'Verificar pendências'}
         {pendencias.length > 0 && (
-          <span className="inline-flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.3)', borderRadius: '9999px', minWidth: '1.4rem', height: '1.4rem', fontSize: '0.72rem', fontWeight: 800, padding: '0 0.3rem' }}>
+          <span className="tnum inline-flex items-center justify-center"
+            style={{ background: T.warn, color: T.dark ? '#1A1206' : '#FFFFFF', borderRadius: T.rPill, minWidth: '1.3rem', height: '1.3rem', fontSize: '0.7rem', fontWeight: 800, padding: '0 0.28rem' }}>
             {pendencias.length}
           </span>
         )}
@@ -100,9 +115,10 @@ export default function AprovacaoPendencias({ dark, profile }) {
 
       {open && (
         <div onClick={() => setOpen(false)}
-          style={{ position: 'fixed', inset: 0, zIndex: 80, background: 'rgba(2,6,23,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+          style={{ position: 'fixed', inset: 0, zIndex: 80, background: T.dark ? 'rgba(6,7,9,0.72)' : 'rgba(16,20,28,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+          {/* Overlay: sombra, sem borda — elevação declarada uma vez. */}
           <div role="dialog" aria-modal="true" aria-label="Pendências de Hora Extra excedente" onClick={e => e.stopPropagation()}
-            style={{ background: T.cardBg, color: T.textPrimary, border: `1px solid ${T.cardBorder}`, borderRadius: '1rem', padding: '1.25rem', maxWidth: '38rem', width: '100%', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 16px 48px rgba(0,0,0,0.45)' }}>
+            style={{ background: T.surface, color: T.textPrimary, borderRadius: T.rPanel, padding: '1.1rem', maxWidth: '38rem', width: '100%', maxHeight: '85vh', overflowY: 'auto', boxShadow: T.shadowOverlay }}>
             <div className="flex items-center justify-between mb-3">
               <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>
                 Hora Extra excedente pendente de aprovação
@@ -114,7 +130,7 @@ export default function AprovacaoPendencias({ dark, profile }) {
             </div>
 
             {error && (
-              <p role="alert" className="flex items-center gap-1.5 text-xs font-semibold mb-3" style={{ color: DANGER }}>
+              <p role="alert" className="flex items-center gap-1.5 text-xs font-semibold mb-3" style={{ color: T.danger }}>
                 <Icon name="alert" size={13} /> {error}
               </p>
             )}
@@ -141,11 +157,11 @@ export default function AprovacaoPendencias({ dark, profile }) {
                         {!isRejecting && (
                           <div className="flex gap-2">
                             <button onClick={() => decidir(p, 'aprovar')} disabled={!!rowBusy}
-                              style={btnStyle('#166534', '#fff')}>
+                              style={approveStyle}>
                               <Icon name="check" size={13} /> {rowBusy === 'aprovando' ? 'Aprovando…' : 'Aprovar'}
                             </button>
                             <button onClick={() => setRejectingKey(key)} disabled={!!rowBusy}
-                              style={btnStyle('transparent', DANGER, `1px solid ${DANGER}`)}>
+                              style={rejectStyle}>
                               <Icon name="x" size={13} /> Rejeitar
                             </button>
                           </div>
@@ -158,15 +174,17 @@ export default function AprovacaoPendencias({ dark, profile }) {
                             value={motivoDraft[key] || ''}
                             onChange={e => setMotivoDraft(d => ({ ...d, [key]: e.target.value }))}
                             placeholder="Motivo da rejeição (obrigatório)"
-                            style={{ flex: '1 1 200px', background: T.inputBg, color: T.textPrimary, border: `1px solid ${T.inputBorder}`, borderRadius: '0.5rem', padding: '0.5rem 0.6rem', minHeight: '2.5rem', fontSize: '0.82rem' }}
+                            style={{ flex: '1 1 200px', background: T.inputBg, color: T.textPrimary, border: `1px solid ${T.inputBorder}`, borderRadius: T.rControl, padding: '0.5rem 0.6rem', minHeight: '2.5rem', fontSize: '0.82rem' }}
                           />
+                          {/* Confirmar a rejeição é a ação destrutiva do fluxo —
+                              aqui, e só aqui, ela vem preenchida. */}
                           <button onClick={() => decidir(p, 'rejeitar', motivoDraft[key])}
                             disabled={!!rowBusy || !(motivoDraft[key] || '').trim()}
-                            style={btnStyle(DANGER, '#fff')}>
+                            style={btnStyle(T.danger, T.dark ? '#1A0E0F' : '#FFFFFF')}>
                             {rowBusy === 'rejeitando' ? 'Rejeitando…' : 'Confirmar rejeição'}
                           </button>
                           <button onClick={() => setRejectingKey(null)} disabled={!!rowBusy}
-                            style={btnStyle('transparent', T.cancelColor, `1px solid ${T.cancelBorder}`)}>
+                            style={btnStyle('transparent', T.textSecondary, `1px solid ${T.border}`)}>
                             Cancelar
                           </button>
                         </div>
