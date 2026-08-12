@@ -3,14 +3,70 @@
 @tailwind utilities;
 
 @layer base {
-  /* Foco visível para navegação por teclado — substitui os antigos outline:none */
-  :focus-visible {
-    outline: 2px solid #6366f1;
-    outline-offset: 2px;
-    border-radius: 4px;
+  /* Stack de sistema, sem webfont: o app não carrega fonte externa hoje e o
+     registro de console (Grafana/Datadog, a régua em PRODUCT.md) é bem servido
+     por uma workhorse de UI. `font-variant-numeric` fica ligado no corpo inteiro
+     porque praticamente todo número desta tela é hora ou dinheiro. */
+  html {
+    -webkit-text-size-adjust: 100%;
   }
 
-  /* Acessibilidade: reduz movimento para quem prefere */
+  body {
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Numeral tabular. Em ferramenta financeira isto não é refinamento: sem
+     largura fixa de dígito, uma coluna de valores não alinha e o olho perde a
+     comparação de linha para linha. Aplicado por padrão em tudo que é número
+     de dado, via .tnum, e forçado em input/table para os campos de valor. */
+  .tnum,
+  input[type='number'],
+  input[type='time'],
+  input[type='date'],
+  table {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+
+  /* Foco visível — o acento do tema escuro, que é o padrão do app. Herda o raio
+     do elemento em vez de forçar 4px, para não arredondar a borda de um chip
+     quadrado. */
+  :focus-visible {
+    outline: 2px solid #5b95f5;
+    outline-offset: 2px;
+    border-radius: inherit;
+  }
+
+  /* Scrollbar discreta nas faixas roláveis (navegação de meses, tabelas largas).
+     Sem isto, a barra nativa do Windows corta o registro escuro. */
+  * {
+    scrollbar-width: thin;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #343941;
+    border-radius: 5px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #4a5058;
+    background-clip: content-box;
+  }
+
+  /* Acessibilidade: reduz movimento para quem prefere. */
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
@@ -18,6 +74,34 @@
       animation-duration: 0.01ms !important;
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer utilities {
+  /* O único momento de motion autoral do app: a linha do plantão de agora
+     assume seu estado. Ease-out exponencial, a partir de um estado JÁ VISÍVEL
+     (nunca gating de visibilidade por classe — numa aba oculta a transição não
+     dispara e a seção embarcaria em branco). */
+  @keyframes settle-in {
+    from {
+      opacity: 0.55;
+      transform: translateY(-2px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .settle-in {
+    animation: settle-in 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .settle-in {
+      animation: none;
     }
   }
 }
