@@ -231,6 +231,9 @@ export default function RelatorioConsolidado({ dark, profile, monthIdx, year }) 
     border: `1px solid ${T.inputBorder}`,
     borderRadius: T.rControl, padding: "0.5rem 0.6rem", minHeight: "2.5rem",
     fontSize: "0.85rem",
+    // Sem isto, o ícone nativo de calendário/relógio (type="date"/"time") é
+    // sempre desenhado escuro pelo navegador — invisível sobre fundo escuro.
+    colorScheme: T.dark ? "dark" : "light",
   };
   const thStyle = {
     textAlign: "right", fontSize: "0.66rem", fontWeight: 700, letterSpacing: "0.05em",

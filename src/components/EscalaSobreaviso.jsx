@@ -800,6 +800,9 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     display:"block", width:"100%", padding:"0.45rem 0.55rem", fontSize:"0.82rem", minHeight:"2.25rem",
     borderRadius:T.rControl, border:`1px solid ${T.inputBorder}`,
     background:T.inputBg, color:T.textPrimary, marginTop:"0.25rem",
+    // Sem isto, o ícone nativo de calendário/relógio (type="date"/"time") é
+    // sempre desenhado escuro pelo navegador — invisível sobre fundo escuro.
+    colorScheme: T.dark ? "dark" : "light",
   };
 
   const labelStyle = { fontSize:"0.72rem", fontWeight:600, color:T.labelColor };

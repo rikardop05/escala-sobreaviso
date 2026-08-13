@@ -221,6 +221,9 @@ export default function ControleDeHoras({ dark, profile }) {
     borderRadius: T.rControl, padding: "0.45rem 0.55rem", minHeight: "2.5rem",
     fontSize: "0.82rem", width: "100%",
     transition: "border-color 0.15s",
+    // Sem isto, o ícone nativo de calendário/relógio (type="date"/"time") é
+    // sempre desenhado escuro pelo navegador — invisível sobre fundo escuro.
+    colorScheme: T.dark ? "dark" : "light",
   };
   const labelStyle = { fontSize: "0.72rem", fontWeight: 600, color: T.labelColor, display: "block", marginBottom: "0.25rem" };
   // Botão quadrado de ícone (olho, lápis, confirmar) — 2.5rem de lado.
