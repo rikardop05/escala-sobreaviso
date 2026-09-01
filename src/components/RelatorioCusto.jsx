@@ -187,7 +187,7 @@ function CustoChart({ dadosChart, mode, metric, situacao, selectedMonth, selecte
                         return `${tm.teamNome} · ${c.monthKey}: ${METRIC_META[metric].fmt(v)}${compo ? `\n${compo}` : ''}`;
                       })()}</title>
                       {sel && (
-                        <text x={tx + barW / 2} y={Math.max(padT + 8, y(v) - 5)} textAnchor="middle"
+                        <text className="rc-chart-value" x={tx + barW / 2} y={Math.max(padT + 8, y(v) - 5)} textAnchor="middle"
                           style={{ fontSize: '9px', fontWeight: 700, fill: T.textPrimary, paintOrder: 'stroke', stroke: T.surface, strokeWidth: 3 }}>
                           {METRIC_META[metric].fmt(v)}
                         </text>
@@ -228,7 +228,7 @@ function CustoChart({ dadosChart, mode, metric, situacao, selectedMonth, selecte
                       )}
                       {/* marca do total líquido + rótulo */}
                       <line x1={wx} x2={wx + barW} y1={netY} y2={netY} stroke={T.textPrimary} strokeWidth={1} />
-                      <text x={wx + barW / 2} y={labelY} textAnchor="middle"
+                      <text className="rc-chart-value" x={wx + barW / 2} y={labelY} textAnchor="middle"
                         style={{ fontSize: '9px', fontWeight: 700, fill: T.textPrimary, paintOrder: 'stroke', stroke: T.surface, strokeWidth: 3 }}>
                         {METRIC_META[metric].fmt(tm.value)}
                       </text>
@@ -372,8 +372,8 @@ function DetailTable({ comp, metric, includeRemuneracao, situacao, dark, T, sele
   });
 
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <table className="w-full" style={{ borderCollapse: 'collapse', minWidth: isSituacional ? '480px' : (metric === 'custo' ? '760px' : '620px'), fontSize: '0.82rem' }}>
+    <div className="rc-detail-scroll" style={{ overflowX: 'auto' }}>
+      <table className="w-full rc-detail-table" style={{ borderCollapse: 'collapse', minWidth: isSituacional ? '480px' : (metric === 'custo' ? '760px' : '620px'), fontSize: '0.82rem' }}>
         <thead>
           <tr>
             <th style={thL} scope="col">Pessoa</th>

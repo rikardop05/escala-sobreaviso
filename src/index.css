@@ -117,6 +117,14 @@
   min-height: 2.75rem !important;
 }
 
+/* Impressão da visão de custo: página A4 em paisagem (o detalhamento tem muitas
+   colunas; preencher uma folha retrato forçaria barra horizontal ou cortaria
+   dados). Só afeta mídia paginada, nunca a tela. */
+@page {
+  size: A4 landscape;
+  margin: 12mm;
+}
+
 /* Impressão da visão de custo (relatório / PDF). A página imprime sempre em fundo
    claro e tinta escura, independente do tema (não depende do fundo escuro), e os
    controles interativos — filtros, seletores de equipe/pessoa e ações — ficam de
@@ -176,6 +184,16 @@
   .print-custo svg text {
     fill: #1a1d23 !important;
   }
+  /* Rótulos numéricos sobre as barras: o seletor genérico acima deixaria o texto
+     escuro sobre a barra colorida → ilegível. Estes usam texto CLARO com halo
+     escuro (contraste) e ficam legíveis no PDF; eixo e legenda continuam escuros
+     (regra genérica, sem `.rc-chart-value`). */
+  .print-custo svg text.rc-chart-value {
+    fill: #ffffff !important;
+    stroke: #1a1d23 !important;
+    stroke-width: 3px !important;
+    paint-order: stroke !important;
+  }
   .print-custo svg line {
     stroke: #c6cad1 !important;
   }
@@ -186,5 +204,26 @@
   .print-custo svg,
   .print-custo table {
     max-width: 100% !important;
+  }
+
+  /* Detalhamento: na tela o wrapper rola horizontalmente (overflow auto) e as
+     células usam nowrap; no print isso corta colunas. Aqui o wrapper vira visível,
+     a tabela ocupa 100% com layout fixo (colunas distribuem a largura) e fonte/
+     padding menores — todas as colunas cabem na folha sem barra horizontal, sem
+     esconder nenhum dado. */
+  .print-custo .rc-detail-scroll {
+    overflow: visible !important;
+  }
+  .print-custo .rc-detail-table {
+    width: 100% !important;
+    min-width: 0 !important;
+    table-layout: fixed !important;
+    font-size: 0.56rem !important;
+  }
+  .print-custo .rc-detail-table th,
+  .print-custo .rc-detail-table td {
+    padding: 0.14rem 0.2rem !important;
+    white-space: nowrap !important;
+    font-size: 0.56rem !important;
   }
 }
