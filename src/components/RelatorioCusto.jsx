@@ -187,7 +187,8 @@ function CustoChart({ dadosChart, mode, metric, situacao, selectedMonth, selecte
                         return `${tm.teamNome} · ${c.monthKey}: ${METRIC_META[metric].fmt(v)}${compo ? `\n${compo}` : ''}`;
                       })()}</title>
                       {sel && (
-                        <text x={tx + barW / 2} y={y(v) - 5} textAnchor="middle" style={{ fontSize: '9px', fill: T.textPrimary, fontWeight: 700 }}>
+                        <text x={tx + barW / 2} y={Math.max(padT + 8, y(v) - 5)} textAnchor="middle"
+                          style={{ fontSize: '9px', fontWeight: 700, fill: T.textPrimary, paintOrder: 'stroke', stroke: T.surface, strokeWidth: 3 }}>
                           {METRIC_META[metric].fmt(v)}
                         </text>
                       )}
@@ -200,6 +201,10 @@ function CustoChart({ dadosChart, mode, metric, situacao, selectedMonth, selecte
                   const tm = c.teams[0];
                   const pos = (tm.stacked || []).filter(s => s.value != null && s.value > 0 && s.kind !== 'compensacao');
                   const comp = (tm.stacked || []).find(s => s.kind === 'compensacao');
+                  // Rótulo do total líquido: centralizado na coluna (não invade barra
+                  // vizinha) e com halo na cor do painel, para nunca ficar atrás da barra.
+                  const netY = y(tm.value ?? 0);
+                  const labelY = Math.max(padT + 8, Math.min(netY - 5, baseline - 5));
                   let cursor = baseline;
                   return (
                     <g>
@@ -222,8 +227,9 @@ function CustoChart({ dadosChart, mode, metric, situacao, selectedMonth, selecte
                         </rect>
                       )}
                       {/* marca do total líquido + rótulo */}
-                      <line x1={wx} x2={wx + barW} y1={y(tm.value ?? 0)} y2={y(tm.value ?? 0)} stroke={T.textPrimary} strokeWidth={1} />
-                      <text x={wx + barW + 4} y={y(tm.value ?? 0) + 3} style={{ fontSize: '9px', fill: T.textPrimary, fontWeight: 700 }}>
+                      <line x1={wx} x2={wx + barW} y1={netY} y2={netY} stroke={T.textPrimary} strokeWidth={1} />
+                      <text x={wx + barW / 2} y={labelY} textAnchor="middle"
+                        style={{ fontSize: '9px', fontWeight: 700, fill: T.textPrimary, paintOrder: 'stroke', stroke: T.surface, strokeWidth: 3 }}>
                         {METRIC_META[metric].fmt(tm.value)}
                       </text>
                     </g>
@@ -842,9 +848,10 @@ export default function RelatorioCusto({ dark, profile, sources: sourcesProp, ap
             const tone = memberTone(name, dark);
             return (
               <button key={name} type="button" aria-pressed={active} onClick={() => togglePerson(name)}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', background: active ? 'transparent' : 'transparent', color: active ? T.textSecondary : T.textMuted, border: `1px solid ${active ? T.border : T.borderStrong}`, borderRadius: T.rChip, padding: '0.35rem 0.6rem', minHeight: '2.75rem', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', opacity: active ? 1 : 0.6 }}>
-                <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: '50%', background: tone.dot }} />
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', background: active ? tone.tint : 'transparent', color: active ? T.textPrimary : T.textMuted, border: `1px solid ${active ? tone.ink : T.border}`, boxShadow: active ? `inset 0 0 0 1px ${tone.ink}` : 'none', borderRadius: T.rChip, padding: '0.35rem 0.6rem', minHeight: '2.75rem', fontSize: '0.78rem', fontWeight: active ? 700 : 600, cursor: 'pointer', opacity: active ? 1 : 0.6, transition: 'background 0.12s, border-color 0.12s, color 0.12s, opacity 0.12s' }}>
+                <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: '50%', background: active ? tone.ink : tone.dot }} />
                 {name}
+                {active && <Icon name="check" size={12} style={{ color: tone.ink }} />}
               </button>
             );
           })}
