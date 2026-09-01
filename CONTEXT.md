@@ -128,6 +128,24 @@ _Avoid_: Trava, lock, consolidação
 O total a receber no mês: remuneração mais sobreaviso mais hora extra menos compensação.
 _Avoid_: Total, líquido, pagamento
 
+## Relatório consolidado
+
+**Custo Mensal**:
+Visão financeira agregada de uma competência, formada pelos componentes selecionados pelo administrador. Por padrão inclui remuneração, sobreaviso, hora extra e compensação; a remuneração pode ser excluída para analisar apenas o custo variável de cobertura.
+_Avoid_: Custo total, valor total
+
+**Horas de Sobreaviso**:
+Quantidade de horas dos lançamentos de Sobreaviso atribuídos à pessoa em uma competência.
+_Avoid_: Horas de plantão, horas de turno
+
+**Horas Extras**:
+Quantidade de horas de Hora Extra contabilizáveis em uma competência. Horas pendentes não compõem o valor realizado, mas podem aparecer como pendência separada.
+_Avoid_: Horas de plantão, HE em texto de usuário
+
+**S&S**:
+Nome informal usado para se referir à **Equipe Sustentação** nesta feature. Não é uma equipe, setor ou agrupamento adicional do domínio.
+_Avoid_: Setor S&S, Sustentação e Serviços
+
 ## Acesso
 
 **Allowlist**:
