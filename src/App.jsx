@@ -232,6 +232,23 @@ function PublicApp() {
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
 
 export default function App() {
+  // Harness de desenvolvimento (`#custo-demo`): renderiza a visão de custo com
+  // dados injetados, sem Clerk/backend. Dynamic import sob import.meta.env.DEV
+  // garante que DevCustoDemo.jsx NUNCA entra no bundle de produção.
+  const [devDemo, setDevDemo] = useState(null);
+  useEffect(() => {
+    if (import.meta.env.DEV && window.location.hash === '#custo-demo') {
+      import('./DevCustoDemo').then((m) => setDevDemo(() => m.default));
+    }
+  }, []);
+  if (devDemo) {
+    const C = devDemo;
+    return <C />;
+  }
+  if (import.meta.env.DEV && window.location.hash === '#custo-demo') {
+    return <div style={{ padding: '2rem', color: getTheme(true).textMuted }}>Carregando a demo de custo…</div>;
+  }
+
   return (
     <>
       <SignedOut>

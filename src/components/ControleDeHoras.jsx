@@ -4,8 +4,9 @@ import { MONTHS, durationHours, fmtHM, brl, buildSchedule } from '../lib/schedul
 import { parseShiftTime, scheduleEntriesFor, monthTotals, isEntryCountable, splitHoraExtra } from '../lib/chCalc';
 import { TEAMS, MEMBERS, chGroupsFor } from '../lib/teams';
 import { getTheme, memberTone } from '../lib/theme';
-import { Icon, Button, Badge, Panel, SectionLabel, SaveStatus, Snackbar, ConfirmDialog, friendlyError } from './ui';
+import { Icon, Button, Badge, Panel, SectionLabel, SaveStatus, Snackbar, ConfirmDialog, Segmented, SegmentedItem, friendlyError } from './ui';
 import RelatorioConsolidado from './RelatorioConsolidado';
+import RelatorioCusto from './RelatorioCusto';
 import AprovacaoPendencias from './AprovacaoPendencias';
 
 const TYPES = ["Hora Extra", "Compensação"];
@@ -91,6 +92,10 @@ export default function ControleDeHoras({ dark, profile }) {
   // Relatório consolidado (admin): substitui a vista de uma pessoa por vez pela
   // tabela de todas as pessoas das equipes em adminOf no mês selecionado.
   const [showReport, setShowReport] = useState(false);
+  // Visão do relatório (admin): 'custo' = visão visual/mensal da spec de custo;
+  // 'tabela' = tabela de fechamento do mês (com ajustes manuais). Alterar de vista
+  // é navegação, não estado positivo — por isso nem o toggle nem os botões usam verde.
+  const [reportView, setReportView] = useState('custo');
   const chPeopleFlat = useMemo(() => chGroups.flatMap(g => g.people), [chGroups]);
   const [viewPerson, setViewPerson] = useState(profile?.memberId ?? (isAdmin ? (chPeopleFlat[0] ?? null) : null));
   const person = isAdmin ? (viewPerson ?? profile?.memberId) : profile?.memberId;
@@ -545,6 +550,12 @@ export default function ControleDeHoras({ dark, profile }) {
               )}
             </div>
           )}
+          {/* O intervalo do relatório de custo é próprio (seleção de meses na
+              visão); o seletor global de mês/ano ficaria sugerindo ter efeito
+              sobre ele. Escondemos enquanto a visão de custo estiver aberta —
+              a "Tabela de fechamento" ainda usa monthIdx/year, então continua. */}
+          {!(showReport && reportView === 'custo') && (
+          <>
           <div>
             <label style={labelStyle} htmlFor="ch-month">Mês</label>
             <select id="ch-month" style={inputStyle} value={monthIdx} onChange={e => setMonthIdx(Number(e.target.value))}>
@@ -557,6 +568,8 @@ export default function ControleDeHoras({ dark, profile }) {
               {years.map(y => <option key={y} value={y}>{y}</option>)}
             </select>
           </div>
+          </>
+          )}
           {isAdmin && (
             <div className="ml-auto flex items-center gap-2 flex-wrap">
               <AprovacaoPendencias dark={dark} profile={profile} />
@@ -572,7 +585,26 @@ export default function ControleDeHoras({ dark, profile }) {
         </div>
 
         {showReport ? (
-          <RelatorioConsolidado dark={dark} profile={profile} monthIdx={monthIdx} year={year} />
+          <div>
+            <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+              <Segmented T={T} aria-label="Visão do relatório consolidado">
+                <SegmentedItem T={T} active={reportView === 'custo'} first onClick={() => setReportView('custo')}>
+                  Visão de custo
+                </SegmentedItem>
+                <SegmentedItem T={T} active={reportView === 'tabela'} onClick={() => setReportView('tabela')}>
+                  Tabela de fechamento
+                </SegmentedItem>
+              </Segmented>
+              <span style={{ fontSize: '0.78rem', color: T.textMuted }}>
+                {reportView === 'custo' ? 'Visão mensal e filtrável do custo de cobertura' : 'Tabela do mês selecionado, para fechamento'}
+              </span>
+            </div>
+            {reportView === 'custo' ? (
+              <RelatorioCusto dark={dark} profile={profile} />
+            ) : (
+              <RelatorioConsolidado dark={dark} profile={profile} monthIdx={monthIdx} year={year} />
+            )}
+          </div>
         ) : (
         <>
         {/* PARÂMETROS */}
