@@ -148,6 +148,11 @@ const ClosedTotalsSchema = z.object({
   valorHora:       z.number().nonnegative(),
   valorSobreaviso: z.number().nonnegative(),
   valorExtra:      z.number().nonnegative(),
+  // Opcional para compatibilidade com fechamentos gravados antes desta linha
+  // (o Zod stripava a chave desconhecida). Quem envia preserva o valor oficial
+  // da Compensação; snapshots antigos só têm `comp` (horas) + `valorHora`, e a
+  // visão de custo deriva o valor com a mesma fórmula do monthTotals.
+  valorComp:       z.number().nonnegative().optional(),
   valorTotal:      z.number().nonnegative(),
 });
 
