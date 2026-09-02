@@ -41,6 +41,15 @@ const FULL_WEEK = [
   { dow: 4, label: 'Quinta' }, { dow: 5, label: 'Sexta' }, { dow: 6, label: 'Sábado' }, { dow: 0, label: 'Domingo' },
 ];
 
+// Proposta de estrutura em avaliação — inclui a Alice na semana, sem mexer em
+// Ricardo/Emanoel/Carlos: Seg Madrugada (era Raul) e Qui Manhã (era Marcus Túlio).
+// Só afeta esta tela; WEEKDAY_SHIFTS (calendário real e cálculo financeiro do CH)
+// continua intocado até a mudança ser aprovada e aplicada de fato.
+const WEEKDAY_DISPLAY_OVERRIDES = {
+  1: { 0: 'Alice' }, // Segunda · Madrugada
+  4: { 1: 'Alice' }, // Quinta · Manhã
+};
+
 // Horários das estações do fim de semana, no cabeçalho da tabela da escada.
 const WEEKEND_COLS = [
   { key: 'sabDia',   label: 'Sáb Dia',   time: '23:00–11:00' },
@@ -107,7 +116,11 @@ export default function EstruturaEscala({ dark, profile }) {
         .map(c => ({ c, s: blocosAtivos(WEEKDAY_SHIFTS, c.dow, hojeStr)[i] }))
         .filter(({ s }) => s && s.time !== ref.time)
         .map(({ c, s }) => `${c.label} vai até ${s.time.split(/[–—-]/)[1].trim()} (${shiftDuration(s.time)})`),
-      cells: WEEKDAY_COLS.map(c => blocosAtivos(WEEKDAY_SHIFTS, c.dow, hojeStr)[i]),
+      cells: WEEKDAY_COLS.map(c => {
+        const shift = blocosAtivos(WEEKDAY_SHIFTS, c.dow, hojeStr)[i];
+        const override = WEEKDAY_DISPLAY_OVERRIDES[c.dow]?.[i];
+        return override ? { ...shift, person: override } : shift;
+      }),
     }));
   }, [hojeStr]);
 
