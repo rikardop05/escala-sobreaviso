@@ -34,54 +34,67 @@ import {
 const roundCents = (v) => Math.round((v || 0) * 100) / 100;
 
 // CSV pessoal — própria e simplificada, NUNCA o buildCustoCsv/administrativo.
-// Só a pessoa autenticada; respeita situação ativa e visibilidade da remuneração.
+// Só a pessoa autenticada; respeita a competência selecionada, a situação ativa e
+// a visibilidade da remuneração. Em Pendente/Rejeitado exporta SOMENTE horas +
+// valor potencial da situação (nunca os realizados mascarados).
 export function buildMeuResumoCsv(dados, opts = {}) {
-  const { situacao = dados?.filtros?.situacao, includeRemuneracao = false } = opts;
+  const {
+    situacao = dados?.filtros?.situacao || 'realizado',
+    includeRemuneracao = false,
+    selectedMonth = null,
+  } = opts;
   const sep = ';';
   const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const brlFmt = (v) => (v === null || v === undefined ? '' : brl(v));
   const hmFmt = (v) => (v === null || v === undefined ? '' : fmtHM(v));
+  const isRealizado = situacao === 'realizado';
+  const sitHECol = situacao === 'pendente' ? 'HE Pendente' : situacao === 'rejeitado' ? 'HE Rejeitada' : 'HE';
+  const comp = (dados?.competencias || []).find((c) => c.monthKey === selectedMonth)
+    || (dados?.competencias || [])[(dados?.competencias || []).length - 1];
+
   const header = ['Competência', 'Situação HE', 'Estado', 'Origem'];
-  if (includeRemuneracao) header.push('Remuneração');
-  header.push('Valor SA', 'Horas SA', 'Valor HE', 'Horas HE', 'Valor Comp', 'Horas Comp', 'Custo',
-    'HE Pendente (h)', 'HE Pendente (R$)', 'HE Rejeitada (h)', 'HE Rejeitada (R$)');
+  if (isRealizado) {
+    if (includeRemuneracao) header.push('Remuneração');
+    header.push('Valor SA', 'Horas SA', 'Valor HE', 'Horas HE', 'Valor Comp', 'Horas Comp', 'Custo');
+  } else {
+    // Pendente/Rejeitado: somente horas + valor potencial correspondentes.
+    header.push(`${sitHECol} (h)`, `${sitHECol} (R$)`);
+  }
   const lines = [header.map(q).join(sep)];
 
-  for (const c of (dados?.competencias || [])) {
-    for (const e of c.equipes) {
+  if (comp) {
+    for (const e of comp.equipes) {
       for (const p of e.pessoas) {
-        const sP = p.situacoes || {};
-        const pend = sP.pendente?.horasHE ?? p.hePendenteHoras ?? 0;
-        const rej = sP.rejeitado?.horasHE ?? p.heRejeitadoHoras ?? 0;
-        const sitHE = p.estado === 'sem-dados' ? 'sem dados'
-          : rej > 0 ? 'rejeitada' : pend > 0 ? 'pendente' : (p.horasHE || 0) > 0 ? 'aprovada' : 'sem HE';
+        const bloco = (p?.situacoes && p.situacoes[situacao]) || {};
         const linha = [
-          c.monthKey, sitHE,
+          comp.monthKey,
+          ({ realizado: 'Realizado', pendente: 'Pendente', rejeitado: 'Rejeitado' }[situacao] ?? situacao),
           ({ fechado: 'fechado', aberto: 'em aberto', estimado: 'estimado', 'sem-dados': 'sem dados' }[p.estado] ?? p.estado),
           p.origem === 'snapshot' ? 'snapshot' : p.origem === 'recalculado' ? 'recalculado' : '',
         ];
-        if (includeRemuneracao) linha.push(brlFmt(p.remuneracao));
-        linha.push(
-          brlFmt(p.valorSA), hmFmt(p.horasSA),
-          brlFmt(p.valorHE), hmFmt(p.horasHE),
-          brlFmt(p.valorComp), hmFmt(p.horasComp),
-          brlFmt(p.custo),
-          hmFmt(p.hePendenteHoras), brlFmt(p.hePendenteValor),
-          hmFmt(p.heRejeitadoHoras), brlFmt(p.heRejeitadoValor),
-        );
+        if (isRealizado) {
+          if (includeRemuneracao) linha.push(brlFmt(p.remuneracao));
+          linha.push(
+            brlFmt(p.valorSA), hmFmt(p.horasSA),
+            brlFmt(p.valorHE), hmFmt(p.horasHE),
+            brlFmt(p.valorComp), hmFmt(p.horasComp),
+            brlFmt(p.custo),
+          );
+        } else {
+          linha.push(hmFmt(bloco.horasHE), brlFmt(bloco.valorHE));
+        }
         lines.push(linha.map(q).join(sep));
       }
     }
   }
 
   lines.push('');
-  const range = dados?.filtros?.range || [];
-  lines.push(['RESUMO'].map(q).join(sep));
-  lines.push(['Período', range.length ? `${range[0]} a ${range[range.length - 1]}` : ''].map(q).join(sep));
   const member = dados?.filtros?.personFilter?.[0];
+  lines.push(['RESUMO'].map(q).join(sep));
+  lines.push(['Competência', (comp && comp.monthKey) || selectedMonth || ''].map(q).join(sep));
   lines.push(['Pessoa', member ? (MEMBERS[member]?.fullName || member) : ''].map(q).join(sep));
   lines.push(['Métrica', dados?.filtros?.metric || 'custo'].map(q).join(sep));
-  lines.push(['Situação', situacao].map(q).join(sep));
+  lines.push(['Situação', ({ realizado: 'Realizado', pendente: 'Pendente', rejeitado: 'Rejeitado' }[situacao] ?? situacao)].map(q).join(sep));
   lines.push(['Remuneração', includeRemuneracao ? 'Incluída' : 'Oculta (Custo Variável)'].map(q).join(sep));
   lines.push(['Estado', 'fechado/em aberto/estimado/sem dados identificados por linha'].map(q).join(sep));
   if (dados?.indicadores?.riscos?.length) {
@@ -201,11 +214,18 @@ export default function MeuResumoFinanceiro({ dark, profile, dados: dadosProp, a
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entradas, dados, memberId]);
 
-  const range = useMemo(() => (dados?.filtros?.range) || monthKeysForRange(currentMonthKey(), rangeMonths), [dados, rangeMonths]);
+  // O histórico exibido vem SEMPRE do seletor 6/12 meses (nunca fica preso ao
+  // `dados.filtros.range` do payload — na demo o payload tem 12 fixos). Recorta as
+  // competências visíveis ao final do range terminado no mês corrente.
+  const range = useMemo(() => monthKeysForRange(currentMonthKey(), rangeMonths), [rangeMonths]);
+  const competencias = useMemo(() => {
+    if (!dados) return [];
+    return (dados.competencias || []).filter((c) => range.includes(c.monthKey));
+  }, [dados, range]);
   const defaultMonth = range[range.length - 1];
   const selectedMonth = selectedMonthKey && range.includes(selectedMonthKey) ? selectedMonthKey : defaultMonth;
 
-  const selectedComp = useMemo(() => dados?.competencias.find(c => c.monthKey === selectedMonth) || null, [dados, selectedMonth]);
+  const selectedComp = useMemo(() => competencias.find(c => c.monthKey === selectedMonth) || null, [competencias, selectedMonth]);
 
   // Trocar de competência volta a ocultar a remuneração (spec §Privacidade financeira).
   useEffect(() => {
@@ -230,7 +250,7 @@ export default function MeuResumoFinanceiro({ dark, profile, dados: dadosProp, a
 
   const dadosChart = useMemo(() => {
     if (!dados) return [];
-    return dados.competencias.map(c => ({
+    return competencias.map(c => ({
       monthKey: c.monthKey,
       estado: c.estado,
       teams: c.equipes.map(e => {
@@ -248,7 +268,7 @@ export default function MeuResumoFinanceiro({ dark, profile, dados: dadosProp, a
       }),
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dados, situacao, incluiRem]);
+  }, [competencias, situacao, incluiRem]);
 
   // Detalhamento: o shape traz `custo` = Custo Mensal (payload inclui remuneração).
   // Para a visão Variável ajustamos só o campo `custo` (realizado) — os lançamentos
@@ -277,6 +297,12 @@ export default function MeuResumoFinanceiro({ dark, profile, dados: dadosProp, a
   const horasHE = blocoSel.horasHE ?? null;
   const pendHE = indicadores?.pendenciaHE || { horas: 0, valor: 0 };
   const rejHE = indicadores?.rejeitadoHE || { horas: 0, valor: 0 };
+  // Em Pendente/Rejeitado a Compensação NÃO se aplica (é componente do realizado) —
+  // mostrar o valor realizado ali mascararia a situação; exibimos "—".
+  const compVisao = situacao === 'realizado'
+    ? (selTotal?.valorComp == null ? '—' : (selTotal.valorComp > 0 ? `− ${brl(selTotal.valorComp)}` : brl(0)))
+    : '—';
+  const compSub = situacao === 'realizado' ? 'abate do custo' : 'não aplicável';
   const temRiscos = (indicadores?.riscos?.length || 0) > 0;
   const compIndisponiveis = indicadores?.competenciasIndisponiveis || 0;
 
@@ -289,7 +315,7 @@ export default function MeuResumoFinanceiro({ dark, profile, dados: dadosProp, a
 
   const exportCSV = () => {
     if (!dados) return;
-    const csv = buildMeuResumoCsv(dados, { situacao, includeRemuneracao: mostraRemuneracao });
+    const csv = buildMeuResumoCsv(dados, { selectedMonth, situacao, includeRemuneracao: mostraRemuneracao });
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -300,7 +326,7 @@ export default function MeuResumoFinanceiro({ dark, profile, dados: dadosProp, a
   };
   const printPDF = () => window.print();
 
-  const personNome = dados?.competencias?.[0]?.equipes?.[0]?.pessoas?.[0]?.personNome || (memberId ? (MEMBERS[memberId]?.fullName || memberId) : '');
+  const personNome = competencias?.[0]?.equipes?.[0]?.pessoas?.[0]?.personNome || (memberId ? (MEMBERS[memberId]?.fullName || memberId) : '');
   const teamNome = dados?.filtros?.teams?.[0]?.nome || (teamId ? (TEAMS[teamId]?.nome || teamId) : '');
   const situLabel = SIT_META[situacao]?.short || situacao;
 
@@ -412,7 +438,7 @@ export default function MeuResumoFinanceiro({ dark, profile, dados: dadosProp, a
         <IndicatorTile T={T} label={incluiRem ? 'Custo Mensal' : 'Custo Variável'} value={custoMes == null ? '—' : brl(custoMes)} sub={`${MONTH_SHORT(selectedMonth)} · ${ESTADO_META[selectedComp.estado]?.label}`} tone={ESTADO_META[selectedComp.estado]?.tone} />
         <IndicatorTile T={T} label="Horas Sobreaviso" value={selTotal?.horasSA == null ? '—' : fmtHM(selTotal.horasSA)} sub={MONTH_SHORT(selectedMonth)} tone="info" />
         <IndicatorTile T={T} label="Horas Extras" value={horasHE == null ? '—' : fmtHM(horasHE)} sub={situLabel} tone="success" />
-        <IndicatorTile T={T} label="Compensação" value={selTotal?.valorComp == null ? '—' : (selTotal.valorComp > 0 ? `− ${brl(selTotal.valorComp)}` : brl(0))} sub="abate do custo" tone="warn" />
+        <IndicatorTile T={T} label="Compensação" value={compVisao} sub={compSub} tone="warn" />
         <IndicatorTile T={T} label="Pendências HE" value={fmtHM(pendHE.horas)} sub={pendHE.valor ? `potencial ${brl(pendHE.valor)}` : 'nenhuma'} tone={pendHE.horas > 0 ? 'warn' : 'neutral'} />
         <IndicatorTile T={T} label="Rejeitadas HE" value={fmtHM(rejHE.horas)} sub={rejHE.valor ? `potencial ${brl(rejHE.valor)}` : 'nenhuma'} tone={rejHE.horas > 0 ? 'danger' : 'neutral'} />
       </div>

@@ -52,6 +52,13 @@ export function resolvePersonalParams({ memberId, query = {} }) {
 }
 
 export default async function handler(req, res) {
+  // Rota somente-leitura: apenas GET. Qualquer outro método responde 405 ANTES de
+  // autenticação — não há escrita nesta visão pessoal (spec §Ações fora do escopo).
+  if (req.method !== 'GET') {
+    res.setHeader('Allow', 'GET');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
   let memberId;
   try {
     ({ memberId } = await requireUser(req));
