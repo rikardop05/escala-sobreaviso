@@ -419,7 +419,9 @@ export default function MeuResumoFinanceiro({ dark, profile, dados: dadosProp, a
             <div id="mr-visao" style={{ fontSize: '0.72rem', fontWeight: 600, color: T.labelColor, display: 'block', marginBottom: '0.35rem' }}>Visão do custo</div>
             <Segmented T={T} className="rc-seg" role="group" aria-labelledby="mr-visao">
               <SegmentedItem T={T} active={!verMensal} first onClick={() => { if (remuneracaoRevelada) setVerMensal(false); }}>Custo Variável</SegmentedItem>
-              <SegmentedItem T={T} active={verMensal && remuneracaoRevelada} disabled={!remuneracaoRevelada} onClick={() => { if (remuneracaoRevelada) setVerMensal(true); }}>Custo Mensal</SegmentedItem>
+              <SegmentedItem T={T} active={verMensal && remuneracaoRevelada} disabled={!remuneracaoRevelada}
+                title={remuneracaoRevelada ? undefined : 'Revele a remuneração para ver o Custo Mensal (Custo Variável + remuneração)'}
+                onClick={() => { if (remuneracaoRevelada) setVerMensal(true); }}>Custo Mensal</SegmentedItem>
             </Segmented>
           </div>
           <div>

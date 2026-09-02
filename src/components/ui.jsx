@@ -273,6 +273,11 @@ export function Segmented({ T, children, style, ...rest }) {
 }
 
 export function SegmentedItem({ T, active, children, first, style, ...rest }) {
+  // `disabled` chega em `rest` e já bloqueia o clique no <button> nativo — mas
+  // sem isto não havia NENHUMA pista visual (opacidade, cursor) de que o item
+  // está inerte, então clicar "não fazia nada" sem explicação (ex.: "Custo
+  // Mensal" em MeuResumoFinanceiro.jsx, que exige revelar a remuneração
+  // primeiro). Mesma regra que Button já aplica.
   return (
     <button
       aria-pressed={active}
@@ -283,7 +288,9 @@ export function SegmentedItem({ T, active, children, first, style, ...rest }) {
         border: 'none',
         borderLeft: first ? 'none' : `1px solid ${T.border}`,
         padding: '0.45rem 0.8rem', minHeight: '2.75rem',
-        fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
+        fontSize: '0.78rem', fontWeight: 600, whiteSpace: 'nowrap',
+        cursor: rest.disabled ? 'not-allowed' : 'pointer',
+        opacity: rest.disabled ? 0.5 : 1,
         transition: 'background 0.12s, color 0.12s',
         ...style,
       }}
