@@ -41,10 +41,12 @@ const FULL_WEEK = [
   { dow: 4, label: 'Quinta' }, { dow: 5, label: 'Sexta' }, { dow: 6, label: 'Sábado' }, { dow: 0, label: 'Domingo' },
 ];
 
-// Proposta de estrutura em avaliação — inclui a Alice na semana, sem mexer em
-// Ricardo/Emanoel/Carlos: Seg Madrugada (era Raul) e Qui Manhã (era Marcus Túlio).
-// Só afeta esta tela; WEEKDAY_SHIFTS (calendário real e cálculo financeiro do CH)
-// continua intocado até a mudança ser aprovada e aplicada de fato.
+// A Alice já cobre Seg Madrugada (era Raul) e Qui Manhã (era Marcus Túlio) na
+// prática — a escala real (aba Escala) já reflete isso via overrides por dia.
+// Esta tabela é só leitura de referência sobre WEEKDAY_SHIFTS (a base ainda
+// não foi atualizada com essa mudança); até lá, o override abaixo mantém a
+// visão de referência coerente com o que a escala de fato aplica. Confirmado
+// com o dono do produto em 2026-09-02 — não é mais proposta em avaliação.
 const WEEKDAY_DISPLAY_OVERRIDES = {
   1: { 0: 'Alice' }, // Segunda · Madrugada
   4: { 1: 'Alice' }, // Quinta · Manhã
