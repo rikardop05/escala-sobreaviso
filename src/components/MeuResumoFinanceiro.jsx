@@ -363,8 +363,8 @@ export default function MeuResumoFinanceiro({ dark, profile, dados: dadosProp, a
           <Icon name="alert" size={15} style={{ color: T.warn, flexShrink: 0, marginTop: '0.15rem' }} />
           <div style={{ fontSize: '0.82rem', lineHeight: 1.5 }}>
             <b style={{ color: T.textPrimary }}>Há Horas Extras fora do realizado</b>
-            {pendHE.horas > 0 && <div style={{ fontSize: '0.76rem', marginTop: '0.2rem', color: T.textSecondary }}>Pendente: {fmtHM(pendHE.horas)} · potencial {brl(pendHE.valor)}</div>}
-            {rejHE.horas > 0 && <div style={{ fontSize: '0.76rem', marginTop: '0.2rem', color: T.textSecondary }}>Rejeitada: {fmtHM(rejHE.horas)} · potencial {brl(rejHE.valor)}</div>}
+            {pendHE.horas > 0 && <div className="tnum" style={{ fontSize: '0.76rem', marginTop: '0.2rem', color: T.textSecondary }}>Pendente: {fmtHM(pendHE.horas)} · potencial {brl(pendHE.valor)}</div>}
+            {rejHE.horas > 0 && <div className="tnum" style={{ fontSize: '0.76rem', marginTop: '0.2rem', color: T.textSecondary }}>Rejeitada: {fmtHM(rejHE.horas)} · potencial {brl(rejHE.valor)}</div>}
             <div style={{ fontSize: '0.76rem', marginTop: '0.2rem', color: T.textSecondary }}>Pendências e rejeições não entram no custo realizado.</div>
           </div>
         </div>

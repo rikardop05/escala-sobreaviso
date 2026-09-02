@@ -265,7 +265,10 @@ export function IndicatorTile({ label, value, sub, tone, T }) {
     <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rControl, padding: '0.7rem 0.8rem', minHeight: '4.75rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
       <div style={{ fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: T.textMuted }}>{label}</div>
       <div className="tnum" style={{ fontSize: '1.3rem', fontWeight: 700, lineHeight: 1.2, color: T.textPrimary, letterSpacing: '-0.01em' }}>{value}</div>
-      {sub && <div style={{ fontSize: '0.7rem', color: T.textSecondary }}>{sub}</div>}
+      {/* tnum aqui, não só no value: MeuResumoFinanceiro passa "potencial R$X"
+          neste slot (achado do /impeccable typeset) — texto puro não sofre com
+          tabular-nums, então cobrir aqui vale pra qualquer chamador futuro. */}
+      {sub && <div className="tnum" style={{ fontSize: '0.7rem', color: T.textSecondary }}>{sub}</div>}
     </div>
   );
 }
@@ -338,7 +341,7 @@ export function DetailTable({ comp, metric, includeRemuneracao, situacao, dark, 
               <Badge T={T} tone="neutral">sem dados</Badge>
             ) : hePend > 0 || heRej > 0 ? (
               <Badge T={T} tone={heRej > 0 ? 'danger' : 'warn'}>
-                {heRej > 0 ? `rejeitada ${fmtHM(heRej)}` : `pendente ${fmtHM(hePend)}`}
+                <span className="tnum">{heRej > 0 ? `rejeitada ${fmtHM(heRej)}` : `pendente ${fmtHM(hePend)}`}</span>
               </Badge>
             ) : heAprov ? (
               <Badge T={T} tone="success">aprovada</Badge>
@@ -706,12 +709,12 @@ export default function RelatorioCusto({ dark, profile, sources: sourcesProp, ap
           <div style={{ fontSize: '0.82rem', lineHeight: 1.5 }}>
             <b style={{ color: T.textPrimary }}>Há lançamentos de Hora Extra fora do realizado</b>
             {anyPendente && (
-              <div style={{ fontSize: '0.76rem', marginTop: '0.2rem', color: T.textSecondary }}>
+              <div className="tnum" style={{ fontSize: '0.76rem', marginTop: '0.2rem', color: T.textSecondary }}>
                 Pendente: {fmtHM(indicadores.pendenciaHE.horas)} · potencial {brl(indicadores.pendenciaHE.valor)}
               </div>
             )}
             {anyRejeitado && (
-              <div style={{ fontSize: '0.76rem', marginTop: '0.2rem', color: T.textSecondary }}>
+              <div className="tnum" style={{ fontSize: '0.76rem', marginTop: '0.2rem', color: T.textSecondary }}>
                 Rejeitada: {fmtHM(indicadores.rejeitadoHE.horas)} · potencial {brl(indicadores.rejeitadoHE.valor)}
               </div>
             )}
