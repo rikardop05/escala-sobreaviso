@@ -59,7 +59,7 @@ function PersonPicker({ selected, onToggle, roster, T, dark }) {
           <button key={name} type="button" onClick={() => onToggle(name)} aria-pressed={on}
             style={{
               display:'inline-flex', alignItems:'center', gap:'0.35rem',
-              fontSize:'0.75rem', fontWeight:600, padding:'0.3rem 0.55rem', minHeight:'2.1rem',
+              fontSize:'0.75rem', fontWeight:600, padding:'0.3rem 0.55rem', minHeight:'2.75rem',
               borderRadius:T.rControl, cursor:'pointer',
               background: on ? tone.tint : 'transparent',
               color: on ? tone.ink : T.textSecondary,
@@ -797,7 +797,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
 
   // Input e rótulo de formulário — tokens do sistema, raio de controle (5px).
   const selStyle = {
-    display:"block", width:"100%", padding:"0.45rem 0.55rem", fontSize:"0.82rem", minHeight:"2.25rem",
+    display:"block", width:"100%", padding:"0.45rem 0.55rem", fontSize:"0.82rem", minHeight:"2.75rem",
     borderRadius:T.rControl, border:`1px solid ${T.inputBorder}`,
     background:T.inputBg, color:T.textPrimary, marginTop:"0.25rem",
     // Sem isto, o ícone nativo de calendário/relógio (type="date"/"time") é
@@ -1248,7 +1248,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                     {canDelete && (
                       <Button T={T} size="sm" variant="quiet" onClick={() => removeSub(s)}
                         aria-label={`Excluir substituição: ${s.substituto} cobre ${s.titular} de ${fmtDS(s.from)} a ${fmtDS(s.until)}`}
-                        style={{ width:'2.25rem', minHeight:'2.25rem', padding:0 }}>
+                        style={{ width:'2.75rem', minHeight:'2.75rem', padding:0 }}>
                         <Icon name="x" size={15} />
                       </Button>
                     )}
@@ -1356,7 +1356,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                     </div>
 
                     {/* Toggle: apply to all future months */}
-                    <label style={{ display:'flex', alignItems:'center', gap:'0.5rem', marginBottom:'0.6rem', cursor:'pointer', userSelect:'none', minHeight:'2.25rem' }}>
+                    <label style={{ display:'flex', alignItems:'center', gap:'0.5rem', marginBottom:'0.6rem', cursor:'pointer', userSelect:'none', minHeight:'2.75rem' }}>
                       <input
                         type="checkbox"
                         checked={applyToFuture}
@@ -1490,7 +1490,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                 <button onClick={() => { setFilter(null); saveProfile({ filter: null }); }}
                   aria-pressed={!filter}
                   style={{
-                    fontSize:'0.75rem', fontWeight:600, padding:'0.3rem 0.55rem', minHeight:'2.1rem',
+                    fontSize:'0.75rem', fontWeight:600, padding:'0.3rem 0.55rem', minHeight:'2.75rem',
                     borderRadius:T.rControl, cursor:'pointer',
                     background: !filter ? T.accentFill : 'transparent',
                     color: !filter ? T.accentInk : T.textSecondary,
@@ -1506,7 +1506,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                     <button key={name} onClick={() => handleFilterChange(name)} aria-pressed={on}
                       className="inline-flex items-center gap-1.5"
                       style={{
-                        fontSize:'0.75rem', fontWeight:600, padding:'0.3rem 0.55rem', minHeight:'2.1rem',
+                        fontSize:'0.75rem', fontWeight:600, padding:'0.3rem 0.55rem', minHeight:'2.75rem',
                         borderRadius:T.rControl, cursor:'pointer',
                         background: on ? tone.tint : 'transparent',
                         color: on ? tone.ink : T.textSecondary,

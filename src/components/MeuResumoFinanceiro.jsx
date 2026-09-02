@@ -4,12 +4,12 @@ import { currentMonthKey, monthKeysForRange } from '../lib/custoConsolidado';
 import { TEAMS, MEMBERS } from '../lib/teams';
 import { MONTHS_SHORT, fmtHM, brl, buildSchedule, durationHours } from '../lib/schedule';
 import { scheduleEntriesFor } from '../lib/chCalc';
-import { getTheme, memberTone } from '../lib/theme';
+import { getTheme, memberTone, componentTone } from '../lib/theme';
 import {
   Icon, Button, Badge, Panel, SectionLabel, Segmented, SegmentedItem, friendlyError,
 } from './ui';
 import {
-  CustoChart, IndicatorTile, DetailTable, ESTADO_META, COMPONENT_LABELS, componentTone, MONTH_SHORT,
+  CustoChart, IndicatorTile, DetailTable, ESTADO_META, COMPONENT_LABELS, MONTH_SHORT,
 } from './RelatorioCusto';
 
 // Meu Resumo Financeiro (docs/specs/meu-resumo-financeiro.md).
@@ -363,8 +363,8 @@ export default function MeuResumoFinanceiro({ dark, profile, dados: dadosProp, a
           <Icon name="alert" size={15} style={{ color: T.warn, flexShrink: 0, marginTop: '0.15rem' }} />
           <div style={{ fontSize: '0.82rem', lineHeight: 1.5 }}>
             <b style={{ color: T.textPrimary }}>Há Horas Extras fora do realizado</b>
-            {pendHE.horas > 0 && <div style={{ fontSize: '0.76rem', marginTop: '0.2rem', color: T.textSecondary }}>Pendente: {fmtHM(pendHE.horas)} · potencial {brl(pendHE.valor)}</div>}
-            {rejHE.horas > 0 && <div style={{ fontSize: '0.76rem', marginTop: '0.2rem', color: T.textSecondary }}>Rejeitada: {fmtHM(rejHE.horas)} · potencial {brl(rejHE.valor)}</div>}
+            {pendHE.horas > 0 && <div className="tnum" style={{ fontSize: '0.76rem', marginTop: '0.2rem', color: T.textSecondary }}>Pendente: {fmtHM(pendHE.horas)} · potencial {brl(pendHE.valor)}</div>}
+            {rejHE.horas > 0 && <div className="tnum" style={{ fontSize: '0.76rem', marginTop: '0.2rem', color: T.textSecondary }}>Rejeitada: {fmtHM(rejHE.horas)} · potencial {brl(rejHE.valor)}</div>}
             <div style={{ fontSize: '0.76rem', marginTop: '0.2rem', color: T.textSecondary }}>Pendências e rejeições não entram no custo realizado.</div>
           </div>
         </div>

@@ -5,7 +5,7 @@ import {
 } from '../lib/custoConsolidado';
 import { TEAMS, MEMBERS, chGroupsFor } from '../lib/teams';
 import { MONTHS_SHORT, fmtHM, brl } from '../lib/schedule';
-import { getTheme, memberTone } from '../lib/theme';
+import { getTheme, memberTone, componentTone, teamTone } from '../lib/theme';
 import {
   Icon, Button, Badge, Panel, SectionLabel, Segmented, SegmentedItem, friendlyError,
 } from './ui';
@@ -22,26 +22,10 @@ import {
 // pessoa/equipe, numeral tabular em todo valor, contraste AA. Tudo via tokens de
 // `getTheme` — nenhum hex de estado escrito à mão.
 
-// ─── Cores de categoria (componentes financeiros e equipes) ─────────────────
-// Derivadas em OKLCH com lightness e chroma FIXOS por tema, no mesmo princípio de
-// memberTone(): contraste uniforme e matiz distinguível sem hex chumbado no
-// componente. Componentes financeiros acompanham a linguagem do Controle de Horas
-// (SA=info, HE=success, Comp=warn); remuneração ganha um azul próprio.
-const COMPONENT_HUES = { remuneracao: 250, sobreaviso: 200, horaExtra: 142, compensacao: 70 };
-const TEAM_HUES = { sustentacao: 220, desenvolvimento: 128, infra: 48 };
-
-export function componentTone(kind, dark) {
-  const hue = COMPONENT_HUES[kind] ?? 250;
-  const l = dark ? 0.74 : 0.45;
-  const c = dark ? 0.10 : 0.12;
-  return { hue, fill: `oklch(${l} ${c} ${hue})`, hueText: `oklch(${dark ? 0.82 : 0.42} ${c} ${hue})` };
-}
-export function teamTone(teamId, dark) {
-  const hue = TEAM_HUES[teamId] ?? 250;
-  const l = dark ? 0.74 : 0.45;
-  const c = dark ? 0.11 : 0.13;
-  return { hue, fill: `oklch(${l} ${c} ${hue})`, hueText: `oklch(${dark ? 0.83 : 0.40} ${c} ${hue})` };
-}
+// Cores de categoria (componentes financeiros e equipes) — componentTone/teamTone
+// agora moram em src/lib/theme.js, ao lado de memberTone (mesmo princípio: OKLCH
+// com lightness/chroma fixos por tema). Viviam duplicadas aqui com constantes
+// ligeiramente diferentes — achado do /impeccable critique.
 
 export const COMPONENT_LABELS = {
   remuneracao: 'Remuneração', sobreaviso: 'Sobreaviso', horaExtra: 'Hora Extra', compensacao: 'Compensação',
@@ -281,7 +265,10 @@ export function IndicatorTile({ label, value, sub, tone, T }) {
     <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rControl, padding: '0.7rem 0.8rem', minHeight: '4.75rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
       <div style={{ fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: T.textMuted }}>{label}</div>
       <div className="tnum" style={{ fontSize: '1.3rem', fontWeight: 700, lineHeight: 1.2, color: T.textPrimary, letterSpacing: '-0.01em' }}>{value}</div>
-      {sub && <div style={{ fontSize: '0.7rem', color: T.textSecondary }}>{sub}</div>}
+      {/* tnum aqui, não só no value: MeuResumoFinanceiro passa "potencial R$X"
+          neste slot (achado do /impeccable typeset) — texto puro não sofre com
+          tabular-nums, então cobrir aqui vale pra qualquer chamador futuro. */}
+      {sub && <div className="tnum" style={{ fontSize: '0.7rem', color: T.textSecondary }}>{sub}</div>}
     </div>
   );
 }
@@ -354,7 +341,7 @@ export function DetailTable({ comp, metric, includeRemuneracao, situacao, dark, 
               <Badge T={T} tone="neutral">sem dados</Badge>
             ) : hePend > 0 || heRej > 0 ? (
               <Badge T={T} tone={heRej > 0 ? 'danger' : 'warn'}>
-                {heRej > 0 ? `rejeitada ${fmtHM(heRej)}` : `pendente ${fmtHM(hePend)}`}
+                <span className="tnum">{heRej > 0 ? `rejeitada ${fmtHM(heRej)}` : `pendente ${fmtHM(hePend)}`}</span>
               </Badge>
             ) : heAprov ? (
               <Badge T={T} tone="success">aprovada</Badge>
@@ -722,12 +709,12 @@ export default function RelatorioCusto({ dark, profile, sources: sourcesProp, ap
           <div style={{ fontSize: '0.82rem', lineHeight: 1.5 }}>
             <b style={{ color: T.textPrimary }}>Há lançamentos de Hora Extra fora do realizado</b>
             {anyPendente && (
-              <div style={{ fontSize: '0.76rem', marginTop: '0.2rem', color: T.textSecondary }}>
+              <div className="tnum" style={{ fontSize: '0.76rem', marginTop: '0.2rem', color: T.textSecondary }}>
                 Pendente: {fmtHM(indicadores.pendenciaHE.horas)} · potencial {brl(indicadores.pendenciaHE.valor)}
               </div>
             )}
             {anyRejeitado && (
-              <div style={{ fontSize: '0.76rem', marginTop: '0.2rem', color: T.textSecondary }}>
+              <div className="tnum" style={{ fontSize: '0.76rem', marginTop: '0.2rem', color: T.textSecondary }}>
                 Rejeitada: {fmtHM(indicadores.rejeitadoHE.horas)} · potencial {brl(indicadores.rejeitadoHE.valor)}
               </div>
             )}
