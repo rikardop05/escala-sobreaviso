@@ -6,6 +6,7 @@ import { getTheme } from './lib/theme';
 import EscalaSobreaviso from './components/EscalaSobreaviso';
 import ControleDeHoras from './components/ControleDeHoras';
 import EstruturaEscala from './components/EstruturaEscala';
+import MeuResumoFinanceiro from './components/MeuResumoFinanceiro';
 
 // ─── NAVEGAÇÃO ────────────────────────────────────────────────────────────────
 // Abas com sublinhado de acento, não pílulas. A barra usa a superfície do tema
@@ -65,7 +66,7 @@ function MainApp() {
   const api = useApi();
   const { user } = useUser();
   // A aba vive no hash da URL — refresh e links compartilhados preservam a view
-  const hashToView = (h) => (h === '#controle' ? 'controle' : h === '#estrutura' ? 'estrutura' : 'escala');
+  const hashToView = (h) => (h === '#controle' ? 'controle' : h === '#estrutura' ? 'estrutura' : h === '#meu-resumo-financeiro' ? 'meu-resumo' : 'escala');
   const [view, setViewState] = useState(() => hashToView(window.location.hash));
   const [dark, setDark]       = useState(true);
   const [profile, setProfile] = useState(null);
@@ -85,6 +86,8 @@ function MainApp() {
       ? 'Controle de Horas — Escala de Sobreaviso'
       : view === 'estrutura'
       ? 'Estrutura da Escala — Escala de Sobreaviso'
+      : view === 'meu-resumo'
+      ? 'Meu Resumo Financeiro — Escala de Sobreaviso'
       : 'Escala de Sobreaviso';
   }, [view]);
 
@@ -163,6 +166,9 @@ function MainApp() {
       <NavBar T={T}>
         <img src="/logo.png" alt="" width={22} height={22} style={{ borderRadius: '4px', flexShrink: 0, marginRight: '0.6rem' }} />
         <Tab T={T} active={view === 'escala'} onClick={() => setView('escala')} icon="calendar">Escala</Tab>
+        {profile?.memberId && (
+          <Tab T={T} active={view === 'meu-resumo'} onClick={() => setView('meu-resumo')} icon="users">Meu Resumo Financeiro</Tab>
+        )}
         {canAccessCH && (
           <Tab T={T} active={view === 'controle'} onClick={() => setView('controle')} icon="clock">Controle de Horas</Tab>
         )}
@@ -184,7 +190,9 @@ function MainApp() {
         </div>
       </NavBar>
 
-      {view === 'estrutura' && isAdmin ? (
+      {view === 'meu-resumo' && profile?.memberId ? (
+        <MeuResumoFinanceiro dark={dark} profile={profile} />
+      ) : view === 'estrutura' && isAdmin ? (
         <EstruturaEscala dark={dark} profile={profile} />
       ) : view === 'controle' && canAccessCH ? (
         <ControleDeHoras dark={dark} profile={profile} />
@@ -232,21 +240,43 @@ function PublicApp() {
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  // Harness de desenvolvimento (`#custo-demo`): renderiza a visão de custo com
-  // dados injetados, sem Clerk/backend. Dynamic import sob import.meta.env.DEV
-  // garante que DevCustoDemo.jsx NUNCA entra no bundle de produção.
+  // Harnesses de desenvolvimento (`#custo-demo` e `#meu-resumo-demo`): renderizam
+  // visões com dados injetados/sintéticos, sem Clerk/backend. Dynamic import sob
+  // import.meta.env.DEV garante que jamais entram no bundle de produção.
   const [devDemo, setDevDemo] = useState(null);
+  const [devMeuResumo, setDevMeuResumo] = useState(null);
+  const [devErro, setDevErro] = useState(null);
   useEffect(() => {
-    if (import.meta.env.DEV && window.location.hash === '#custo-demo') {
-      import('./DevCustoDemo').then((m) => setDevDemo(() => m.default));
+    if (!import.meta.env.DEV) return;
+    const h = window.location.hash;
+    const rotas = [
+      { hash: '#custo-demo', setter: setDevDemo, mod: './DevCustoDemo' },
+      { hash: '#meu-resumo-demo', setter: setDevMeuResumo, mod: './DevMeuResumoDemo' },
+      { hash: '#meu-resumo-financeiro-demo', setter: setDevMeuResumo, mod: './DevMeuResumoDemo' },
+    ];
+    const alvo = rotas.find((r) => r.hash === h);
+    if (alvo) {
+      import(alvo.mod)
+        .then((m) => alvo.setter(() => m.default))
+        .catch((e) => {
+          console.error('Falha ao carregar a demo:', e);
+          setDevErro('A demo não pôde ser carregada — confira o console do navegador.');
+        });
     }
   }, []);
+  if (devErro) return <div role="alert" style={{ padding: '2rem', color: getTheme(true).danger }}>{devErro}</div>;
   if (devDemo) {
     const C = devDemo;
     return <C />;
   }
-  if (import.meta.env.DEV && window.location.hash === '#custo-demo') {
-    return <div style={{ padding: '2rem', color: getTheme(true).textMuted }}>Carregando a demo de custo…</div>;
+  if (devMeuResumo) {
+    const C = devMeuResumo;
+    return <C />;
+  }
+  if (import.meta.env.DEV && (window.location.hash === '#custo-demo'
+    || window.location.hash === '#meu-resumo-demo'
+    || window.location.hash === '#meu-resumo-financeiro-demo')) {
+    return <div style={{ padding: '2rem', color: getTheme(true).textMuted }}>Carregando a demo…</div>;
   }
 
   return (

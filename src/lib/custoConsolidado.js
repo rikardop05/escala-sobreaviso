@@ -9,6 +9,8 @@
 //   loadCustoSources(api, adminOf) → busca as equipes do escopo (adminOf) nos endpoints
 //                                    existentes e devolve `sources`.
 //   custoConsolidado(params)       → dados agregados: competências → equipes → pessoas.
+//   custoPessoal(params)           → Meu Resumo Financeiro: UMA pessoa, UMA equipe,
+//                                    alvo derivado no backend (api/meu-resumo.js).
 //   buildCustoCsv(dados, opts)     → string CSV filtrada (padrão do relatório atual).
 //
 // Regras preservadas (spec §Métricas, §Fechamento, §Pendências):
@@ -360,25 +362,12 @@ const sumSkipNull = (list, field, rounder) => {
 //                         nunca somados ao realizado.
 //   includeRemuneracao  → true (Custo Mensal) | false (Custo Variável). Quando false,
 //                         remuneracao é zerada na composição e o custo exclui a remuneração.
-export function custoConsolidado({
-  sources,
-  adminOf,
-  range,
-  openMonthKey = currentMonthKey(),
-  teamFilter = null,
-  personFilter = null,
-  metric = 'custo',
-  situacao = 'realizado',
-  includeRemuneracao = true,
-}) {
-  const escopoIds = chGroupsFor(adminOf).map(g => g.teamId);
-  const escopo = escopoIds.map(teamId => ({ teamId, nome: TEAMS[teamId].nome }));
-  const teamIds = teamFilter ? teamFilter.filter(id => escopoIds.includes(id)) : escopoIds;
-  // Equipes EFETIVAMENTE agregadas (teamFilter já intersectado com adminOf) — o
-  // resumo do CSV e os rótulos devem refletir exatamente estas, nunca o escopo.
-  const filtroEquipes = teamIds.map(teamId => ({ teamId, nome: TEAMS[teamId].nome }));
-  const monthKeys = range && range.length ? range : monthKeysForRange(openMonthKey);
-
+// Núcleo de agregação compartilhado pelas visões administrativa e pessoal. `teamIds`
+// já chega RESOLVIDO (adminOf+teamFilter na admin; equipe própria na pessoal). Aqui
+// NÃO há checagem de permissão: quem limita o alvo é o chamador — custoConsolidado
+// pelo escopo adminOf, custoPessoal pelo memberId derivado no backend
+// (api/meu-resumo.js), que nunca confia em parâmetro do cliente.
+function aggregateCore({ teamIds, sources, monthKeys, openMonthKey, personFilter, metric, situacao, includeRemuneracao }) {
   const schedules = {};
   for (const teamId of teamIds) {
     const team = TEAMS[teamId];
@@ -413,7 +402,7 @@ export function custoConsolidado({
   const lastMonth = monthTotalsArr[monthTotalsArr.length - 1];
 
   // Custo do período: soma SÓ as competências com custo real. Competências "sem
-  // dados" (equipe ainda não existia) ficam de fora — não viram zero. Quando o
+  // dados" (equipe/pessoa ainda não existia) ficam de fora — não viram zero. Quando o
   // período não cobre o range inteiro (sem dados e/ou dado indisponível), o flag
   // custoPeriodoParcial + as contagens explicam o porquê — sem inventar valor.
   const competenciasSemDados = competencias.filter(c => c.equipes.some(e => e.estado === 'sem-dados')).length;
@@ -458,8 +447,70 @@ export function custoConsolidado({
     riscos: [...new Set(rows.flatMap(r => r.risco))].sort(),
   };
 
+  return { competencias, indicadores };
+}
+
+export function custoConsolidado({
+  sources,
+  adminOf,
+  range,
+  openMonthKey = currentMonthKey(),
+  teamFilter = null,
+  personFilter = null,
+  metric = 'custo',
+  situacao = 'realizado',
+  includeRemuneracao = true,
+}) {
+  const escopoIds = chGroupsFor(adminOf).map(g => g.teamId);
+  const escopo = escopoIds.map(teamId => ({ teamId, nome: TEAMS[teamId].nome }));
+  const teamIds = teamFilter ? teamFilter.filter(id => escopoIds.includes(id)) : escopoIds;
+  // Equipes EFETIVAMENTE agregadas (teamFilter já intersectado com adminOf) — o
+  // resumo do CSV e os rótulos devem refletir exatamente estas, nunca o escopo.
+  const filtroEquipes = teamIds.map(teamId => ({ teamId, nome: TEAMS[teamId].nome }));
+  const monthKeys = range && range.length ? range : monthKeysForRange(openMonthKey);
+
+  const { competencias, indicadores } = aggregateCore({ teamIds, sources, monthKeys, openMonthKey, personFilter, metric, situacao, includeRemuneracao });
+
   return {
     filtros: { adminOf, range: monthKeys, openMonthKey, teamFilter, teams: filtroEquipes, personFilter, metric, situacao, includeRemuneracao },
+    escopo,
+    competencias,
+    indicadores,
+  };
+}
+
+// Visão pessoal (Meu Resumo Financeiro — docs/specs/meu-resumo-financeiro.md).
+// UMA pessoa, UMA equipe. O alvo NÃO vem de adminOf: `teamId`/`memberId` são
+// derivados pelo backend (api/meu-resumo.js) do perfil autenticado — aqui só se
+// agrega o que já está escopado a essa pessoa. includeRemuneracao default false =
+// Custo Variável (remuneração oculta por padrão na spec). Histórico máximo de 12
+// meses é responsabilidade do chamador (backend clamp); a função aceita `range`.
+export function custoPessoal({
+  sources,
+  teamId,
+  memberId,
+  range,
+  openMonthKey = currentMonthKey(),
+  metric = 'custo',
+  situacao = 'realizado',
+  includeRemuneracao = false,
+}) {
+  const team = TEAMS[teamId];
+  if (!team) throw new Error(`Equipe desconhecida: ${teamId}`);
+  const escopo = [{ teamId, nome: team.nome }];
+  const monthKeys = range && range.length ? range : monthKeysForRange(openMonthKey, 12);
+  const { competencias, indicadores } = aggregateCore({
+    teamIds: [teamId],
+    sources,
+    monthKeys,
+    openMonthKey,
+    personFilter: [memberId],
+    metric,
+    situacao,
+    includeRemuneracao,
+  });
+  return {
+    filtros: { adminOf: null, range: monthKeys, openMonthKey, teamFilter: [teamId], teams: escopo, personFilter: [memberId], metric, situacao, includeRemuneracao },
     escopo,
     competencias,
     indicadores,

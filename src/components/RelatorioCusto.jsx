@@ -30,31 +30,31 @@ import {
 const COMPONENT_HUES = { remuneracao: 250, sobreaviso: 200, horaExtra: 142, compensacao: 70 };
 const TEAM_HUES = { sustentacao: 220, desenvolvimento: 128, infra: 48 };
 
-function componentTone(kind, dark) {
+export function componentTone(kind, dark) {
   const hue = COMPONENT_HUES[kind] ?? 250;
   const l = dark ? 0.74 : 0.45;
   const c = dark ? 0.10 : 0.12;
   return { hue, fill: `oklch(${l} ${c} ${hue})`, hueText: `oklch(${dark ? 0.82 : 0.42} ${c} ${hue})` };
 }
-function teamTone(teamId, dark) {
+export function teamTone(teamId, dark) {
   const hue = TEAM_HUES[teamId] ?? 250;
   const l = dark ? 0.74 : 0.45;
   const c = dark ? 0.11 : 0.13;
   return { hue, fill: `oklch(${l} ${c} ${hue})`, hueText: `oklch(${dark ? 0.83 : 0.40} ${c} ${hue})` };
 }
 
-const COMPONENT_LABELS = {
+export const COMPONENT_LABELS = {
   remuneracao: 'Remuneração', sobreaviso: 'Sobreaviso', horaExtra: 'Hora Extra', compensacao: 'Compensação',
 };
 
-const ESTADO_META = {
+export const ESTADO_META = {
   fechado: { label: 'Fechado', tone: 'success', icon: 'check', desc: 'Sob snapshot imutável' },
   aberto: { label: 'Em aberto', tone: 'info', icon: 'clock', desc: 'Recalculado do mês atual' },
   estimado: { label: 'Estimado', tone: 'warn', icon: 'umbrella', desc: 'Remuneração atual aplicada a período histórico' },
   'sem-dados': { label: 'Sem dados', tone: 'neutral', icon: 'x', desc: 'Sem atividade no período' },
 };
 
-const METRIC_META = {
+export const METRIC_META = {
   custo: { label: 'Custo Mensal', short: 'Custo', fmt: (v) => (v == null ? '—' : brl(v)), unit: 'R$' },
   horasSA: { label: 'Horas de Sobreaviso', short: 'Sobreaviso', fmt: (v) => (v == null ? '—' : fmtHM(v)), unit: 'h' },
   horasHE: { label: 'Horas Extras', short: 'Hora Extra', fmt: (v) => (v == null ? '—' : fmtHM(v)), unit: 'h' },
@@ -83,7 +83,7 @@ const MONTH_LABEL = (monthKey) => {
 //   grouped — várias equipes (ou métricas de hora): uma série por equipe.
 // A seleção (mês/equipe) é feita por botões transparentes sobre as colunas — nunca
 // só por hover; a tabela abaixo é a alternativa acessível sincronizada.
-function CustoChart({ dadosChart, mode, metric, situacao, selectedMonth, selectedTeamId, dark, T, onSelectMonth, onSelectTeam }) {
+export function CustoChart({ dadosChart, mode, metric, situacao, selectedMonth, selectedTeamId, dark, T, onSelectMonth, onSelectTeam }) {
   const H = 240;
   const padL = 46, padR = 16, padT = 14, padB = 8;
   const plotW = 900 - padL - padR;
@@ -275,7 +275,7 @@ function CustoChart({ dadosChart, mode, metric, situacao, selectedMonth, selecte
 }
 
 // ─── INDICADORES ─────────────────────────────────────────────────────────────
-function IndicatorTile({ label, value, sub, tone, T }) {
+export function IndicatorTile({ label, value, sub, tone, T }) {
   const c = tone ? { accent: T.accent, success: T.success, warn: T.warn, danger: T.danger, info: T.info, neutral: T.textMuted }[tone] || T.textMuted : T.textPrimary;
   return (
     <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rControl, padding: '0.7rem 0.8rem', minHeight: '4.75rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
@@ -287,7 +287,7 @@ function IndicatorTile({ label, value, sub, tone, T }) {
 }
 
 // ─── DETALHAMENTO ────────────────────────────────────────────────────────────
-function DetailTable({ comp, metric, includeRemuneracao, situacao, dark, T, selectedTeamId }) {
+export function DetailTable({ comp, metric, includeRemuneracao, situacao, dark, T, selectedTeamId }) {
   if (!comp) return null;
   const th = { textAlign: 'right', fontSize: '0.66rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: T.textMuted, padding: '0.5rem 0.6rem', whiteSpace: 'nowrap', borderBottom: `1px solid ${T.border}` };
   const thL = { ...th, textAlign: 'left' };
@@ -461,7 +461,7 @@ function FragmentForTable({ tm, renderRows, T, colSpan }) {
 }
 
 const TM_NOME = (teamId) => TEAMS[teamId]?.nome || teamId;
-const MONTH_SHORT = (monthKey) => {
+export const MONTH_SHORT = (monthKey) => {
   const [y, m] = String(monthKey).split('-');
   return `${MONTHS_SHORT[Number(m) - 1] ?? ''} ${y}`;
 };

@@ -146,6 +146,10 @@ _Avoid_: Horas de plantão, HE em texto de usuário
 Nome informal usado para se referir à **Equipe Sustentação** nesta feature. Não é uma equipe, setor ou agrupamento adicional do domínio.
 _Avoid_: Setor S&S, Sustentação e Serviços
 
+**Meu Resumo Financeiro**:
+Nome da visão financeira pessoal, distinta do Relatório Consolidado administrativo, para consultar os valores e horas da própria pessoa autenticada.
+_Avoid_: Relatório consolidado pessoal, visão administrativa
+
 ## Acesso
 
 **Allowlist**:
