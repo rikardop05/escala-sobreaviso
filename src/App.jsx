@@ -87,7 +87,7 @@ function MainApp() {
       : view === 'estrutura'
       ? 'Estrutura da Escala — Escala de Sobreaviso'
       : view === 'meu-resumo'
-      ? 'Meu Resumo Financeiro — Escala de Sobreaviso'
+      ? 'Resumo Financeiro — Escala de Sobreaviso'
       : 'Escala de Sobreaviso';
   }, [view]);
 
@@ -167,7 +167,7 @@ function MainApp() {
         <img src="/logo.png" alt="" width={22} height={22} style={{ borderRadius: '4px', flexShrink: 0, marginRight: '0.6rem' }} />
         <Tab T={T} active={view === 'escala'} onClick={() => setView('escala')} icon="calendar">Escala</Tab>
         {profile?.memberId && (
-          <Tab T={T} active={view === 'meu-resumo'} onClick={() => setView('meu-resumo')} icon="users">Meu Resumo Financeiro</Tab>
+          <Tab T={T} active={view === 'meu-resumo'} onClick={() => setView('meu-resumo')} icon="users">Resumo Financeiro</Tab>
         )}
         {canAccessCH && (
           <Tab T={T} active={view === 'controle'} onClick={() => setView('controle')} icon="clock">Controle de Horas</Tab>
