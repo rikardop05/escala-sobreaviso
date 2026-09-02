@@ -621,24 +621,24 @@ export default function ControleDeHoras({ dark, profile }) {
                   <input id="ch-remun" type="number" autoFocus style={{ ...inputStyle, width:"9rem" }} value={params.remuneracao} placeholder="0,00"
                     onChange={e => setParam("remuneracao", e.target.value === '' ? '' : Number(e.target.value))}
                     onKeyDown={e => { if (e.key === 'Enter') finishEditingRemuneracao(); }} />
-                  <button type="button" onClick={finishEditingRemuneracao} aria-label="Concluir edição da remuneração"
-                    style={{ background:T.saveBg, color:T.saveColor, border:"none", borderRadius:"0.5rem", width:"2.5rem", height:"2.5rem", flexShrink:0, display:"inline-flex", alignItems:"center", justifyContent:"center", cursor:"pointer" }}>
+                  <Button T={T} variant="primary" onClick={finishEditingRemuneracao} aria-label="Concluir edição da remuneração"
+                    style={{ width:"2.75rem", minHeight:"2.75rem", padding:0, flexShrink:0 }}>
                     <Icon name="check" size={15} />
-                  </button>
+                  </Button>
                 </div>
               ) : (
                 <div className="flex items-center gap-1.5">
                   <span style={{ ...inputStyle, width:"9rem", display:"inline-flex", alignItems:"center", color: remuneracaoVisible ? T.textPrimary : T.textMuted }}>
                     {remuneracaoVisible ? (Number(params.remuneracao) > 0 ? brl(Number(params.remuneracao)) : "—") : "R$ ••••••"}
                   </span>
-                  <button type="button" onClick={() => setRemuneracaoVisible(v => !v)} aria-label={remuneracaoVisible ? "Ocultar remuneração" : "Mostrar remuneração"}
-                    style={{ background:"transparent", color:T.textMuted, border:`1px solid ${T.cardBorder}`, borderRadius:"0.5rem", width:"2.5rem", height:"2.5rem", flexShrink:0, display:"inline-flex", alignItems:"center", justifyContent:"center", cursor:"pointer" }}>
+                  <Button T={T} variant="secondary" onClick={() => setRemuneracaoVisible(v => !v)} aria-label={remuneracaoVisible ? "Ocultar remuneração" : "Mostrar remuneração"}
+                    style={{ width:"2.75rem", minHeight:"2.75rem", padding:0, flexShrink:0 }}>
                     <Icon name={remuneracaoVisible ? "eyeOff" : "eye"} size={15} />
-                  </button>
-                  <button type="button" onClick={startEditingRemuneracao} aria-label="Editar remuneração"
-                    style={{ background:"transparent", color:T.textMuted, border:`1px solid ${T.cardBorder}`, borderRadius:"0.5rem", width:"2.5rem", height:"2.5rem", flexShrink:0, display:"inline-flex", alignItems:"center", justifyContent:"center", cursor:"pointer" }}>
+                  </Button>
+                  <Button T={T} variant="secondary" onClick={startEditingRemuneracao} aria-label="Editar remuneração"
+                    style={{ width:"2.75rem", minHeight:"2.75rem", padding:0, flexShrink:0 }}>
                     <Icon name="pencil" size={14} />
-                  </button>
+                  </Button>
                 </div>
               )}
             </div>
@@ -742,12 +742,12 @@ export default function ControleDeHoras({ dark, profile }) {
               {isAdmin && !dataLoading && (
                 isClosed ? (
                   <button onClick={() => setCloseDialog('reopen')} disabled={closeBusy}
-                    style={{ display:"inline-flex", alignItems:"center", gap:"0.4rem", background:"transparent", color:T.warn, border:`1px solid ${T.warn}`, borderRadius:"0.5rem", padding:"0.5rem 0.9rem", minHeight:"2.75rem", fontWeight:"700", fontSize:"0.875rem", cursor:closeBusy?"not-allowed":"pointer" }}>
+                    style={{ display:"inline-flex", alignItems:"center", gap:"0.4rem", background:"transparent", color:T.warn, border:`1px solid ${T.warn}`, borderRadius:T.rControl, padding:"0.5rem 0.9rem", minHeight:"2.75rem", fontWeight:"700", fontSize:"0.875rem", cursor:closeBusy?"not-allowed":"pointer" }}>
                     {closeBusy ? "Reabrindo…" : "Reabrir mês"}
                   </button>
                 ) : (
                   <button onClick={() => setCloseDialog('close')} disabled={closeBusy || allMonthEntries.length === 0}
-                    style={{ display:"inline-flex", alignItems:"center", gap:"0.4rem", background:"transparent", color:closeBusy||allMonthEntries.length===0?T.textMuted:T.textSecondary, border:`1px solid ${T.cancelBorder}`, borderRadius:"0.5rem", padding:"0.5rem 0.9rem", minHeight:"2.75rem", fontWeight:"700", fontSize:"0.875rem", cursor:closeBusy||allMonthEntries.length===0?"not-allowed":"pointer" }}>
+                    style={{ display:"inline-flex", alignItems:"center", gap:"0.4rem", background:"transparent", color:closeBusy||allMonthEntries.length===0?T.textMuted:T.textSecondary, border:`1px solid ${T.border}`, borderRadius:T.rControl, padding:"0.5rem 0.9rem", minHeight:"2.75rem", fontWeight:"700", fontSize:"0.875rem", cursor:closeBusy||allMonthEntries.length===0?"not-allowed":"pointer" }}>
                     <Icon name="check" size={14} /> {closeBusy ? "Fechando…" : "Fechar mês"}
                   </button>
                 )
@@ -815,10 +815,10 @@ export default function ControleDeHoras({ dark, profile }) {
                 {nfVisible ? (displayValorHora > 0 || displayRemuneracao > 0 ? brl(valorNF) : "—") : "R$ ••••••"}
               </div>
             </div>
-            <button type="button" onClick={() => setNfVisible(v => !v)} aria-label={nfVisible ? "Ocultar valor da NF" : "Mostrar valor da NF"}
-              style={{ background:"transparent", color:T.textMuted, border:`1px solid ${T.cardBorder}`, borderRadius:"0.5rem", width:"2.75rem", height:"2.75rem", flexShrink:0, display:"inline-flex", alignItems:"center", justifyContent:"center", cursor:"pointer" }}>
+            <Button T={T} variant="secondary" onClick={() => setNfVisible(v => !v)} aria-label={nfVisible ? "Ocultar valor da NF" : "Mostrar valor da NF"}
+              style={{ width:"2.75rem", minHeight:"2.75rem", padding:0, flexShrink:0 }}>
               <Icon name={nfVisible ? "eyeOff" : "eye"} size={16} />
-            </button>
+            </Button>
           </div>
         </section>
 
@@ -892,7 +892,11 @@ export default function ControleDeHoras({ dark, profile }) {
                         <td style={{ padding:"0.5rem" }}>
                           {statusMeta && (
                             <>
-                              <span className="rounded-md px-2 py-0.5 text-xs font-bold whitespace-nowrap" style={{ background:statusMeta.bg, color:statusMeta.color }}>
+                              {/* statusMeta só carrega {label, tone} desde a migração pro
+                                  sistema de tokens — statusMeta.bg/.color nunca existiram,
+                                  então o badge renderizava sem cor nenhuma (achado do
+                                  /impeccable critique). toneColors resolve o tom real. */}
+                              <span className="whitespace-nowrap" style={{ background:toneColors(T, statusMeta.tone).bg, color:toneColors(T, statusMeta.tone).fg, borderRadius:T.rChip, padding:"0.1rem 0.5rem", fontSize:"0.72rem", fontWeight:700 }}>
                                 {statusMeta.label}
                               </span>
                               {e.motivo && (
@@ -907,16 +911,19 @@ export default function ControleDeHoras({ dark, profile }) {
                         <td style={{ padding:"0.15rem 0.35rem", whiteSpace:"nowrap" }}>
                           {!e._fromSchedule && !isClosed && (
                             <span className="inline-flex">
-                              <button onClick={() => startEdit(e)}
+                              <Button T={T} size="sm" variant="quiet" onClick={() => startEdit(e)}
                                 aria-label={`Editar lançamento de ${e.data.slice(8,10)}/${e.data.slice(5,7)}`}
-                                style={{ background:"none", border:"none", cursor:"pointer", color:T.textMuted, display:"inline-flex", alignItems:"center", justifyContent:"center", width:"2.5rem", height:"2.5rem", borderRadius:"0.5rem" }}>
+                                style={{ width:"2.75rem", minHeight:"2.75rem", padding:0 }}>
                                 <Icon name="pencil" size={14} />
-                              </button>
-                              <button onClick={() => remove(e)}
+                              </Button>
+                              {/* #F87171 hardcoded ignorava T.danger — achado do /impeccable
+                                  critique (regressão do defeito que o sistema de tokens
+                                  existe pra evitar). */}
+                              <Button T={T} size="sm" variant="quiet" onClick={() => remove(e)}
                                 aria-label={`Excluir lançamento de ${e.data.slice(8,10)}/${e.data.slice(5,7)}`}
-                                style={{ background:"none", border:"none", cursor:"pointer", color:"#F87171", display:"inline-flex", alignItems:"center", justifyContent:"center", width:"2.5rem", height:"2.5rem", borderRadius:"0.5rem" }}>
+                                style={{ width:"2.75rem", minHeight:"2.75rem", padding:0, color:T.danger }}>
                                 <Icon name="x" size={14} />
-                              </button>
+                              </Button>
                             </span>
                           )}
                         </td>

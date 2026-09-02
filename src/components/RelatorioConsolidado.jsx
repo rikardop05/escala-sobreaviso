@@ -386,7 +386,7 @@ export default function RelatorioConsolidado({ dark, profile, monthIdx, year }) 
                   <span className="tnum" style={{ fontFamily: T.fontMono, fontSize: "0.82rem", fontWeight: 700, color: j.valor < 0 ? T.danger : T.textPrimary }}>{brl(j.valor)}</span>
                   <Button T={T} size="sm" variant="quiet" onClick={() => removeAdjustment(j.id)}
                     aria-label={`Remover ajuste: ${j.desc}`}
-                    style={{ width: "2.25rem", minHeight: "2.25rem", padding: 0 }}>
+                    style={{ width: "2.75rem", minHeight: "2.75rem", padding: 0 }}>
                     <Icon name="x" size={14} />
                   </Button>
                 </div>

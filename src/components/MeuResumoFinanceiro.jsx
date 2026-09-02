@@ -4,12 +4,12 @@ import { currentMonthKey, monthKeysForRange } from '../lib/custoConsolidado';
 import { TEAMS, MEMBERS } from '../lib/teams';
 import { MONTHS_SHORT, fmtHM, brl, buildSchedule, durationHours } from '../lib/schedule';
 import { scheduleEntriesFor } from '../lib/chCalc';
-import { getTheme, memberTone } from '../lib/theme';
+import { getTheme, memberTone, componentTone } from '../lib/theme';
 import {
   Icon, Button, Badge, Panel, SectionLabel, Segmented, SegmentedItem, friendlyError,
 } from './ui';
 import {
-  CustoChart, IndicatorTile, DetailTable, ESTADO_META, COMPONENT_LABELS, componentTone, MONTH_SHORT,
+  CustoChart, IndicatorTile, DetailTable, ESTADO_META, COMPONENT_LABELS, MONTH_SHORT,
 } from './RelatorioCusto';
 
 // Meu Resumo Financeiro (docs/specs/meu-resumo-financeiro.md).

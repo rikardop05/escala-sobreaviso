@@ -5,7 +5,7 @@ import {
 } from '../lib/custoConsolidado';
 import { TEAMS, MEMBERS, chGroupsFor } from '../lib/teams';
 import { MONTHS_SHORT, fmtHM, brl } from '../lib/schedule';
-import { getTheme, memberTone } from '../lib/theme';
+import { getTheme, memberTone, componentTone, teamTone } from '../lib/theme';
 import {
   Icon, Button, Badge, Panel, SectionLabel, Segmented, SegmentedItem, friendlyError,
 } from './ui';
@@ -22,26 +22,10 @@ import {
 // pessoa/equipe, numeral tabular em todo valor, contraste AA. Tudo via tokens de
 // `getTheme` — nenhum hex de estado escrito à mão.
 
-// ─── Cores de categoria (componentes financeiros e equipes) ─────────────────
-// Derivadas em OKLCH com lightness e chroma FIXOS por tema, no mesmo princípio de
-// memberTone(): contraste uniforme e matiz distinguível sem hex chumbado no
-// componente. Componentes financeiros acompanham a linguagem do Controle de Horas
-// (SA=info, HE=success, Comp=warn); remuneração ganha um azul próprio.
-const COMPONENT_HUES = { remuneracao: 250, sobreaviso: 200, horaExtra: 142, compensacao: 70 };
-const TEAM_HUES = { sustentacao: 220, desenvolvimento: 128, infra: 48 };
-
-export function componentTone(kind, dark) {
-  const hue = COMPONENT_HUES[kind] ?? 250;
-  const l = dark ? 0.74 : 0.45;
-  const c = dark ? 0.10 : 0.12;
-  return { hue, fill: `oklch(${l} ${c} ${hue})`, hueText: `oklch(${dark ? 0.82 : 0.42} ${c} ${hue})` };
-}
-export function teamTone(teamId, dark) {
-  const hue = TEAM_HUES[teamId] ?? 250;
-  const l = dark ? 0.74 : 0.45;
-  const c = dark ? 0.11 : 0.13;
-  return { hue, fill: `oklch(${l} ${c} ${hue})`, hueText: `oklch(${dark ? 0.83 : 0.40} ${c} ${hue})` };
-}
+// Cores de categoria (componentes financeiros e equipes) — componentTone/teamTone
+// agora moram em src/lib/theme.js, ao lado de memberTone (mesmo princípio: OKLCH
+// com lightness/chroma fixos por tema). Viviam duplicadas aqui com constantes
+// ligeiramente diferentes — achado do /impeccable critique.
 
 export const COMPONENT_LABELS = {
   remuneracao: 'Remuneração', sobreaviso: 'Sobreaviso', horaExtra: 'Hora Extra', compensacao: 'Compensação',

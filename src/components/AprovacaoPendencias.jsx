@@ -107,7 +107,7 @@ export default function AprovacaoPendencias({ dark, profile }) {
         {loading ? 'Verificando…' : 'Verificar pendências'}
         {pendencias.length > 0 && (
           <span className="tnum inline-flex items-center justify-center"
-            style={{ background: T.warn, color: T.dark ? '#1A1206' : '#FFFFFF', borderRadius: T.rPill, minWidth: '1.3rem', height: '1.3rem', fontSize: '0.7rem', fontWeight: 800, padding: '0 0.28rem' }}>
+            style={{ background: T.warn, color: T.warnInk, borderRadius: T.rPill, minWidth: '1.3rem', height: '1.3rem', fontSize: '0.7rem', fontWeight: 800, padding: '0 0.28rem' }}>
             {pendencias.length}
           </span>
         )}
@@ -180,7 +180,7 @@ export default function AprovacaoPendencias({ dark, profile }) {
                               aqui, e só aqui, ela vem preenchida. */}
                           <button onClick={() => decidir(p, 'rejeitar', motivoDraft[key])}
                             disabled={!!rowBusy || !(motivoDraft[key] || '').trim()}
-                            style={btnStyle(T.danger, T.dark ? '#1A0E0F' : '#FFFFFF')}>
+                            style={btnStyle(T.danger, T.dangerInk)}>
                             {rowBusy === 'rejeitando' ? 'Rejeitando…' : 'Confirmar rejeição'}
                           </button>
                           <button onClick={() => setRejectingKey(null)} disabled={!!rowBusy}

@@ -141,7 +141,7 @@ export function Snackbar({ open, message, actionLabel, onAction, T }) {
       <span>{message}</span>
       {actionLabel && (
         <button onClick={onAction}
-          style={{ background: T.accentQuiet, border: `1px solid ${T.accentBorder}`, color: T.accent, fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer', padding: '0.4rem 0.7rem', minHeight: '2.25rem', borderRadius: T.rControl, display: 'inline-flex', alignItems: 'center', gap: '0.35rem', flexShrink: 0 }}>
+          style={{ background: T.accentQuiet, border: `1px solid ${T.accentBorder}`, color: T.accent, fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer', padding: '0.4rem 0.7rem', minHeight: '2.75rem', borderRadius: T.rControl, display: 'inline-flex', alignItems: 'center', gap: '0.35rem', flexShrink: 0 }}>
           <Icon name="undo" size={14} /> {actionLabel}
         </button>
       )}
@@ -173,7 +173,7 @@ export function ConfirmDialog({ open, title, body, confirmLabel, cancelLabel = '
             {cancelLabel}
           </button>
           <button onClick={onConfirm}
-            style={{ background: T.danger, color: T.dark ? '#1A0E0F' : '#FFFFFF', border: 'none', borderRadius: T.rControl, padding: '0.5rem 1rem', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer', minHeight: '2.5rem' }}>
+            style={{ background: T.danger, color: T.dangerInk, border: 'none', borderRadius: T.rControl, padding: '0.5rem 1rem', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer', minHeight: '2.5rem' }}>
             {confirmLabel}
           </button>
         </div>
@@ -282,7 +282,7 @@ export function SegmentedItem({ T, active, children, first, style, ...rest }) {
         color: active ? T.accentInk : T.textSecondary,
         border: 'none',
         borderLeft: first ? 'none' : `1px solid ${T.border}`,
-        padding: '0.45rem 0.8rem', minHeight: '2.25rem',
+        padding: '0.45rem 0.8rem', minHeight: '2.75rem',
         fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
         transition: 'background 0.12s, color 0.12s',
         ...style,

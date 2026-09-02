@@ -61,6 +61,33 @@ export function memberTone(name, dark) {
   };
 }
 
+// ─── COR POR COMPONENTE FINANCEIRO E POR EQUIPE ──────────────────────────────
+// Mesmo princípio de memberTone() (matiz fixa, lightness/chroma fixos por tema),
+// mas para dois domínios diferentes de identidade — o tipo de lançamento
+// (Sobreaviso/Hora Extra/Compensação/Remuneração) e a equipe — usados pela
+// visão de custo do relatório consolidado (RelatorioCusto.jsx) em barras e
+// legendas, onde precisa de um preenchimento (`fill`) e uma variante de texto
+// sobre fundo (`hueText`), não de um chip como memberTone. Viviam duplicados
+// dentro de RelatorioCusto.jsx com constantes de L/C ligeiramente diferentes
+// das de memberTone — achado do /impeccable critique — e foram trazidos pra cá
+// como as fontes únicas dessas duas identidades, junto da de pessoa.
+const COMPONENT_HUES = { remuneracao: 250, sobreaviso: 200, horaExtra: 142, compensacao: 70 };
+const TEAM_HUES = { sustentacao: 220, desenvolvimento: 128, infra: 48 };
+
+export function componentTone(kind, dark) {
+  const hue = COMPONENT_HUES[kind] ?? FALLBACK_HUE;
+  const l = dark ? 0.74 : 0.45;
+  const c = dark ? 0.10 : 0.12;
+  return { hue, fill: `oklch(${l} ${c} ${hue})`, hueText: `oklch(${dark ? 0.82 : 0.42} ${c} ${hue})` };
+}
+
+export function teamTone(teamId, dark) {
+  const hue = TEAM_HUES[teamId] ?? FALLBACK_HUE;
+  const l = dark ? 0.74 : 0.45;
+  const c = dark ? 0.11 : 0.13;
+  return { hue, fill: `oklch(${l} ${c} ${hue})`, hueText: `oklch(${dark ? 0.83 : 0.40} ${c} ${hue})` };
+}
+
 // ─── ACENTO E ESTADO ─────────────────────────────────────────────────────────
 // O acento antigo era #6366F1 (indigo-500 do Tailwind), o acento mais genérico
 // que existe em interface gerada. Aqui é um azul de infraestrutura, mais fundo e
@@ -163,6 +190,14 @@ function build(dark) {
     warn: S.warn,       warnQuiet: tint(S.warn, quiet),       warnBorder: tint(S.warn, quietBorder),
     danger: S.danger,   dangerQuiet: tint(S.danger, quiet),   dangerBorder: tint(S.danger, quietBorder),
     info: S.info,       infoQuiet: tint(S.info, quiet),       infoBorder: tint(S.info, quietBorder),
+
+    // Tinta sobre preenchimento sólido de warn/danger — no escuro esses tons são
+    // claros (feitos pra ler como TEXTO sobre superfície escura), então branco em
+    // cima erra pro lado oposto do accentInk. Antes cada consumidor escrevia
+    // `T.dark ? '#1A0E0F' : '#FFFFFF'` (e uma variante '#1A1206' pro warn) à mão,
+    // duplicado em 3 lugares — achado do /impeccable critique.
+    dangerInk: dark ? '#1A0E0F' : '#FFFFFF',
+    warnInk:   dark ? '#1A1206' : '#FFFFFF',
 
     // ─── Forma ───────────────────────────────────────────────────────────────
     rChip: '3px',
