@@ -115,6 +115,19 @@ export default function MeuResumoFinanceiro({ dark, profile, dados: dadosProp, a
   const memberId = profile?.memberId;
   const teamId = memberId ? MEMBERS[memberId]?.teamId : null;
 
+  // App.jsx monta esta tela direto, sem o wrapper de página que ControleDeHoras/
+  // EstruturaEscala já têm internamente — por isso o conteúdo colava no nav (sem
+  // padding) e o fundo padrão do body (branco) aparecia como uma faixa sempre que
+  // o conteúdo era mais baixo que a viewport. Mesmo padrão de página das outras
+  // telas autenticadas, aplicado nos 4 pontos de retorno (loading/erro/vazio/normal).
+  const pageWrap = (children) => (
+    <div style={{ minHeight: '100vh', background: T.pageBg, fontFamily: T.fontSans, color: T.textPrimary }}>
+      <div className="mx-auto px-3 sm:px-4 py-4" style={{ maxWidth: '1440px' }}>
+        {children}
+      </div>
+    </div>
+  );
+
   const [dados, setDados] = useState(null);
   const [entradas, setEntradas] = useState(null); // lançamentos da pessoa (produção via /api/ch)
   const [loading, setLoading] = useState(true);
@@ -335,26 +348,33 @@ export default function MeuResumoFinanceiro({ dark, profile, dados: dadosProp, a
     color: T.textMuted, padding: '1.5rem', textAlign: 'center', fontSize: '0.85rem', marginBottom: '1rem',
   };
 
-  if (loading) return <div role="status" style={emptyStateStyle}>Carregando seu resumo financeiro…</div>;
-  if (error) return (
+  if (loading) return pageWrap(<div role="status" style={emptyStateStyle}>Carregando seu resumo financeiro…</div>);
+  if (error) return pageWrap(
     <p role="alert" className="flex items-center gap-1.5 mb-3" style={{ color: T.danger, fontSize: '0.82rem', fontWeight: 600 }}>
       <Icon name="alert" size={14} /> {error}
     </p>
   );
-  if (!dados || !selectedComp) return <div role="status" style={emptyStateStyle}>Sem dados do resumo para o período selecionado.</div>;
+  if (!dados || !selectedComp) return pageWrap(<div role="status" style={emptyStateStyle}>Sem dados do resumo para o período selecionado.</div>);
 
   const mesesLançamentos = lançamentosByMonth[selectedMonth] || [];
 
-  return (
+  return pageWrap(
     <div className="print-custo">
-      {/* RESUMO TEXTUAL da seleção, acessível sem depender do gráfico */}
-      <p role="status" aria-live="polite" style={{ fontSize: '0.8rem', color: T.textSecondary, margin: '0 0 0.8rem', lineHeight: 1.5 }}>
-        <b style={{ color: T.textPrimary }}>Meu Resumo Financeiro</b>
-        {' · '}{personNome}
-        {' · equipe: '}{teamNome}
-        {' · '}{incluiRem ? 'Custo Mensal' : 'Custo Variável'}{incluiRem ? ' com remuneração' : ' (remuneração oculta)'}
-        {' · situação '}{situLabel}
-      </p>
+      {/* Título de tela real (1,15rem/700), no mesmo papel do de Controle de
+          Horas/Estrutura — antes esta tela não tinha nenhum, só o parágrafo de
+          resumo abaixo, que é pequeno demais pra fazer esse papel visualmente. */}
+      <header className="mb-3">
+        <h1 style={{ fontSize: '1.15rem', fontWeight: 700, letterSpacing: '-0.01em', color: T.textPrimary, margin: 0 }}>
+          Resumo Financeiro
+        </h1>
+        {/* RESUMO TEXTUAL da seleção, acessível sem depender do gráfico */}
+        <p role="status" aria-live="polite" style={{ fontSize: '0.8rem', color: T.textSecondary, margin: '0.25rem 0 0', lineHeight: 1.5 }}>
+          {personNome}
+          {' · equipe: '}{teamNome}
+          {' · '}{incluiRem ? 'Custo Mensal' : 'Custo Variável'}{incluiRem ? ' com remuneração' : ' (remuneração oculta)'}
+          {' · situação '}{situLabel}
+        </p>
+      </header>
 
       {/* ALERTAS de pendência/rejeição e integridade */}
       {situacao === 'realizado' && (pendHE.horas > 0 || rejHE.horas > 0) && (
