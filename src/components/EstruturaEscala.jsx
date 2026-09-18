@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
-  WEEKDAY_SHIFTS, WEEKEND_ROSTER, WEEKEND_CHANGE, MS_DAY,
-  weekendAssignment, shiftPeople, blocosAtivos, dayKey, parseTimeRange, shiftDuration,
+  WEEKDAY_SHIFTS, MS_DAY,
+  weekendAssignment, shiftPeople, blocosAtivos, pickFase, dayKey, parseTimeRange, shiftDuration,
 } from '../lib/schedule';
 import { TEAMS } from '../lib/teams';
 import { getTheme, memberTone } from '../lib/theme';
@@ -126,13 +126,18 @@ export default function EstruturaEscala({ dark, profile }) {
     }));
   }, [hojeStr]);
 
-  // Fim de semana: escada de 6 semanas gerada do roster (vigente a partir de WEEKEND_CHANGE).
+  // Fim de semana: escada gerada do roster da fase VIGENTE HOJE (mesmo raciocínio do
+  // weekdayRows acima) — pickFase() escolhe a última fase de team.rotacao.fases cuja
+  // `change` já passou; o tamanho da escada (número de linhas/semanas) segue o
+  // tamanho do roster dessa fase, não um número fixo (hoje 6, some para 5 a partir de
+  // CARLOS_WEEKEND_CHANGE — ver schedule.js).
+  const escadaFase = useMemo(() => pickFase(TEAMS.sustentacao.rotacao.fases, new Date()), []);
   const weekendRows = useMemo(() => {
-    return Array.from({ length: WEEKEND_ROSTER.length }, (_, w) => {
-      const sat = new Date(WEEKEND_CHANGE.getTime() + w * 7 * MS_DAY);
+    return Array.from({ length: escadaFase.roster.length }, (_, w) => {
+      const sat = new Date(escadaFase.change.getTime() + w * 7 * MS_DAY);
       return weekendAssignment(sat);
     });
-  }, []);
+  }, [escadaFase]);
 
   // Blocos por dia-da-semana + faixas sem cobertura, para equipes sem rotação
   // (infra e desenvolvimento) — os blocos nascem vagos, não há ninguém pra mostrar.
@@ -167,7 +172,9 @@ export default function EstruturaEscala({ dark, profile }) {
   const noteStyle = { fontSize: '0.75rem', color: T.textMuted, margin: '0.5rem 0 0', lineHeight: 1.55 };
   const hair = `1px solid ${T.border}`;
 
-  const changeStr = `${String(WEEKEND_CHANGE.getDate()).padStart(2, '0')}/${String(WEEKEND_CHANGE.getMonth() + 1).padStart(2, '0')}/${WEEKEND_CHANGE.getFullYear()}`;
+  const changeStr = `${String(escadaFase.change.getDate()).padStart(2, '0')}/${String(escadaFase.change.getMonth() + 1).padStart(2, '0')}/${escadaFase.change.getFullYear()}`;
+  const escadaFolgaCount = escadaFase.roster.length - 4;
+  const escadaEstacoes = ['Sáb Dia', 'Sáb Noite', 'Dom Dia', 'Dom Noite', ...Array(escadaFolgaCount).fill('Folga')].join(' → ');
 
   return (
     <div style={{ minHeight: '100vh', background: T.pageBg, fontFamily: T.fontSans, color: T.textPrimary, transition: 'background 0.2s,color 0.2s' }}>
@@ -255,7 +262,7 @@ export default function EstruturaEscala({ dark, profile }) {
 
             {/* FIM DE SEMANA */}
             <section>
-              <h2 style={sectionH2}>Fim de semana — escada de 6 semanas</h2>
+              <h2 style={sectionH2}>Fim de semana — escada de {escadaFase.roster.length} semanas</h2>
               <Panel T={T} style={{ overflow: 'hidden' }}>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ ...tableStyle, minWidth: '680px' }}>
@@ -300,7 +307,7 @@ export default function EstruturaEscala({ dark, profile }) {
                 </div>
               </Panel>
               <p style={noteStyle}>
-                Cada pessoa avança uma coluna por semana (Sáb Dia → Sáb Noite → Dom Dia → Dom Noite → Folga → Folga). Vigente a partir de <span className="tnum">{changeStr}</span>.
+                Cada pessoa avança uma coluna por semana ({escadaEstacoes}). Vigente a partir de <span className="tnum">{changeStr}</span>.
               </p>
             </section>
           </>

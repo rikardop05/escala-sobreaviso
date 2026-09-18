@@ -9,7 +9,8 @@
 // buildSchedule()/buildOnCallSegments() espera. Infra e Desenvolvimento não têm
 // equivalente em schedule.js (só existiam nesta spec) — seus dados nascem aqui.
 import {
-  PEOPLE, WEEKDAY_SHIFTS, WEEKEND_ROSTER, WEEKEND_CYCLE, ANCHOR, WEEKEND_CHANGE, RANGE_START,
+  PEOPLE, WEEKDAY_SHIFTS, WEEKEND_ROSTER, WEEKEND_CYCLE, ANCHOR, WEEKEND_CHANGE,
+  WEEKEND_ROSTER_SEM_CARLOS, CARLOS_WEEKEND_CHANGE, RANGE_START,
   dayKey,
 } from "./schedule.js";
 
@@ -106,14 +107,17 @@ export const TEAMS = {
     blocos: WEEKDAY_SHIFTS,
     rotacao: {
       dows: [0, 6], // domingo, sábado
-      tipo: "escada",
-      roster: WEEKEND_ROSTER,
-      change: WEEKEND_CHANGE,
       turnos: {
         dia:   { period: "Dia",   time: "23:00 – 11:00" },
         noite: { period: "Noite", time: "11:00 – 23:00" },
       },
-      legado: { tipo: "ciclo", anchor: ANCHOR, ciclos: WEEKEND_CYCLE },
+      // Fases cronológicas — ver resolveRotation() em schedule.js: a última cuja
+      // `change` é <= o sábado consultado é a que vale.
+      fases: [
+        { tipo: "ciclo",  anchor: ANCHOR, ciclos: WEEKEND_CYCLE },
+        { tipo: "escada", change: WEEKEND_CHANGE,        roster: WEEKEND_ROSTER },
+        { tipo: "escada", change: CARLOS_WEEKEND_CHANGE, roster: WEEKEND_ROSTER_SEM_CARLOS },
+      ],
     },
   },
   desenvolvimento: {
