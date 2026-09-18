@@ -5,7 +5,7 @@ import {
   MS_DAY, dayKey, sameDay, fmtDS,
   buildSchedule, currentOnCall, adjacentOnCall,
   getActiveSub, getCoverSuggestions, shiftPeople, resolveShiftPeople, parseTimeRange,
-  shiftDuration, sortShiftsByStart,
+  shiftDuration, sortShiftsByStart, pickFase,
 } from '../lib/schedule';
 import { TEAMS, teamScopeCovers } from '../lib/teams';
 import { getTheme, memberTone } from '../lib/theme';
@@ -161,6 +161,16 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     return defaultTeamId(profile);
   });
   const team = TEAMS[activeTeam];
+
+  // Legenda do rodapé (só faz sentido pra sustentação, mas o rodapé é fixo pra
+  // qualquer aba): a fase de escada VIGENTE HOJE de TEAMS.sustentacao — mesmo
+  // pickFase() usado por EstruturaEscala.jsx, pra não hardcodar "6 semanas"/
+  // "2 de folga" e ficar desatualizado numa próxima troca de rodízio (ver
+  // CARLOS_WEEKEND_CHANGE em schedule.js).
+  const sustentacaoEscadaFase = useMemo(
+    () => pickFase(TEAMS.sustentacao.rotacao.fases, new Date()),
+    []
+  );
 
   // Quem pode editar a escala da equipe ATIVA — admin da equipe (adminOf) ou alguém
   // com só o direito de editar a escala dela (scheduleEditOf), sem ganhar CH de
@@ -1411,7 +1421,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
             )}
 
             <footer style={{ marginTop:"1rem", fontSize:"0.72rem", color:T.footerText, lineHeight:1.6 }}>
-              Escala seg–sex fixa · rodízio de fim de semana em escada de 6 semanas (a partir de 18/07/2026) · 4 de plantão + 2 de folga
+              Escala seg–sex fixa · rodízio de fim de semana em escada de {sustentacaoEscadaFase.roster.length} semanas (a partir de {dayKey(sustentacaoEscadaFase.change).split('-').reverse().join('/')}) · 4 de plantão + {sustentacaoEscadaFase.roster.length - 4} de folga
             </footer>
           </div>
 

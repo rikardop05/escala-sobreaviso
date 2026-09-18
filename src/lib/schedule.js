@@ -23,7 +23,11 @@ export const WEEKDAY_SHIFTS = {
   ],
   2: [
     { period: "Madrugada", time: "23:00 – 04:00", person: "Ricardo" },
-    { period: "Manhã",     time: "04:00 – 09:00", person: "Carlos" },
+    // Manhã de terça era do Carlos; passou para a Alice a partir de
+    // CARLOS_WEEKDAY_HANDOFF (ver constante abaixo) — vigência fechada preserva o
+    // histórico/folha já paga.
+    { period: "Manhã",     time: "04:00 – 09:00", person: "Carlos", until: "2026-09-17" },
+    { period: "Manhã",     time: "04:00 – 09:00", person: "Alice",  from:  "2026-09-18" },
     { period: "Noite",     time: "18:00 – 23:00", person: "Raul" },
   ],
   3: [
@@ -34,7 +38,10 @@ export const WEEKDAY_SHIFTS = {
   4: [
     { period: "Madrugada", time: "23:00 – 04:00", person: "Ricardo" },
     { period: "Manhã",     time: "04:00 – 09:00", person: "Marcus Túlio" },
-    { period: "Noite",     time: "18:00 – 23:00", person: "Carlos" },
+    // Noite de quinta era do Carlos; passou para o Marcus Túlio a partir de
+    // CARLOS_WEEKDAY_HANDOFF — mesma vigência da troca de terça acima.
+    { period: "Noite",     time: "18:00 – 23:00", person: "Carlos",       until: "2026-09-17" },
+    { period: "Noite",     time: "18:00 – 23:00", person: "Marcus Túlio", from:  "2026-09-18" },
   ],
   5: [
     { period: "Madrugada", time: "23:00 – 04:00", person: "Emanoel" },
@@ -52,6 +59,10 @@ export const WEEKDAY_SHIFTS = {
 // Data em que a Noite de sexta passou a terminar às 23:00 (ver WEEKDAY_SHIFTS[5]).
 export const FRIDAY_NIGHT_CHANGE = "2026-08-01";
 
+// Data em que o Carlos saiu da Manhã de terça (→ Alice) e da Noite de quinta
+// (→ Marcus Túlio) — ver WEEKDAY_SHIFTS[2] e WEEKDAY_SHIFTS[4].
+export const CARLOS_WEEKDAY_HANDOFF = "2026-09-18";
+
 // Rotação de FDS ANTIGA (5 semanas, 5 pessoas, 1 folga) — vale para os fins de
 // semana ANTES de WEEKEND_CHANGE. Mantida para preservar o histórico/folha.
 export const WEEKEND_CYCLE = [
@@ -62,17 +73,34 @@ export const WEEKEND_CYCLE = [
   { sabDia: "Emanoel",      sabNoite: "Ricardo",      domDia: "Raul",         domNoite: "Marcus Túlio", folga: "Carlos" },
 ];
 
-// Rotação de FDS NOVA — escada de 6 semanas com as 6 pessoas (4 trabalham + 2 folgam).
+// Rotação de FDS — escada de 6 semanas com 6 pessoas (4 trabalham + 2 folgam).
 // A tabela inteira é GERADA a partir desta ordem de rodízio: cada pessoa avança uma
 // estação por semana. Estações (em ordem): Sáb Dia, Sáb Noite, Dom Dia, Dom Noite,
-// Folga, Folga. Vale para os fins de semana a partir de WEEKEND_CHANGE.
+// Folga, Folga. Vale para os fins de semana entre WEEKEND_CHANGE e
+// CARLOS_WEEKEND_CHANGE (ver rotação seguinte, sem Carlos) — mantida para preservar
+// o histórico/folha desse período.
 // Ordem derivada por CONTINUIDADE com o ciclo antigo: no último FDS antigo (11–12/07)
 // a folga foi do Carlos; na virada ele folga de novo (2ª folga), Alice entra no Sáb Dia
 // e os demais só avançam uma estação. Assim ninguém "salta" de posição.
 export const WEEKEND_ROSTER = ["Alice", "Emanoel", "Ricardo", "Raul", "Marcus Túlio", "Carlos"];
-// Sábado da Semana 1 da escada nova (18/07/2026). Fins de semana >= esta data usam a
-// escada nova; anteriores mantêm WEEKEND_CYCLE. ⚠ Mover isto recalcula a escala.
+// Sábado da Semana 1 da escada de 6 (18/07/2026). Fins de semana >= esta data e <
+// CARLOS_WEEKEND_CHANGE usam esta escada; anteriores mantêm WEEKEND_CYCLE.
+// ⚠ Mover isto recalcula a escala.
 export const WEEKEND_CHANGE = new Date(2026, 6, 18);
+
+// Rotação de FDS — escada de 5 semanas, SEM Carlos (4 trabalham + 1 folga). Vale a
+// partir de CARLOS_WEEKEND_CHANGE. Ordem derivada por CONTINUIDADE com a escada de 6
+// vigente na última semana antes da virada (26/09): sabDia=Ricardo, sabNoite=Raul,
+// domDia=Marcus Túlio, domNoite=Carlos, folga=[Alice, Emanoel] — removendo Carlos e
+// preservando a ordem relativa dos demais, quem vinha depois dele (Alice) assume o
+// posto de trabalho que ele deixou (Dom Noite) e Emanoel passa a ser a única folga.
+// As três primeiras estações (Sáb Dia, Sáb Noite, Dom Dia) não mudam nessa virada.
+export const WEEKEND_ROSTER_SEM_CARLOS = ["Ricardo", "Raul", "Marcus Túlio", "Alice", "Emanoel"];
+// Sábado a partir do qual o Carlos sai definitivamente do rodízio de FDS. O FDS
+// imediatamente anterior (19–20/09) já tinha o Dom Dia dele coberto por uma
+// substituição pontual (Ricardo) — não precisou entrar na virada da escada.
+// ⚠ Mover isto recalcula a escala.
+export const CARLOS_WEEKEND_CHANGE = new Date(2026, 8, 26);
 
 // The Saturday corresponding to Week 1 of the 5-week weekend rotation.
 // Changing ANCHOR shifts the entire schedule history — requires full rotation recalibration.
@@ -158,26 +186,44 @@ export function cycleIndex(saturday) {
   return ((diff % 5) + 5) % 5;
 }
 
+// `rotacao.fases` é uma lista CRONOLÓGICA de fases (cada troca de gente/regra vira
+// uma fase nova, nenhuma reescreve a anterior — mesmo espírito de vigência do
+// WEEKDAY_SHIFTS). Escolhe a ÚLTIMA fase cuja `change` é <= `when` (a primeira fase
+// não tem `change` — é o fallback pra qualquer data anterior à primeira troca,
+// preserva o histórico mais antigo). Exportada para a aba Estrutura resolver, sem
+// duplicar a lógica, qual escada mostrar hoje (ver EstruturaEscala.jsx).
+export function pickFase(fases, when) {
+  let fase = fases[0];
+  for (const f of fases) {
+    if (!f.change || when.getTime() >= f.change.getTime()) fase = f;
+  }
+  return fase;
+}
+
 // Atribuição de FDS para um dado sábado, a partir de uma config de rotação genérica
-// (team.rotacao — ver src/lib/teams.js): escolhe a rotação pela data:
-//   • sábado < rotacao.change → ciclo legado (N semanas, 1 folga) — preserva histórico.
-//   • sábado >= rotacao.change → escada, GERADA do rotacao.roster:
-//     estação s na semana w = roster[(s - w) mod N]; cada pessoa avança 1 estação/semana.
+// (team.rotacao — ver src/lib/teams.js), resolvendo a fase vigente com pickFase():
+//   • fase.tipo === 'ciclo'   → N semanas, 1 folga (rotação antiga, com anchor/ciclos).
+//   • fase.tipo === 'escada'  → GERADA de fase.roster (N pessoas): estação s na semana
+//     w = roster[(s - w) mod N]; cada pessoa avança 1 estação/semana; as 4 primeiras
+//     estações trabalham (Sáb Dia, Sáb Noite, Dom Dia, Dom Noite) e as N-4 restantes
+//     folgam — suporta qualquer N >= 4, não só 6 (ex.: N=5 quando alguém sai do rodízio).
 // Retorna sempre { cycleWeek, sabDia, sabNoite, domDia, domNoite, folga: string[] }.
 function resolveRotation(rotacao, saturday) {
-  if (saturday.getTime() >= rotacao.change.getTime()) {
-    const roster = rotacao.roster;
+  const fase = pickFase(rotacao.fases, saturday);
+  if (fase.tipo === "escada") {
+    const { roster } = fase;
     const N = roster.length;
-    const diff = Math.round((saturday.getTime() - rotacao.change.getTime()) / (7 * MS_DAY));
+    const diff = Math.round((saturday.getTime() - fase.change.getTime()) / (7 * MS_DAY));
     const w = ((diff % N) + N) % N;
     const cell = (s) => roster[(((s - w) % N) + N) % N];
+    const folgaCount = N - 4;
     return {
       cycleWeek: w + 1,
       sabDia: cell(0), sabNoite: cell(1), domDia: cell(2), domNoite: cell(3),
-      folga: [cell(4), cell(5)],
+      folga: Array.from({ length: folgaCount }, (_, i) => cell(4 + i)),
     };
   }
-  const { anchor, ciclos } = rotacao.legado;
+  const { anchor, ciclos } = fase;
   const diff = Math.round((saturday.getTime() - anchor.getTime()) / (7 * MS_DAY));
   const idx = ((diff % ciclos.length) + ciclos.length) % ciclos.length;
   const rot = ciclos[idx];
@@ -194,14 +240,15 @@ function resolveRotation(rotacao, saturday) {
 // a mesma config como TEAMS.sustentacao.rotacao para o motor genérico.
 const SUSTENTACAO_ROTACAO = {
   dows: [0, 6],
-  tipo: "escada",
-  roster: WEEKEND_ROSTER,
-  change: WEEKEND_CHANGE,
   turnos: {
     dia:   { period: "Dia",   time: "23:00 – 11:00" },
     noite: { period: "Noite", time: "11:00 – 23:00" },
   },
-  legado: { tipo: "ciclo", anchor: ANCHOR, ciclos: WEEKEND_CYCLE },
+  fases: [
+    { tipo: "ciclo",  anchor: ANCHOR, ciclos: WEEKEND_CYCLE },
+    { tipo: "escada", change: WEEKEND_CHANGE,        roster: WEEKEND_ROSTER },
+    { tipo: "escada", change: CARLOS_WEEKEND_CHANGE, roster: WEEKEND_ROSTER_SEM_CARLOS },
+  ],
 };
 
 // Mantido para compatibilidade com a aba Estrutura (EstruturaEscala.jsx), que só
