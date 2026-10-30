@@ -22,8 +22,7 @@ export function parseShiftTime(timeStr) {
 }
 
 // Sobreaviso gerado pela escala para `person` no mês (monthIdx/year), já com
-// substituições resolvidas (resolveShiftPeople — mesma regra do calendário, incluindo
-// "edição vence substituição"). Cada pessoa de um turno multi-pessoa (feriado) gera
+// substituições resolvidas (resolveShiftPeople — mesma regra do calendário). Cada pessoa de um turno multi-pessoa (feriado) gera
 // seu próprio lançamento.
 export function scheduleEntriesFor(schedule, subs, person, monthIdx, year) {
   if (!person) return [];
@@ -142,9 +141,8 @@ function saWindowsRelativeToDate(schedule, subs, dayStart, person, data) {
   const windows = [];
   for (const seg of segs) {
     for (const titular of seg.people) {
-      // Turno travado por override não redireciona por substituição — mesma
-      // regra "edição vence substituição" do calendário (resolveShiftPeople).
-      const sub = seg.personsOverridden ? null : getActiveSub(titular, seg.dateStr, subs);
+      // Mesma regra do calendário (resolveShiftPeople): a substituição do titular vale.
+      const sub = getActiveSub(titular, seg.dateStr, subs);
       const effective = sub ? sub.substituto : titular;
       if (effective !== person) continue;
       windows.push([(seg.start - anchorMs) / 60000, (seg.end - anchorMs) / 60000]);

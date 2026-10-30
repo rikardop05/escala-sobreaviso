@@ -147,7 +147,7 @@ Regras derivadas:
 
 `buildOnCallSegments(schedule, dayStart)` — a heurística `idx === 0 && crosses && startMin >= 12*60` some. Regra nova: um turno cujo horário de início é `>= dayStart` (quando `dayStart > 00:00`) pertence ao dia anterior no calendário. Verificado contra os cinco tipos de turno da sustentação (resultado idêntico) e contra os sete blocos de infra e desenvolvimento, todos com `dayStart: '00:00'` (ADR-0002).
 
-`resolveShiftPeople`, `getActiveSub`, `currentOnCall`, `adjacentOnCall` recebem o contexto da equipe. A regra "edição vence substituição" (`personsOverridden`) não muda.
+`resolveShiftPeople`, `getActiveSub`, `currentOnCall`, `adjacentOnCall` recebem o contexto da equipe. A regra "edição vence substituição" (`personsOverridden`) não muda. _(Removida depois, em 2026-10-30: quem é colocado num turno por edição vira o titular e a substituição dele vale — ver CLAUDE.md, Substituições.)_
 
 ## 2. Persistência
 

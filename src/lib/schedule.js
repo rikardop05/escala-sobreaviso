@@ -379,12 +379,9 @@ export function buildSchedule(team, overrides = {}, labels = {}) {
         // schema Zod aceita por compatibilidade), mas o merge descarta — nenhum
         // turno retornado carrega duração armazenada, só a derivada de time.
         const { dur: _dur, ...ovRest } = ov;
+        // Pessoas definidas por override passam a ser as titulares do turno — uma
+        // substituição dessas pessoas redireciona o turno igual faria na rotação base.
         const merged = { ...(b || {}), ...ovRest, idx: i };
-        // Pessoas definidas explicitamente por override "travam" o turno: uma
-        // substituição em que essa pessoa é titular NÃO redireciona mais este turno
-        // (edição do admin vence a substituição). Só marca quando o override mexe
-        // em pessoas — override só de horário/rótulo mantém a rotação base (e seus subs).
-        if (ov.persons !== undefined || ov.person !== undefined) merged.personsOverridden = true;
         shifts.push(merged);
         continue;
       }
@@ -434,7 +431,7 @@ export function buildOnCallSegments(schedule, dayStart) {
         start = dayMs(D, 0, tr.sh, tr.sm);
         end   = dayMs(D, crosses ? 1 : 0, tr.eh, tr.em);
       }
-      segs.push({ start, end, people: shiftPeople(shift), personsOverridden: !!shift.personsOverridden, period: shift.period, time: shift.time, dateStr: ds, dow: day.dow });
+      segs.push({ start, end, people: shiftPeople(shift), period: shift.period, time: shift.time, dateStr: ds, dow: day.dow });
     }
   }
   return segs.sort((a, b) => a.start - b.start);
@@ -451,8 +448,7 @@ export function currentOnCall(now, schedule, subs = [], dayStart) {
   if (!hits.length) return null;
   const people = [];
   for (const s of hits) for (const titular of s.people) {
-    // Turno com pessoas travadas por override não aplica substituição (edição vence).
-    const sub = s.personsOverridden ? null : getActiveSub(titular, s.dateStr, subs);
+    const sub = getActiveSub(titular, s.dateStr, subs);
     people.push({ person: sub ? sub.substituto : titular, coveringFor: sub ? titular : null });
   }
   const primary = hits[0];
@@ -476,7 +472,7 @@ export function adjacentOnCall(now, schedule, subs = [], dayStart) {
   const shape = (s, ms) => {
     if (!s) return null;
     const people = s.people.map(titular => {
-      const sub = s.personsOverridden ? null : getActiveSub(titular, s.dateStr, subs);
+      const sub = getActiveSub(titular, s.dateStr, subs);
       return sub ? sub.substituto : titular;
     });
     return { people, hora: fmtHora(ms) };
@@ -502,15 +498,13 @@ export function getActiveSub(person, dateStr, subs) {
 }
 
 // Resolve as pessoas EFETIVAS de um turno numa data, aplicando substituições.
-// Regra "edição vence substituição": se as pessoas do turno foram definidas
-// explicitamente por override do admin (`shift.personsOverridden`), a atribuição é
-// final — uma substituição em que essa pessoa é titular NÃO redireciona este turno.
+// Vale igual para a rotação base e para turnos editados por override: quem está no
+// turno (por qualquer um dos dois caminhos) é o titular, e a substituição dele vale.
 // Retorna [{ person, coveringFor, titular }] — `coveringFor` = titular coberto (ou null).
 // Fonte única de verdade usada pelo calendário, filtro e cálculo do CH (folha).
 export function resolveShiftPeople(shift, dateStr, subs = []) {
-  const locked = !!shift?.personsOverridden;
   return shiftPeople(shift).map(titular => {
-    const sub = locked ? null : getActiveSub(titular, dateStr, subs);
+    const sub = getActiveSub(titular, dateStr, subs);
     return { person: sub ? sub.substituto : titular, coveringFor: sub ? titular : null, titular };
   });
 }
