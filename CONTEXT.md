@@ -63,7 +63,7 @@ Estado de uma pessoa que está fora da rotação numa determinada semana. É pro
 _Avoid_: Descanso, off
 
 **Edição de escala**:
-Alteração pontual feita pelo admin sobre a estrutura — trocar quem cobre, mudar horário, criar turno de feriado, rotular o dia. Vence a substituição quando define pessoas explicitamente.
+Alteração pontual feita pelo admin sobre a estrutura — trocar quem cobre, mudar horário, criar turno de feriado, rotular o dia. Quando define pessoas, elas passam a ser as titulares do turno (até outra edição) — uma substituição delas vale normalmente, como na rotação base.
 _Avoid_: Override, exceção, ajuste
 
 **Rótulo do dia**:
@@ -77,7 +77,7 @@ Acordo em que uma pessoa cobre todos os turnos de outra durante um intervalo de 
 _Avoid_: Troca, cobertura, swap
 
 **Titular**:
-A pessoa originalmente atribuída ao turno — quem se ausenta.
+A pessoa atribuída ao turno — pela rotação ou por edição de escala — que se ausenta.
 _Avoid_: Dono, responsável
 
 **Substituto**:

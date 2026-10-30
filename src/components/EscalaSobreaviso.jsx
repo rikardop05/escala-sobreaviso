@@ -372,11 +372,10 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
       const dk = dayKey(d.date);
       d.shifts.forEach(s => {
         const people = shiftPeople(s);
-        const locked = !!s.personsOverridden; // turno travado por override não aplica sub
         if (people.includes(filter)) {
-          const sub = locked ? null : getActiveSub(filter, dk, subs);
+          const sub = getActiveSub(filter, dk, subs);
           rows.push({ date:d.date, dow:d.dow, ...s, kind:"turno", coveredBy: sub ? sub.substituto : null });
-        } else if (!locked) {
+        } else {
           // filter pode estar cobrindo alguém deste turno (substituto)
           const titular = people.find(p => { const sub = getActiveSub(p, dk, subs); return sub && sub.substituto === filter; });
           if (titular) rows.push({ date:d.date, dow:d.dow, ...s, kind:"turno", coveringFor: titular });
@@ -775,9 +774,9 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     return count;
   }, [applyToFuture, selectedShifts, schedule]);
 
-  // Conflitos entre a edição e substituições existentes: se o admin coloca no turno
-  // alguém que TEM substituição ativa (é titular) na data selecionada, avisamos —
-  // com a regra "edição vence", essa pessoa fica no turno e a substituição não vale ali.
+  // Edição × substituições existentes: se quem edita coloca no turno alguém que TEM
+  // substituição ativa (é titular) na data selecionada, avisamos — a substituição vale
+  // também em turno editado, então quem aparece no turno é o substituto.
   const editSubConflicts = useMemo(() => {
     if (!editForm.persons.length || !selectedShifts.size) return [];
     const seen = new Set(); const out = [];
@@ -948,13 +947,12 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                 const isWeekend = d.dow === 0 || d.dow === 6;
                 const isPast    = !isToday && d.date < now;
                 const dk        = dayKey(d.date);
-                const hasFiltered = !filter || d.shifts.some(s => {
-                  const locked = !!s.personsOverridden;
-                  return shiftPeople(s).some(p => {
-                    const sub = locked ? null : getActiveSub(p, dk, subs);
+                const hasFiltered = !filter || d.shifts.some(s =>
+                  shiftPeople(s).some(p => {
+                    const sub = getActiveSub(p, dk, subs);
                     return (sub ? sub.substituto : p) === filter || p === filter;
-                  });
-                }) || d.folga.includes(filter);
+                  })
+                ) || d.folga.includes(filter);
                 const overlap = detectOverlaps(d, dk, subs);
                 const rowBg = isToday ? T.accentQuiet : isWeekend ? T.surfaceAlt : "transparent";
                 return (
@@ -1390,14 +1388,14 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                       <div role="alert" style={{ display:'flex', gap:'0.5rem', alignItems:'flex-start', background:T.warnQuiet, border:`1px solid ${T.warnBorder}`, borderRadius:T.rControl, padding:'0.55rem 0.7rem', margin:'0 0 0.6rem 0' }}>
                         <Icon name="alert" size={14} style={{ color:T.warn, flexShrink:0, marginTop:'0.1rem' }} />
                         <div style={{ fontSize:'0.74rem', color:T.textSecondary, lineHeight:1.55 }}>
-                          <b style={{ color:T.warn }}>Conflito com substituição.</b>{' '}
+                          <b style={{ color:T.warn }}>Substituição ativa.</b>{' '}
                           {editSubConflicts.map((c, i) => (
                             <span key={i}>
                               <b style={{ color:T.textPrimary }}>{c.person}</b> tem substituição ativa ({c.person} → {c.substituto}) em {fmtDS(c.dk)}
                               {i < editSubConflicts.length - 1 ? '; ' : '. '}
                             </span>
                           ))}
-                          Com esta edição a pessoa é <b>mantida no turno</b> — a substituição não se aplica aqui. Se quer que o substituto assuma, use o formulário de Substituições.
+                          A substituição também vale no turno editado: <b>quem aparece no turno é o substituto</b>. Se quer que a própria pessoa assuma, remova a substituição.
                         </div>
                       </div>
                     )}

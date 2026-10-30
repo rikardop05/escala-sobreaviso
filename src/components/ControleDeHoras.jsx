@@ -472,7 +472,17 @@ export default function ControleDeHoras({ dark, profile }) {
   const p = memberTone(person, dark);
   const years = [year - 1, year, year + 1];
   const liveDuration = durationHours(form.inicio, form.fim);
-  const crossesMidnight = form.inicio && form.fim && form.fim <= form.inicio;
+  // Virar a meia-noite (23:00–00:35) é um lançamento normal: só informa quando termina.
+  // O tom de alerta fica para o que costuma ser erro de digitação — início = fim (24h)
+  // ou uma virada longa demais (ex.: 18:00–08:00 querendo dizer 18:00–20:00).
+  const crossesMidnight = !!(form.inicio && form.fim && form.fim <= form.inicio);
+  const midnightSuspicious = crossesMidnight && (form.fim === form.inicio || liveDuration > 12);
+  const fimDia = (() => {
+    if (!crossesMidnight || !form.data) return null;
+    const d = new Date(`${form.data}T12:00:00`);
+    d.setDate(d.getDate() + 1);
+    return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+  })();
   const formMonthClosed = !!(form.data && closedMonths[form.data.slice(0, 7)]);
 
   // Prévia da aprovação automática — o cliente só MOSTRA, o servidor é quem de
@@ -702,9 +712,11 @@ export default function ControleDeHoras({ dark, profile }) {
             </p>
           )}
           {crossesMidnight && (
-            <p className="flex items-center gap-1.5 text-xs font-semibold mb-3" style={{ color:T.warn }}>
-              <Icon name="alert" size={13} />
-              Fim antes do início: será registrado como turno que atravessa a meia-noite ({fmtHM(liveDuration)} de duração). Confira antes de salvar.
+            <p className="flex items-center gap-1.5 text-xs font-semibold mb-3" style={{ color: midnightSuspicious ? T.warn : T.textMuted }}>
+              <Icon name={midnightSuspicious ? "alert" : "moon"} size={13} />
+              {form.fim === form.inicio
+                ? "Início e fim iguais: será registrado como 24h seguidas. Confira o horário."
+                : `Atravessa a meia-noite — termina ${fimDia ? `em ${fimDia}` : "no dia seguinte"} às ${form.fim}.${midnightSuspicious ? ` São ${fmtHM(liveDuration)} de duração; confira o horário.` : ""}`}
             </p>
           )}
           {splitSummary && (
