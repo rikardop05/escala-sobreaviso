@@ -709,8 +709,10 @@ separado (`TEAM_MEMBERS`) para manter em sincronia manualmente.
 | `ch-approve` POST | `ChApprovePostSchema` — `{ person (MEMBERS), entryId, acao: 'aprovar'\|'rejeitar', motivo? }`; `.refine()` exige `motivo` não-vazio quando `acao === 'rejeitar'`. |
 
 Ordem de execução: `requireUser` → validação de `team` → checagem de escopo (`adminCovers`) →
-`checkBodySize` (50 KB) → `validate(schema)` → Redis.
+`checkBodySize` (50 KB; **300 KB só em `ch` POST** — `CH_MAX_BODY_BYTES`) → `validate(schema)` → Redis.
 Erros de validação: log server-side dos primeiros 5 issues; resposta sempre `400 { error: 'Bad request' }`.
+
+⚠ **`/api/ch` POST reenvia a lista COMPLETA de lançamentos da pessoa** (cliente → servidor → `kvSet` do array inteiro), então o corpo cresce com o histórico (~265 B por lançamento). Com o limite de 50 KB, o Emanoel (188 Horas Extras ≈ 50 KB) passou a receber `400 Bad request` em todo salvamento — o `checkBodySize` roda antes da validação e não deixa log. Hotfix: `CH_MAX_BODY_BYTES = 300_000` em `api/_validate.js`, só para `ch`. **Não é definitivo** — o teto de 500 entradas do `ChPostSchema` ainda chega em alguns meses no ritmo atual. Solução estrutural pendente: gravar por lançamento (POST/PUT/DELETE de 1 entrada) e particionar por mês (`member:{id}:ch_entries:YYYY-MM`, mantendo string JSON para o backup via `mget` continuar funcionando), com script de migração e verificação de totais.
 
 ---
 
