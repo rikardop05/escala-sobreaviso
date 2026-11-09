@@ -186,6 +186,14 @@ export const ChApprovePostSchema = z.object({
 
 const MAX_BODY_BYTES = 50_000; // 50 KB — guards against absurdly large payloads
 
+// /api/ch recebe a lista COMPLETA de lançamentos da pessoa a cada gravação (o cliente
+// reenvia tudo, não só o que mudou), então o corpo cresce com o histórico: ~265 B por
+// lançamento — 188 Horas Extras do Emanoel já somavam 50 KB e todo POST dele voltava
+// 400. O teto de 500 entradas do ChPostSchema limita a lista; 500 lançamentos típicos
+// (~300 B) ≈ 150 KB, então 300 KB dá folga sem abrir a porta para corpos absurdos. Só o /api/ch usa este limite — os demais endpoints seguem em 50 KB.
+// ⚠ Hotfix, não solução definitiva: o desenho estrutural é gravar por lançamento.
+export const CH_MAX_BODY_BYTES = 300_000;
+
 /**
  * Runs safeParse. On failure, logs issues server-side and returns { ok: false }.
  * The caller responds with a generic 400 — no schema details leak to the client.
@@ -200,10 +208,10 @@ export function validate(schema, data) {
   return { ok: true, data: result.data };
 }
 
-/** Rejects payloads whose serialized size exceeds MAX_BODY_BYTES. */
-export function checkBodySize(body) {
+/** Rejects payloads whose serialized size exceeds `maxBytes` (default MAX_BODY_BYTES). */
+export function checkBodySize(body, maxBytes = MAX_BODY_BYTES) {
   try {
-    return JSON.stringify(body).length <= MAX_BODY_BYTES;
+    return JSON.stringify(body).length <= maxBytes;
   } catch {
     return false;
   }

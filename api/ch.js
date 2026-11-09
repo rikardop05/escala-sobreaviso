@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { kvGet, kvSet } from './_redis.js';
 import { requireUser } from './_auth.js';
 import { adminCovers } from './_allowlist.js';
-import { validate, checkBodySize, ChPostSchema } from './_validate.js';
+import { validate, checkBodySize, ChPostSchema, CH_MAX_BODY_BYTES } from './_validate.js';
 import { readTeamOverrides, readTeamSubs } from './_scheduleData.js';
 import { MEMBERS, TEAMS } from '../src/lib/teams.js';
 import { buildSchedule } from '../src/lib/schedule.js';
@@ -117,7 +117,7 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'POST') {
-      if (!checkBodySize(req.body)) return res.status(400).json({ error: 'Bad request' });
+      if (!checkBodySize(req.body, CH_MAX_BODY_BYTES)) return res.status(400).json({ error: 'Bad request' });
       const { ok, data: body } = validate(ChPostSchema, req.body);
       if (!ok) return res.status(400).json({ error: 'Bad request' });
 
