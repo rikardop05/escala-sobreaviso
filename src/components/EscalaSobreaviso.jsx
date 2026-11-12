@@ -5,6 +5,7 @@ import {
   MS_DAY, dayKey, sameDay, fmtDS,
   buildSchedule, currentOnCall, adjacentOnCall,
   getActiveSub, getCoverSuggestions, shiftPeople, resolveShiftPeople, parseTimeRange,
+  effectiveWeekendFolga,
   shiftDuration, sortShiftsByStart, pickFase,
 } from '../lib/schedule';
 import { TEAMS, teamScopeCovers } from '../lib/teams';
@@ -265,6 +266,9 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
 
   // Schedule recomputes when overrides/labels change (admin edits reflect immediately)
   const schedule = useMemo(() => buildSchedule(team, overrides, labels), [team, overrides, labels]);
+  // Folga de FDS efetiva (com substituições/edições) — d.folga é só a rotação base.
+  const folgaEfetiva = useMemo(() => effectiveWeekendFolga(team, schedule, subs), [team, schedule, subs]);
+  const folgaDe = useCallback((d) => folgaEfetiva.get(dayKey(d.date)) ?? d.folga, [folgaEfetiva]);
   const todayStr = dayKey(now);
 
   const months = useMemo(() => {
@@ -381,15 +385,14 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
           if (titular) rows.push({ date:d.date, dow:d.dow, ...s, kind:"turno", coveringFor: titular });
         }
       });
-      if (d.folga.includes(filter) && d.dow === 6) {
-        const sub = getActiveSub(filter, dayKey(d.date), subs);
-        if (!sub) rows.push({ date:d.date, dow:d.dow, period:"Folga FDS", time:"Sáb + Dom", person:filter, kind:"folga" });
+      if (d.dow === 6 && folgaDe(d).includes(filter)) {
+        rows.push({ date:d.date, dow:d.dow, period:"Folga FDS", time:"Sáb + Dom", person:filter, kind:"folga" });
       }
       if (rows.length >= 30) break;
     }
     rows.sort((a, b) => a.date - b.date);
     return rows.slice(0, 25);
-  }, [filter, schedule, now, subs]);
+  }, [filter, schedule, now, subs, folgaDe]);
 
   const activeTitulares = useMemo(
     () => new Set(subs.filter(s => s.from <= todayStr && s.until >= todayStr).map(s => s.titular)),
@@ -952,7 +955,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                     const sub = getActiveSub(p, dk, subs);
                     return (sub ? sub.substituto : p) === filter || p === filter;
                   })
-                ) || d.folga.includes(filter);
+                ) || folgaDe(d).includes(filter);
                 const overlap = detectOverlaps(d, dk, subs);
                 const rowBg = isToday ? T.accentQuiet : isWeekend ? T.surfaceAlt : "transparent";
                 return (
@@ -1019,10 +1022,12 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                         {isWeekend && d.dow === 6 && d.cycleWeek !== null && (
                           <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
                             <Badge T={T} tone="neutral">Semana {d.cycleWeek} do ciclo</Badge>
-                            <Badge T={T} tone="warn" icon="umbrella"
-                              style={{ opacity: filter && !d.folga.includes(filter) ? 0.4 : 1 }}>
-                              Folga FDS: {d.folga.join(", ")}
-                            </Badge>
+                            {folgaDe(d).length > 0 && (
+                              <Badge T={T} tone="warn" icon="umbrella"
+                                style={{ opacity: filter && !folgaDe(d).includes(filter) ? 0.4 : 1 }}>
+                                Folga FDS: {folgaDe(d).join(", ")}
+                              </Badge>
+                            )}
                           </div>
                         )}
 
