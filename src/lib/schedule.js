@@ -497,6 +497,39 @@ export function getActiveSub(person, dateStr, subs) {
   return subs.find(s => s.titular === person && dateStr >= s.from && dateStr <= s.until) || null;
 }
 
+// Folga EFETIVA de cada fim de semana, considerando substituições e edições da escala.
+// `day.folga` (de buildSchedule) é só a rotação base — não sabe de subs. Aqui:
+//   candidatos = quem a rotação base escalou para o FDS (4 turnos) + quem folgava nela;
+//   folga efetiva = candidatos que NÃO aparecem em nenhum turno efetivo de sáb/dom
+//   (resolveShiftPeople: subs aplicadas, "edição vence substituição").
+// Assim, quem troca com outro sai da folga e o titular que foi coberto entra nela.
+// Pessoas de fora da rotação (ex.: turno extra de feriado) nunca viram "folga".
+// Retorna Map<dayKey de sáb e de dom, string[]>; vazio para equipe sem rotação.
+// Dia fora do Map (ex.: dia útil) → quem consome cai em `day.folga`.
+export function effectiveWeekendFolga(team, schedule, subs = []) {
+  const out = new Map();
+  if (!team?.rotacao) return out;
+  for (let i = 0; i < schedule.length; i++) {
+    const sat = schedule[i];
+    if (sat.dow !== 6 || sat.cycleWeek === null) continue;
+    const sun = schedule[i + 1]?.dow === 0 ? schedule[i + 1] : null;
+    const rot = resolveRotation(team.rotacao, sat.date);
+    const candidates = [...rot.folga, rot.sabDia, rot.sabNoite, rot.domDia, rot.domNoite];
+    const working = new Set();
+    for (const day of [sat, sun]) {
+      if (!day) continue;
+      const dk = dayKey(day.date);
+      for (const s of day.shifts) {
+        for (const r of resolveShiftPeople(s, dk, subs)) working.add(r.person);
+      }
+    }
+    const folga = [...new Set(candidates)].filter(p => !working.has(p));
+    out.set(dayKey(sat.date), folga);
+    if (sun) out.set(dayKey(sun.date), folga);
+  }
+  return out;
+}
+
 // Resolve as pessoas EFETIVAS de um turno numa data, aplicando substituições.
 // Vale igual para a rotação base e para turnos editados por override: quem está no
 // turno (por qualquer um dos dois caminhos) é o titular, e a substituição dele vale.

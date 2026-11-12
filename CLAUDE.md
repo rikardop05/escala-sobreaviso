@@ -294,7 +294,7 @@ Para uma quarta fase no futuro (nova saída/entrada no rodízio), basta acrescen
 
 **`RANGE_START = 2026-06-08`** / **`RANGE_END = 2027-06-30`** — período global; `buildSchedule(team, …)` recorta isso contra `team.startsOn`/`team.endsOn` (na sustentação, idênticos a `RANGE_START`/sem fim, então não há recorte hoje). Para estender: atualizar apenas `RANGE_END`.
 
-`day.folga` é **sempre array** (vazio em dia útil; 1 nome no ciclo antigo; 2 na escada nova) — a UI usa `d.folga.includes(...)` / `d.folga.join(', ')`.
+`day.folga` é **sempre array** (vazio em dia útil; 1 nome no ciclo antigo; 2 na escada nova) e é só a folga da **rotação base** — não conhece substituições nem edições. Para exibir (tag "Folga FDS", filtro por pessoa, linha "Folga FDS" em "próximos"), a UI usa a folga **efetiva**: `effectiveWeekendFolga(team, schedule, subs)` (`schedule.js`) devolve `Map<dayKey de sáb/dom, string[]>` = quem a rotação escalou para o FDS (trabalho + folga) menos quem aparece em algum turno efetivo de sáb/dom (`resolveShiftPeople`). Quem troca de SA sai da folga e o titular coberto entra nela; pessoa de fora da rotação (turno extra) nunca vira folga. `EscalaSobreaviso.jsx` consome via `folgaDe(d)` (cai em `d.folga` se o dia não está no Map). `EstruturaEscala.jsx` continua com `d.folga` — é a estrutura base, de propósito.
 
 ### Seletor de equipe, widget "Agora" e estado vazio (Fase 1)
 
