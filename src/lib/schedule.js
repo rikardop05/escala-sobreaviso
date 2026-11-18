@@ -448,8 +448,8 @@ export function currentOnCall(now, schedule, subs = [], dayStart) {
   if (!hits.length) return null;
   const people = [];
   for (const s of hits) for (const titular of s.people) {
-    const sub = getActiveSub(titular, s.dateStr, subs);
-    people.push({ person: sub ? sub.substituto : titular, coveringFor: sub ? titular : null });
+    const sub = shiftSub(titular, s, s.dateStr, subs);
+    people.push({ person: sub ? sub.substituto : titular, coveringFor: sub ? sub.coveringFor : null });
   }
   const primary = hits[0];
   return { people, label: `${DOW[primary.dow]} · ${primary.period}`, time: primary.time };
@@ -472,7 +472,7 @@ export function adjacentOnCall(now, schedule, subs = [], dayStart) {
   const shape = (s, ms) => {
     if (!s) return null;
     const people = s.people.map(titular => {
-      const sub = getActiveSub(titular, s.dateStr, subs);
+      const sub = shiftSub(titular, s, s.dateStr, subs);
       return sub ? sub.substituto : titular;
     });
     return { people, hora: fmtHora(ms) };
@@ -495,6 +495,31 @@ export function adjacentOnCall(now, schedule, subs = [], dayStart) {
 
 export function getActiveSub(person, dateStr, subs) {
   return subs.find(s => s.titular === person && dateStr >= s.from && dateStr <= s.until) || null;
+}
+
+// Substituição efetiva de UM turno (`shift`) na data `dateStr` — `dateStr` é o dia do
+// turno, não o dia civil em que ele começa (ADR-0002). Retorna
+// { substituto, coveringFor, titular } ou null (ninguém cobre este turno).
+//   1) Substituição SEM `turnos` (legada/"todos os turnos"): casa com o TITULAR do
+//      turno (quem a rotação/edição colocou), sem encadear — comportamento de sempre.
+//   2) Substituição COM `turnos` (['Dia'], ['Noite']…): vale só no turno cujo `period`
+//      está na lista e casa com quem está NO TURNO naquele momento (inclusive um
+//      substituto de (1)). Aplicadas em ordem de criação (`id` = Date.now()), então
+//      dá para trocar duas pessoas que já são substitutas: Ricardo(Dia) ↔ Emanoel(Noite)
+//      = [Ricardo→Emanoel, turnos Dia] + [Emanoel→Ricardo, turnos Noite].
+// `coveringFor` = quem estava no turno antes do último passo (quem o substituto cobre).
+export function shiftSub(titular, shift, dateStr, subs = []) {
+  const inRange = s => dateStr >= s.from && dateStr <= s.until;
+  let current = titular, covered = null;
+  const direct = subs.find(s => !s.turnos?.length && s.titular === titular && inRange(s));
+  if (direct) { covered = current; current = direct.substituto; }
+  const scoped = subs
+    .filter(s => s.turnos?.length && s.turnos.includes(shift?.period) && inRange(s))
+    .sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0));
+  for (const s of scoped) {
+    if (s.titular === current) { covered = current; current = s.substituto; }
+  }
+  return current === titular ? null : { substituto: current, coveringFor: covered, titular };
 }
 
 // Folga EFETIVA de cada fim de semana, considerando substituições e edições da escala.
@@ -537,8 +562,8 @@ export function effectiveWeekendFolga(team, schedule, subs = []) {
 // Fonte única de verdade usada pelo calendário, filtro e cálculo do CH (folha).
 export function resolveShiftPeople(shift, dateStr, subs = []) {
   return shiftPeople(shift).map(titular => {
-    const sub = getActiveSub(titular, dateStr, subs);
-    return { person: sub ? sub.substituto : titular, coveringFor: sub ? titular : null, titular };
+    const sub = shiftSub(titular, shift, dateStr, subs);
+    return { person: sub ? sub.substituto : titular, coveringFor: sub ? sub.coveringFor : null, titular };
   });
 }
 
