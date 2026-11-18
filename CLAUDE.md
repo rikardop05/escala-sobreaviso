@@ -394,10 +394,14 @@ período e pessoas.
 
 ### Substituições
 
-`getActiveSub(person, dateStr, subs)` → busca substituição ativa onde `titular === person` e `dateStr` está no período.
+`getActiveSub(person, dateStr, subs)` → busca substituição ativa onde `titular === person` e `dateStr` está no período (só olha a pessoa e a data — usada em `editSubConflicts`; **a resolução de quem fica no turno usa `shiftSub`, abaixo**).
 Lista `subs` é compartilhada por equipe (`team:{teamId}:substitutions`) — `EscalaSobreaviso.jsx` recarrega `subs` sempre que `activeTeam` muda. Titular/substituto no formulário vêm de `TEAMS[activeTeam].roster` (não de todo mundo). POST e DELETE enviam `team` (body/query) — backend confere `adminCovers(adminOf, team)` **ou** que a própria pessoa seja titular/substituto.
 
 **Resolução de quem aparece no turno — fonte única `resolveShiftPeople(shift, dateStr, subs)`** → retorna `[{ person, coveringFor, titular }]` aplicando as substituições. Usada pelo calendário, filtro, widget "Agora" (via `buildOnCallSegments`/`currentOnCall`/`adjacentOnCall`) **e** pelo cálculo do CH (`scheduleEntries`) — todos compartilham a mesma regra, então calendário e folha nunca divergem.
+
+**Substituição por turno — `shiftSub(titular, shift, dateStr, subs)`** (`schedule.js`): ponto único que decide quem cobre UM turno numa data (`dateStr` = dia do turno, não o dia civil em que começa — ADR-0002). `resolveShiftPeople`, `currentOnCall`, `adjacentOnCall`, `saWindowsRelativeToDate` (CH), filtro e "próximos plantões" chamam ele. Retorna `{ substituto, coveringFor, titular }` ou `null`. Duas famílias de substituição convivem:
+- **Sem `turnos`** (a de sempre, e todas as já gravadas): vale para todos os turnos do **titular** do turno (rotação ou edição), sem encadear.
+- **Com `turnos: ['Dia']`** (campo opcional, nomes de `shift.period`): vale só no turno cujo `period` está na lista e casa com **quem está no turno naquele momento** — inclusive alguém que já é substituto de outra substituição. São aplicadas em ordem de criação (`id` = `Date.now()`). É o que permite trocar duas pessoas que já são substitutas (caso real: sáb 28/11/2026, Raul→Ricardo no Dia e Marcus Túlio→Emanoel na Noite; para inverter Ricardo↔Emanoel: `Ricardo→Emanoel` com turno Dia + `Emanoel→Ricardo` com turno Noite). Sem o escopo de turno, `Ricardo→Emanoel` não faz nada, porque Ricardo não é o titular de turno nenhum (a substituição casa com o titular, não encadeia). `coveringFor` = quem estava no turno antes do último passo. Desfazer a exclusão de uma substituição com turnos a recria com `id` novo (passa a valer por último na cadeia). No formulário (`EscalaSobreaviso.jsx`) os botões de turno aparecem quando há mais de um período entre "De" e "Até" (`subPeriodOptions`); nenhum marcado = todos os turnos. `POST /api/substitutions` aceita `turnos` (1–8 strings). Verificação: `node scripts/verify-substituicao.mjs`.
 
 **Substituição vale também em turno editado**: quem é colocado num turno por override (`persons`/`person`) passa a ser o **titular** daquele turno até outra edição — e uma substituição dele redireciona o turno exatamente como faria na rotação base. Editar a escala por override é rotina (ex.: "aplicar a todos os meses seguintes" quando alguém sai de um turno), então o turno editado não pode ficar imune a substituição. Não existe mais trava: a regra antiga "edição vence substituição" (`shift.personsOverridden`, removida em 2026-10-30) fazia a substituição ser salva e aparecer no card mas não ter efeito nenhum no dia, sem aviso. Ao remover, o único turno do histórico que mudou de pessoa foi 11/08/2026 Manhã (Raul editado + substituição Raul → Ricardo no mesmo dia); meses de CH fechados seguem protegidos pelos snapshots.
 
@@ -666,7 +670,7 @@ Handler usa role para controle de acesso, memberId para isolar dados
 | `member:{memberId}:ch_params` | `{ [memberId]: { remuneracao, jornada } }` | Por membro |
 | `member:{memberId}:ch_closed` | `{ 'YYYY-MM': { closedAt, closedBy, params, totals, entries[] } }` | Por membro |
 | ~~`team:{teamId}:ch_pending`~~ | **Removida.** Era o índice da fila de Hora Extra pendente; a fila passou a ser derivada dos lançamentos (ver Aprovação de excedente). Chaves remanescentes no Redis são órfãs | — |
-| `team:{teamId}:substitutions` | `[{ id, titular, substituto, from, until }]` | Compartilhado (por equipe) |
+| `team:{teamId}:substitutions` | `[{ id, titular, substituto, from, until, turnos? }]` | Compartilhado (por equipe) |
 | `team:{teamId}:schedule_overrides` | `{ [dayKey]: { [idx]: { persons[]?|person?, period, time, editedAt } } }` (idx extra = turno novo; sem `dur` — derivado de `time` via `shiftDuration()`) | Compartilhado (por equipe) |
 | `team:{teamId}:schedule_labels` | `{ [dayKey]: string }` — rótulo do dia (ex.: "Feriado") | Compartilhado (por equipe) |
 
@@ -700,7 +704,7 @@ separado (`TEAM_MEMBERS`) para manter em sincronia manualmente.
 | `schedule` GET | Público — `?team=` (default `sustentacao`), valida contra `TEAMS`; retorna `{ overrides, labels }`. |
 | `schedule` POST | `team` obrigatório no body (`TeamIdSchema`) → `schedulePostSchemaFor(team)` — `{ team, overrides?, labels? }`. `overrides` = patch (record `dayKey → idx → OverrideObj | null`; `OverrideObj` tem `person?`/`persons[]?` validados contra `TEAMS[team].roster`, índices extras permitidos). `labels` = `LabelPatchSchema` (`dayKey → string | null`). Aceita também um patch cru (compat.). |
 | `substitutions` GET | Público — `?team=` (default `sustentacao`). |
-| `substitutions` POST | `team` obrigatório no body → `subPostSchemaFor(team)` — `titular`/`substituto` do roster da equipe; `until >= from`; `titular ≠ substituto`. |
+| `substitutions` POST | `team` obrigatório no body → `subPostSchemaFor(team)` — `titular`/`substituto` do roster da equipe; `until >= from`; `titular ≠ substituto`; `turnos` opcional (1–8 períodos de turno; ausente = todos os turnos do titular). |
 | `substitutions` DELETE | `id` e `team` (query) obrigatórios, validados contra `TEAMS`. |
 | `ch` POST | `ChPostSchema` — `entries[]` (com `tipo` enum, `person` validado contra `MEMBERS` de **todas** as equipes, e os 5 campos de aprovação — `status`/`origemId`/`decididoPor`/`decididoEm`/`motivo` — todos opcionais e só de formato; `api/ch.js` reclassifica a Hora Extra no servidor e nunca confia nesses valores vindos do cliente, ver "Aprovação de excedente"), `params` record, `person` string. Todos opcionais. |
 | `ch-close` POST | `ChClosePostSchema` — `person` (qualquer `MEMBERS`, opcional), `month` YYYY-MM, `snapshot` { params, totals, entries[] ≤200 }. Recusa (409) se houver Hora Extra `pendente` da pessoa no mês — ver "Aprovação de excedente". |

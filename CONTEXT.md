@@ -74,6 +74,7 @@ _Avoid_: Tag, motivo, observação
 
 **Substituição**:
 Acordo em que uma pessoa cobre todos os turnos de outra durante um intervalo de datas. Titular e substituto são sempre da mesma equipe.
+Pode ser restrita a turnos específicos do dia (ex.: só o Dia) — assim vale para quem já está no turno, inclusive um substituto, e permite trocar duas pessoas entre turnos do mesmo dia.
 _Avoid_: Troca, cobertura, swap
 
 **Titular**:

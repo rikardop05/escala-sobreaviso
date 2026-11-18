@@ -184,7 +184,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
   const [filter,   setFilter]   = useState(profile?.filter ?? null);
   const [monthKey, setMonthKey] = useState(() => freshMonthKey(profile?.monthKey));
   const [subs,     setSubs]     = useState([]);
-  const [subForm,  setSubForm]  = useState({ show: false, titular: "", substituto: "", from: "", until: "" });
+  const [subForm,  setSubForm]  = useState({ show: false, titular: "", substituto: "", from: "", until: "", turnos: [] });
   const [subsLoading, setSubsLoading] = useState(true);
   const [subSaving,   setSubSaving]   = useState(false);
   const [subError,    setSubError]    = useState(null);
@@ -225,7 +225,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     setAddDay(null);
     setSplitForm(null);
     setMonthKey(null); // volta pro mês atual — evita cair num mês sem dias na equipe nova
-    setSubForm({ show: false, titular: "", substituto: "", from: "", until: "" });
+    setSubForm({ show: false, titular: "", substituto: "", from: "", until: "", turnos: [] });
   }
 
   // Carrega substituições e overrides do servidor, para a equipe ativa
@@ -375,14 +375,17 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
       if (d.date < today) continue;
       const dk = dayKey(d.date);
       d.shifts.forEach(s => {
-        const people = shiftPeople(s);
-        if (people.includes(filter)) {
-          const sub = getActiveSub(filter, dk, subs);
-          rows.push({ date:d.date, dow:d.dow, ...s, kind:"turno", coveredBy: sub ? sub.substituto : null });
+        // Quem está de fato no turno (subs por turno aplicadas, inclusive encadeadas).
+        const eff = resolveShiftPeople(s, dk, subs);
+        const mine = eff.find(r => r.titular === filter);
+        if (mine && mine.person !== filter) {
+          rows.push({ date:d.date, dow:d.dow, ...s, kind:"turno", coveredBy: mine.person });
+        } else if (mine) {
+          rows.push({ date:d.date, dow:d.dow, ...s, kind:"turno", coveredBy: null });
         } else {
           // filter pode estar cobrindo alguém deste turno (substituto)
-          const titular = people.find(p => { const sub = getActiveSub(p, dk, subs); return sub && sub.substituto === filter; });
-          if (titular) rows.push({ date:d.date, dow:d.dow, ...s, kind:"turno", coveringFor: titular });
+          const covering = eff.find(r => r.person === filter);
+          if (covering) rows.push({ date:d.date, dow:d.dow, ...s, kind:"turno", coveringFor: covering.coveringFor });
         }
       });
       if (d.dow === 6 && folgaDe(d).includes(filter)) {
@@ -399,6 +402,19 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     [subs, todayStr]
   );
 
+  // Turnos (períodos) que existem entre "De" e "Até" na escala da equipe ativa — opções do
+  // seletor "Turno" da substituição. Ordenados pelo horário de início do 1º dia em que aparecem.
+  const subPeriodOptions = useMemo(() => {
+    if (!subForm.from || !subForm.until || subForm.from > subForm.until) return [];
+    const seen = new Map();
+    for (const d of schedule) {
+      const k = dayKey(d.date);
+      if (k < subForm.from || k > subForm.until) continue;
+      for (const s of sortShiftsByStart(d.shifts, team.dayStart)) if (s.period && !seen.has(s.period)) seen.set(s.period, seen.size);
+    }
+    return [...seen.keys()];
+  }, [subForm.from, subForm.until, schedule, team]);
+
   const canSave = subForm.titular && subForm.substituto && subForm.from && subForm.until
                   && subForm.from <= subForm.until && subForm.titular !== subForm.substituto;
 
@@ -411,10 +427,13 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     setSubError(null);
     setSubSaving(true);
     const newSub = { team: activeTeam, titular: subForm.titular, substituto: subForm.substituto, from: subForm.from, until: subForm.until };
+    // Só envia turnos que ainda existem no intervalo (trocar as datas pode ter removido opções).
+    const turnos = subForm.turnos.filter(p => subPeriodOptions.includes(p));
+    if (turnos.length) newSub.turnos = turnos;
     try {
       const saved = await api('/api/substitutions', { method: 'POST', body: newSub });
       setSubs(prev => [...prev, saved]);
-      setSubForm({ show: false, titular: "", substituto: "", from: todayStr, until: "" });
+      setSubForm({ show: false, titular: "", substituto: "", from: todayStr, until: "", turnos: [] });
     } catch (e) {
       setSubError(friendlyError(e));
     } finally {
@@ -449,7 +468,8 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
     try {
       const saved = await api('/api/substitutions', {
         method: 'POST',
-        body: { team: activeTeam, titular: sub.titular, substituto: sub.substituto, from: sub.from, until: sub.until },
+        body: { team: activeTeam, titular: sub.titular, substituto: sub.substituto, from: sub.from, until: sub.until,
+                ...(sub.turnos?.length ? { turnos: sub.turnos } : {}) },
       });
       setSubs(prev => [...prev, saved]);
     } catch (e) {
@@ -951,10 +971,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                 const isPast    = !isToday && d.date < now;
                 const dk        = dayKey(d.date);
                 const hasFiltered = !filter || d.shifts.some(s =>
-                  shiftPeople(s).some(p => {
-                    const sub = getActiveSub(p, dk, subs);
-                    return (sub ? sub.substituto : p) === filter || p === filter;
-                  })
+                  resolveShiftPeople(s, dk, subs).some(r => r.person === filter || r.titular === filter)
                 ) || folgaDe(d).includes(filter);
                 const overlap = detectOverlaps(d, dk, subs);
                 const rowBg = isToday ? T.accentQuiet : isWeekend ? T.surfaceAlt : "transparent";
@@ -1257,6 +1274,7 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                       <span className="tnum" style={{ fontFamily:T.fontMono, fontSize:"0.74rem", color:T.textMuted }}>
                         {fmtDS(s.from)} – {fmtDS(s.until)}
                       </span>
+                      {s.turnos?.length > 0 && <Badge T={T} tone="info">só {s.turnos.join(" + ")}</Badge>}
                     </div>
                     {canDelete && (
                       <Button T={T} size="sm" variant="quiet" onClick={() => removeSub(s)}
@@ -1291,6 +1309,24 @@ export default function EscalaSobreaviso({ dark, onToggleDark, profile, saveProf
                       <input type="date" value={subForm.until} onChange={e => setSubForm(f => ({ ...f, until:e.target.value }))} style={selStyle} />
                     </label>
                   </div>
+                  {subPeriodOptions.length > 1 && (
+                    <div className="mb-3" role="group" aria-label="Turnos da substituição">
+                      <span style={labelStyle}>Turno <span style={{ color:T.textMuted, fontWeight:400 }}>
+                        (opcional — nenhum marcado = todos os turnos do titular; marque para trocar só aquele turno, ex.: quem já é substituto)
+                      </span></span>
+                      <div className="flex flex-wrap gap-2 mt-1">
+                        {subPeriodOptions.map(p => {
+                          const on = subForm.turnos.includes(p);
+                          return (
+                            <Button key={p} T={T} size="sm" variant={on ? "primary" : "quiet"} aria-pressed={on}
+                              onClick={() => setSubForm(f => ({ ...f, turnos: on ? f.turnos.filter(x => x !== p) : [...f.turnos, p] }))}>
+                              {p}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   <Button T={T} variant="primary" onClick={addSub} disabled={!canSave || subSaving}>
                     {subSaving ? "Salvando…" : "Salvar substituição"}
                   </Button>

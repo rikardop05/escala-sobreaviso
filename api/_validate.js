@@ -81,6 +81,9 @@ export function subPostSchemaFor(teamId) {
     substituto: Member,
     from:  DateStr,
     until: DateStr,
+    // Opcional: períodos de turno (ex.: 'Dia', 'Noite') a que a substituição se restringe.
+    // Ausente = todos os turnos do titular (comportamento de sempre).
+    turnos: z.array(z.string().trim().min(1).max(40)).min(1).max(8).optional(),
   })
     .refine(d => d.until >= d.from,           'until must be >= from')
     .refine(d => d.titular !== d.substituto,  'titular and substituto must differ');

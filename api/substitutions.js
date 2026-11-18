@@ -51,6 +51,7 @@ export default async function handler(req, res) {
 
       const subs = await readSubs(teamId);
       const newSub = { titular, substituto, from: body.from, until: body.until, id: String(Date.now()) };
+      if (body.turnos?.length) newSub.turnos = [...new Set(body.turnos)];
       await kvSet(keyFor(teamId), [...subs, newSub]);
       return res.status(200).json(newSub);
     }

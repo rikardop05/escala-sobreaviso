@@ -11,7 +11,7 @@
 // Extensão .js explícita: este módulo agora também é importado por api/ch.js,
 // que roda em Node puro (Vercel) — sem bundler, extensão é obrigatória na
 // resolução de import relativo (Vite tolera a omissão; Node não).
-import { durationHours, mergedHours, resolveShiftPeople, buildOnCallSegments, getActiveSub, dayKey } from './schedule.js';
+import { durationHours, mergedHours, resolveShiftPeople, buildOnCallSegments, shiftSub, dayKey } from './schedule.js';
 
 // Extrai HH:MM de uma string de turno ex: "23:00 – 04:00".
 // Aceita en-dash (–), em-dash (—) e hífen (-) — o admin pode digitar qualquer um ao
@@ -142,7 +142,7 @@ function saWindowsRelativeToDate(schedule, subs, dayStart, person, data) {
   for (const seg of segs) {
     for (const titular of seg.people) {
       // Mesma regra do calendário (resolveShiftPeople): a substituição do titular vale.
-      const sub = getActiveSub(titular, seg.dateStr, subs);
+      const sub = shiftSub(titular, seg, seg.dateStr, subs);
       const effective = sub ? sub.substituto : titular;
       if (effective !== person) continue;
       windows.push([(seg.start - anchorMs) / 60000, (seg.end - anchorMs) / 60000]);
